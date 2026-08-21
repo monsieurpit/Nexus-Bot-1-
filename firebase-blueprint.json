@@ -1,0 +1,293 @@
+{
+  "entities": {
+    "GuildConfig": {
+      "title": "Guild Configuration",
+      "description": "Bot settings and configuration for a Discord guild",
+      "type": "object",
+      "properties": {
+        "guildId": { "type": "string", "description": "Discord Guild ID" },
+        "prefix": { "type": "string", "description": "Command prefix" },
+        "language": { "type": "string", "description": "Guild language" },
+        "moderation": { "type": "object", "description": "Moderation settings" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Last update timestamp" }
+      },
+      "required": ["guildId"]
+    },
+    "UserLevel": {
+      "title": "User Level & XP",
+      "description": "User leveling and XP data within a guild",
+      "type": "object",
+      "properties": {
+        "guildId": { "type": "string", "description": "Discord Guild ID" },
+        "userId": { "type": "string", "description": "Discord User ID" },
+        "xp": { "type": "number", "description": "Current XP" },
+        "level": { "type": "number", "description": "Current Level" },
+        "totalXp": { "type": "number", "description": "Total XP accumulated" },
+        "lastMessage": { "type": "string", "format": "date-time", "description": "Timestamp of last message gaining XP" },
+        "rank": { "type": "number", "description": "User rank" }
+      },
+      "required": ["guildId", "userId"]
+    },
+    "TicketData": {
+      "title": "Ticket Record",
+      "description": "Discord support ticket details",
+      "type": "object",
+      "properties": {
+        "guildId": { "type": "string", "description": "Discord Guild ID" },
+        "channelId": { "type": "string", "description": "Ticket Channel ID" },
+        "userId": { "type": "string", "description": "Ticket Creator User ID" },
+        "status": { "type": "string", "description": "Ticket status (open, closed)" },
+        "category": { "type": "string", "description": "Ticket category" },
+        "data": { "type": "object", "description": "Full ticket object" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["guildId", "channelId"]
+    },
+    "TicketConfig": {
+      "title": "Ticket System Configuration",
+      "description": "Guild ticket panels, staff roles, categories, and settings",
+      "type": "object",
+      "properties": {
+        "guildId": { "type": "string" },
+        "enabled": { "type": "boolean" },
+        "staffRoleId": { "type": "string" },
+        "categoryId": { "type": "string" },
+        "transcriptChannelId": { "type": "string" },
+        "settings": { "type": "object" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["guildId"]
+    },
+    "AfkStatus": {
+      "title": "AFK Status",
+      "description": "User AFK status record",
+      "type": "object",
+      "properties": {
+        "guildId": { "type": "string" },
+        "userId": { "type": "string" },
+        "reason": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["guildId", "userId"]
+    },
+    "EmbedData": {
+      "title": "Custom Embed & Buttons",
+      "description": "Saved custom embed layouts and interactive buttons",
+      "type": "object",
+      "properties": {
+        "key": { "type": "string" },
+        "value": { "type": "object" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["key"]
+    },
+    "FootballSystem": {
+      "title": "Football System Data",
+      "description": "Football fixtures, live score alerts, and guild configurations",
+      "type": "object",
+      "properties": {
+        "guildId": { "type": "string" },
+        "config": { "type": "object" },
+        "fixtures": { "type": "array" }
+      }
+    },
+    "GiveawayData": {
+      "title": "Giveaway Record",
+      "description": "Active and past server giveaways",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "guildId": { "type": "string" },
+        "prize": { "type": "string" },
+        "endsAt": { "type": "string", "format": "date-time" },
+        "ended": { "type": "boolean" },
+        "winners": { "type": "array" },
+        "participants": { "type": "array" }
+      }
+    },
+    "EconomyData": {
+      "title": "Economy Record",
+      "description": "User balances, inventories, shop configurations, and economy settings",
+      "type": "object",
+      "properties": {
+        "guildId": { "type": "string" },
+        "userId": { "type": "string" },
+        "balance": { "type": "number" },
+        "bank": { "type": "number" },
+        "inventory": { "type": "array" }
+      }
+    },
+    "RaidshieldAndReports": {
+      "title": "Raidshield & Reports",
+      "description": "Raidshield anti-nuke/quarantine entries and member report records",
+      "type": "object",
+      "properties": {
+        "guildId": { "type": "string" },
+        "reportId": { "type": "string" },
+        "quarantineId": { "type": "string" },
+        "details": { "type": "object" }
+      }
+    },
+    "ServerSaveSystem": {
+      "title": "Server Saves & Backups",
+      "description": "Server snapshot backups indexed by unique 6-character Save ID",
+      "type": "object",
+      "properties": {
+        "saveId": { "type": "string", "description": "Unique 6-character Save ID" },
+        "guildId": { "type": "string" },
+        "snapshot": { "type": "object" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["saveId", "guildId"]
+    },
+    "ServerStats": {
+      "title": "Server Stats & Counters",
+      "description": "Dynamic member, bot, and custom channel counters",
+      "type": "object",
+      "properties": {
+        "guildId": { "type": "string" },
+        "counters": { "type": "array" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["guildId"]
+    },
+    "StickyNote": {
+      "title": "Sticky Note",
+      "description": "Sticky message configurations pinned to channels",
+      "type": "object",
+      "properties": {
+        "guildId": { "type": "string" },
+        "channelId": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "color": { "type": "string" }
+      },
+      "required": ["guildId", "channelId"]
+    },
+    "WeeklySummary": {
+      "title": "Weekly Summary & History",
+      "description": "Current weekly stats and history of the last 3 weekly summaries",
+      "type": "object",
+      "properties": {
+        "guildId": { "type": "string" },
+        "weekStart": { "type": "number" },
+        "history": { "type": "array", "description": "Array of the 3 most recent weekly summary snapshots" },
+        "stats": { "type": "object" }
+      },
+      "required": ["guildId"]
+    },
+    "KvStorage": {
+      "title": "Key-Value Entry",
+      "description": "Arbitrary key-value store entry",
+      "type": "object",
+      "properties": {
+        "key": { "type": "string" },
+        "value": { "type": "object" },
+        "expiresAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["key"]
+    }
+  },
+  "firestore": {
+    "/guilds/{guildId}": {
+      "schema": { "$ref": "#/entities/GuildConfig" },
+      "description": "Guild configuration documents"
+    },
+    "/guilds/{guildId}/user_levels/{userId}": {
+      "schema": { "$ref": "#/entities/UserLevel" },
+      "description": "User levels within a guild"
+    },
+    "/guilds/{guildId}/tickets/{channelId}": {
+      "schema": { "$ref": "#/entities/TicketData" },
+      "description": "Support tickets in a guild"
+    },
+    "/guilds/{guildId}/afk/{userId}": {
+      "schema": { "$ref": "#/entities/AfkStatus" },
+      "description": "AFK status for guild members"
+    },
+    "/embeds/{embedDocId}": {
+      "schema": { "$ref": "#/entities/EmbedData" },
+      "description": "Custom embeds and templates"
+    },
+    "/embed_buttons/{buttonDocId}": {
+      "schema": { "$ref": "#/entities/EmbedData" },
+      "description": "Interactive embed buttons"
+    },
+    "/ticket_configs/{guildId}": {
+      "schema": { "$ref": "#/entities/TicketConfig" },
+      "description": "Guild ticket panels, staff roles, and ticket setup configurations"
+    },
+    "/football_configs/{guildId}": {
+      "schema": { "$ref": "#/entities/FootballSystem" },
+      "description": "Football match notifications and server configs"
+    },
+    "/football/{matchId}": {
+      "schema": { "$ref": "#/entities/FootballSystem" },
+      "description": "Football live fixtures and schedule data"
+    },
+    "/giveaways/{giveawayDocId}": {
+      "schema": { "$ref": "#/entities/GiveawayData" },
+      "description": "Giveaway instances and participant tracking"
+    },
+    "/economy_configs/{guildId}": {
+      "schema": { "$ref": "#/entities/EconomyData" },
+      "description": "Guild economy configuration"
+    },
+    "/economy_balances/{balanceDocId}": {
+      "schema": { "$ref": "#/entities/EconomyData" },
+      "description": "Member wallet and bank balances"
+    },
+    "/economy_inventories/{invDocId}": {
+      "schema": { "$ref": "#/entities/EconomyData" },
+      "description": "Member item inventories"
+    },
+    "/economy_participants/{guildId}": {
+      "schema": { "$ref": "#/entities/EconomyData" },
+      "description": "Economy active participant list"
+    },
+    "/raidshield_configs/{guildId}": {
+      "schema": { "$ref": "#/entities/RaidshieldAndReports" },
+      "description": "Raidshield configuration and anti-nuke rules"
+    },
+    "/quarantines/{quarantineId}": {
+      "schema": { "$ref": "#/entities/RaidshieldAndReports" },
+      "description": "Quarantined users and incident logs"
+    },
+    "/reports/{reportDocId}": {
+      "schema": { "$ref": "#/entities/RaidshieldAndReports" },
+      "description": "User moderation reports"
+    },
+    "/server_saves/{guildId}": {
+      "schema": { "$ref": "#/entities/ServerSaveSystem" },
+      "description": "Server backup metadata list with Save IDs"
+    },
+    "/server_save_snapshots/{saveDocId}": {
+      "schema": { "$ref": "#/entities/ServerSaveSystem" },
+      "description": "Server backup full snapshots indexed by unique Save ID"
+    },
+    "/serverstats_counters/{guildId}": {
+      "schema": { "$ref": "#/entities/ServerStats" },
+      "description": "Server statistics channel counters"
+    },
+    "/serverstats_configs/{guildId}": {
+      "schema": { "$ref": "#/entities/ServerStats" },
+      "description": "Server stats configurations"
+    },
+    "/sticky_notes/{noteDocId}": {
+      "schema": { "$ref": "#/entities/StickyNote" },
+      "description": "Sticky note message definitions per channel"
+    },
+    "/weekly_stats/{guildId}": {
+      "schema": { "$ref": "#/entities/WeeklySummary" },
+      "description": "Active weekly statistics tracker"
+    },
+    "/weekly_stats_history/{historyDocId}": {
+      "schema": { "$ref": "#/entities/WeeklySummary" },
+      "description": "History storing the last 3 weekly summaries per guild"
+    },
+    "/kv_data/{key}": {
+      "schema": { "$ref": "#/entities/KvStorage" },
+      "description": "General key-value store for arbitrary bot data"
+    }
+  }
+}

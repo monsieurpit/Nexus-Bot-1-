@@ -1,0 +1,8 @@
+{
+  "name": "Bot Nexus",
+  "description": "Imported from GitHub: Patou366/Nexus",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
