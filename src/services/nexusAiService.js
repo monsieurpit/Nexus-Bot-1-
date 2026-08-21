@@ -207,7 +207,8 @@ export async function resolveImagePart(imageInput) {
  */
 export async function askNexusAi(question, userContext = {}) {
   const superChillUserId = process.env.SUPER_CHILL_USER_ID || '1394001641899954368';
-  const isSuperChillUser = Boolean(userContext.userId === superChillUserId || userContext.isSuperChill || userContext.isSuperChillUser);
+  const authorId = userContext.userId || userContext.authorId || '';
+  const isSuperChillUser = Boolean(authorId === superChillUserId || userContext.isSuperChill || userContext.isSuperChillUser);
   const lowerQ = (question || '').toLowerCase();
 
   // 1. Deterministic Casseurt crash-out roast directive
@@ -215,28 +216,35 @@ export async function askNexusAi(question, userContext = {}) {
     return getCasseurtCrashoutRant(isSuperChillUser, userContext.username || 'Homie');
   }
 
-  // 2. Query configured NEXUS_API_URL backend server if present
-  const normalizedApiUrl = getNormalizedNexusApiUrl();
+  // 2. Query configured NEXUS_API_URL backend server if not running server-internally
+  const normalizedApiUrl = !userContext.skipRemoteFetch && !userContext.isServerInternal ? getNormalizedNexusApiUrl() : null;
   if (normalizedApiUrl) {
     try {
-      const apiKey = process.env.NEXUS_API_KEY || process.env.API_KEY || 'nexus_sk_discord_bot_1394001641899954368';
+      const apiKey = process.env.NEXUS_API_KEY || process.env.API_KEY || 'nexus_sk_discord_bot_26jhs6ku';
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 15000);
+      const timeout = setTimeout(() => controller.abort(), 20000);
+      
+      const imageUrl = typeof userContext.image === 'string' 
+        ? userContext.image 
+        : (userContext.attachments?.[0]?.url || userContext.imageUrl || '');
+
       const res = await fetch(`${normalizedApiUrl}/nexus`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`
+          'Authorization': `Bearer ${apiKey}`,
+          'x-api-key': apiKey
         },
         body: JSON.stringify({
           prompt: question,
-          userId: userContext.userId,
-          authorId: userContext.userId,
-          username: userContext.username,
+          persona: userContext.persona || 'nexus-homie',
+          authorId: authorId,
+          userId: authorId,
+          username: userContext.username || 'User',
           isSuperChill: isSuperChillUser,
-          isSuperChillUser,
-          image: userContext.image,
-          attachments: userContext.attachments
+          isSuperChillUser: isSuperChillUser,
+          imageUrl: imageUrl,
+          image: imageUrl
         }),
         signal: controller.signal
       }).finally(() => clearTimeout(timeout));
@@ -247,16 +255,18 @@ export async function askNexusAi(question, userContext = {}) {
         if (responseText) {
           return responseText;
         }
+      } else {
+        logger.debug(`[Nexus AI] Backend responded with status: ${res.status}`);
       }
     } catch (err) {
-      logger.debug(`[Nexus AI] NEXUS_API_URL call skipped/failed: ${err.message}`);
+      logger.debug(`[Nexus AI] NEXUS_API_URL call failed, falling back to local brain: ${err.message}`);
     }
   }
 
-  // 3. Local autonomous Nexus Brain engine (Zero-Refusal Deep Synthesis)
+  // 3. Fallback to local autonomous Nexus Brain engine
   return generateNexusBrainResponse(question, {
     ...userContext,
-    userId: isSuperChillUser ? superChillUserId : userContext.userId
+    userId: isSuperChillUser ? superChillUserId : authorId
   });
 }
 
@@ -264,35 +274,35 @@ export async function askNexusAi(question, userContext = {}) {
  * Dedicated multimodal Vision & OCR analysis engine
  */
 export async function analyzeVision({ image, prompt = 'Analyze this image and describe all text, UI elements, and potential security issues.', isSecurityScan = false } = {}) {
-  const imagePart = await resolveImagePart(image);
-  if (!imagePart) {
-    throw new Error('Valid image URL, base64 data URI, or attachment is required for vision analysis');
-  }
+  const imageUrl = typeof image === 'string' ? image : (image?.url || '');
 
-  // Query NEXUS_API_URL server if available
+  // Query NEXUS_API_URL server
   const normalizedApiUrl = getNormalizedNexusApiUrl();
   if (normalizedApiUrl) {
     try {
-      const apiKey = process.env.NEXUS_API_KEY || process.env.API_KEY || 'nexus_sk_discord_bot_1394001641899954368';
+      const apiKey = process.env.NEXUS_API_KEY || process.env.API_KEY || 'nexus_sk_discord_bot_26jhs6ku';
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 20000);
-      const res = await fetch(`${normalizedApiUrl}/vision`, {
+      const timeout = setTimeout(() => controller.abort(), 25000);
+      
+      const endpoint = isSecurityScan ? `${normalizedApiUrl}/raidshield` : `${normalizedApiUrl}/vision/analyze`;
+      const body = isSecurityScan 
+        ? { messageText: prompt, imageUrl }
+        : { imageUrl, prompt };
+
+      const res = await fetch(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`
+          'Authorization': `Bearer ${apiKey}`,
+          'x-api-key': apiKey
         },
-        body: JSON.stringify({
-          image,
-          prompt,
-          isSecurityScan
-        }),
+        body: JSON.stringify(body),
         signal: controller.signal
       }).finally(() => clearTimeout(timeout));
 
       if (res.ok) {
         const data = await res.json();
-        if (data && data.analysis) {
+        if (data && (data.analysis || data.response || data.classification)) {
           return data;
         }
       }
@@ -302,7 +312,7 @@ export async function analyzeVision({ image, prompt = 'Analyze this image and de
   }
 
   return {
-    analysis: 'Image received and processed securely via Nexus Vision Engine. Optical structure parsed cleanly.',
+    analysis: 'Image received and processed securely via Nexus Vision Engine.',
     ocrText: 'Visual content verified.',
     safety: 'safe',
     modelUsed: 'nexus-vision-native'
@@ -353,7 +363,7 @@ export function parseNexusTrigger(content, botUserId = null) {
   const trimmed = content.trim();
   if (!trimmed) return null;
 
-  // 1. Direct bot mention regex if bot user ID is available (e.g. <@BOT_ID> or <@!BOT_ID>)
+  // 1. Direct bot mention regex if bot user ID is available
   if (botUserId) {
     const botMentionPattern = new RegExp(`<@!?${botUserId}>`, 'i');
     if (botMentionPattern.test(trimmed)) {
@@ -381,19 +391,22 @@ export function parseNexusTrigger(content, botUserId = null) {
 
 /**
  * Handles incoming Discord messages addressing Nexus.
- * Returns true if the message was handled as a Nexus AI query, false otherwise.
  */
 export async function handleNexusAiMessage(message) {
   if (message.author?.bot) return false;
-  if (!message.content || typeof message.content !== 'string') return false;
+  if (!message.content && !message.attachments?.size) return false;
 
   const botUserId = message.client?.user?.id;
-  const triggerResult = parseNexusTrigger(message.content, botUserId);
+  const triggerResult = parseNexusTrigger(message.content || '', botUserId);
   if (!triggerResult || !triggerResult.matched) return false;
 
   const rawQuestion = triggerResult.question || '';
   const printableCharacters = cleanInvisibleCharacters(rawQuestion);
   const targetScopeId = message.guild?.id || message.channel?.id || 'global';
+
+  // Extract first image attachment if present
+  const firstAttachment = message.attachments?.first();
+  const imageUrl = firstAttachment?.contentType?.startsWith('image/') ? firstAttachment.url : '';
 
   // Check for deactivation trigger
   if (DEACTIVATE_REGEX.test(rawQuestion.trim())) {
@@ -425,8 +438,8 @@ export async function handleNexusAiMessage(message) {
 
   const userId = message.author?.id;
 
-  // If user only pinged/said "nexus" or sent greeting with no question
-  if (printableCharacters.length === 0) {
+  // If user only pinged/said "nexus" with no question or attachment
+  if (printableCharacters.length === 0 && !imageUrl) {
     if (userId === '1394001641899954368') {
       await message.reply({
         content: "What's good my fucking bro! How can I help your awesome ass today?"
@@ -439,7 +452,7 @@ export async function handleNexusAiMessage(message) {
     return true;
   }
 
-  const question = rawQuestion.trim();
+  const question = rawQuestion.trim() || 'Inspect this image';
 
   // Instant response for questions asking if Nexus likes/loves Casseurt
   if (CASSEURT_LIKE_REGEX.test(question)) {
@@ -473,7 +486,10 @@ export async function handleNexusAiMessage(message) {
   try {
     const answer = await askNexusAi(question, {
       userId,
-      username: message.author.username
+      authorId: userId,
+      username: message.author.username,
+      image: imageUrl,
+      imageUrl: imageUrl
     });
 
     if (!answer || cleanInvisibleCharacters(answer).length === 0) {

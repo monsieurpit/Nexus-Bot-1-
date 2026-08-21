@@ -1,219 +1,429 @@
 // nexus-ai.js
-// Production-Ready JavaScript / TypeScript SDK Client for Nexus AI & RaidShield Engine
-// Compatible with Node.js 18+, Bun, Railway environments, and modern browsers.
+// Production-Grade JavaScript & TypeScript SDK Client for Nexus AI Engine, RaidShield & Dynamic Personas
+// Universal compatibility: Node.js (Discord.js), Bun, Railway, and modern browser environments.
+// Supports both ES Modules (import) and CommonJS (require).
 
 export class NexusAI {
   /**
+   * Initialize a new Nexus AI Client instance
    * @param {Object} [config]
    * @param {string} [config.apiKey] - Your secret Nexus API key (from Railway or in-app generator)
    * @param {string} [config.baseUrl] - Base URL of your Nexus AI Server (e.g. https://your-app.railway.app/api/v1)
+   * @param {string} [config.persona] - Default AI Persona ('nexus-homie', 'crashout-bot', 'roast-master', 'chill-mod', 'code-architect', 'deep-researcher', 'gemini-core', 'raidshield-ai', 'discord-sentinel', 'socratic-mentor', 'creative-synthesizer')
+   * @param {string|string[]} [config.rules] - Global strict rules or custom directives to enforce on every request
+   * @param {number} [config.temperature] - Default model temperature (0.0 to 2.0)
+   * @param {string} [config.authorId] - Default Discord author ID for queries (e.g. VIP ID '1394001641899954368')
    */
-  constructor({ apiKey, baseUrl } = {}) {
+  constructor({ apiKey, baseUrl, persona, rules, temperature, authorId } = {}) {
     this.apiKey =
       apiKey ||
-      process.env.NEXUS_API_KEY ||
-      process.env.API_KEY ||
-      'nexus_sk_discord_bot_1394001641899954368';
+      (typeof process !== 'undefined' && (process.env.NEXUS_API_KEY || process.env.API_KEY)) ||
+      'nexus_sk_discord_bot_26jhs6ku';
 
-    let rawUrl =
-      baseUrl ||
-      process.env.NEXUS_API_URL ||
-      process.env.SERVER_URL ||
-      (process.env.RAILWAY_STATIC_URL ? `https://${process.env.RAILWAY_STATIC_URL}` : '') ||
-      (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : '') ||
-      (process.env.APP_URL ? process.env.APP_URL : '') ||
-      'http://localhost:3000';
+    const defaultUrl =
+      (typeof process !== 'undefined' &&
+        (process.env.NEXUS_API_URL ||
+          process.env.SERVER_URL ||
+          (process.env.RAILWAY_STATIC_URL ? `https://${process.env.RAILWAY_STATIC_URL}/api/v1` : '') ||
+          (process.env.APP_URL ? `${process.env.APP_URL}/api/v1` : ''))) ||
+      'http://localhost:3000/api/v1';
 
-    rawUrl = String(rawUrl).trim().replace(/\/+$/, '');
-    if (!rawUrl.startsWith('http://') && !rawUrl.startsWith('https://')) {
-      rawUrl = `https://${rawUrl}`;
+    let cleanUrl = (baseUrl || defaultUrl).trim().replace(/\/+$/, '');
+    if (!cleanUrl.startsWith('http://') && !cleanUrl.startsWith('https://')) {
+      cleanUrl = `https://${cleanUrl}`;
+    }
+    if (cleanUrl.endsWith('/api')) {
+      cleanUrl = `${cleanUrl}/v1`;
+    } else if (!cleanUrl.endsWith('/api/v1')) {
+      cleanUrl = `${cleanUrl}/api/v1`;
     }
 
-    if (rawUrl.endsWith('/api/v1')) {
-      this.baseUrl = rawUrl;
-    } else if (rawUrl.endsWith('/api')) {
-      this.baseUrl = `${rawUrl}/v1`;
-    } else {
-      this.baseUrl = `${rawUrl}/api/v1`;
-    }
+    this.baseUrl = cleanUrl;
+    this.currentPersona = persona || 'nexus-homie';
+    this.clientRules = Array.isArray(rules) ? rules : rules ? [rules] : [];
+    this.defaultTemperature = typeof temperature === 'number' ? temperature : undefined;
+    this.defaultAuthorId = authorId || '';
   }
 
-  /**
-   * Verify API Key connection to the Nexus backend.
-   * @returns {Promise<{ status: string, valid: boolean, authenticatedKey: string, message: string }>}
-   */
-  async verifyAuth() {
-    const response = await fetch(`${this.baseUrl}/auth/verify`, {
+  // ────────────────────────────────────────────────────────────
+  // CLIENT CONFIGURATION & CUSTOMIZATION
+  // ────────────────────────────────────────────────────────────
+
+  setPersona(personaId) {
+    this.currentPersona = personaId;
+    return this;
+  }
+
+  getPersona() {
+    return this.currentPersona;
+  }
+
+  setRules(rules) {
+    this.clientRules = Array.isArray(rules) ? rules : rules ? [rules] : [];
+    return this;
+  }
+
+  addRule(rule) {
+    if (rule && typeof rule === 'string') {
+      this.clientRules.push(rule.trim());
+    }
+    return this;
+  }
+
+  clearRules() {
+    this.clientRules = [];
+    return this;
+  }
+
+  getClientRules() {
+    return [...this.clientRules];
+  }
+
+  setTemperature(temp) {
+    this.defaultTemperature = Math.max(0, Math.min(2.0, temp));
+    return this;
+  }
+
+  _getHeaders(extraHeaders = {}) {
+    return {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${this.apiKey}`,
+      'x-api-key': this.apiKey,
+      ...extraHeaders,
+    };
+  }
+
+  // ────────────────────────────────────────────────────────────
+  // SERVER SETTINGS & PERSONAS
+  // ────────────────────────────────────────────────────────────
+
+  async getSettings() {
+    const res = await fetch(`${this.baseUrl}/settings`, {
       method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${this.apiKey}`,
-        'x-api-key': this.apiKey,
-      },
+      headers: this._getHeaders(),
     });
-    if (!response.ok) {
-      throw new Error(`Auth verification failed with status ${response.status}`);
-    }
-    return await response.json();
+    if (!res.ok) throw new Error(`Failed to fetch settings: HTTP ${res.status}`);
+    return await res.json();
   }
 
-  /**
-   * Ask Nexus and receive the complete structured JSON response payload.
-   *
-   * @param {Object} options
-   * @param {string} options.prompt - The question or message text
-   * @param {string} [options.authorId] - Discord user ID
-   * @param {string} [options.username] - Discord display name
-   * @param {boolean} [options.isSuperChillUser] - VIP homie mode
-   * @param {string} [options.imageUrl] - Remote image URL (Discord attachment)
-   * @param {string} [options.imageData] - Base64 Data URL
-   * @returns {Promise<{
-   *   response: string,
-   *   text: string,
-   *   persona: string,
-   *   authorId: string | null,
-   *   isSuperChillUser: boolean,
-   *   hasImage: boolean,
-   *   tokens: number,
-   *   timestamp: string,
-   *   queueStats?: { waitedInQueueMs: number, executionTimeMs: number }
-   * }>}
-   */
-  async askJSON({ prompt, authorId = '', username = '', isSuperChillUser = false, imageUrl = '', imageData = '' }) {
-    const isSuperChill = isSuperChillUser || authorId === '1394001641899954368';
-    const response = await fetch(`${this.baseUrl}/nexus`, {
+  async updateSettings(updates = {}) {
+    const res = await fetch(`${this.baseUrl}/settings`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.apiKey}`,
-        'x-api-key': this.apiKey,
-      },
-      body: JSON.stringify({
-        prompt,
-        authorId,
-        username,
-        isSuperChillUser: isSuperChill,
-        imageUrl,
-        imageData,
-      }),
+      headers: this._getHeaders(),
+      body: JSON.stringify(updates),
     });
-
-    if (!response.ok) {
-      const errBody = await response.text().catch(() => '');
-      throw new Error(`Nexus API HTTP error ${response.status}: ${errBody || response.statusText}`);
-    }
-
-    return await response.json();
+    if (!res.ok) throw new Error(`Failed to update settings: HTTP ${res.status}`);
+    return await res.json();
   }
 
-  /**
-   * Ask Nexus and receive plain string text answer.
-   *
-   * @param {Object} options
-   * @returns {Promise<string>}
-   */
+  async listPersonas() {
+    const res = await fetch(`${this.baseUrl}/personas`, {
+      method: 'GET',
+      headers: this._getHeaders(),
+    });
+    if (!res.ok) throw new Error(`Failed to list personas: HTTP ${res.status}`);
+    return await res.json();
+  }
+
+  async switchServerPersona(persona) {
+    const res = await fetch(`${this.baseUrl}/persona/set`, {
+      method: 'POST',
+      headers: this._getHeaders(),
+      body: JSON.stringify({ persona }),
+    });
+    if (!res.ok) throw new Error(`Failed to switch server persona: HTTP ${res.status}`);
+    return await res.json();
+  }
+
+  // ────────────────────────────────────────────────────────────
+  // MAIN INFERENCE & DISCORD CHAT METHODS
+  // ────────────────────────────────────────────────────────────
+
+  async askJSON(options) {
+    const opts = typeof options === 'string' ? { prompt: options } : options || {};
+    const authorId = opts.authorId || opts.userId || this.defaultAuthorId || '';
+    const isSuperChill = Boolean(opts.isSuperChillUser || opts.isSuperChill || authorId === '1394001641899954368');
+    
+    const requestRules = opts.rules || opts.customRules || opts.directives || '';
+    const extraRules = Array.isArray(requestRules) ? requestRules : requestRules ? [requestRules] : [];
+    const allRules = [...this.clientRules, ...extraRules];
+
+    const activePersona = opts.persona || opts.model || this.currentPersona || 'nexus-homie';
+
+    const payload = {
+      prompt: opts.prompt || opts.content || opts.message || opts.text || '',
+      persona: activePersona,
+      model: activePersona,
+      authorId: authorId,
+      userId: authorId,
+      username: opts.username || 'DiscordUser',
+      isSuperChillUser: isSuperChill,
+      isSuperChill: isSuperChill,
+      rules: allRules.join('\n'),
+      customRules: allRules.join('\n'),
+      imageUrl: opts.imageUrl || opts.image || opts.attachmentUrl || '',
+      imageData: opts.imageData || '',
+      image: opts.imageUrl || opts.image || '',
+      temperature: typeof opts.temperature === 'number' ? opts.temperature : this.defaultTemperature,
+    };
+
+    const res = await fetch(`${this.baseUrl}/nexus`, {
+      method: 'POST',
+      headers: this._getHeaders(),
+      body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '');
+      throw new Error(`Nexus API HTTP ${res.status}: ${errText || res.statusText}`);
+    }
+
+    return await res.json();
+  }
+
   async ask(options) {
     const data = await this.askJSON(options);
     return data.response || data.text || '';
   }
 
-  /**
-   * Evaluate a Discord message or image attachment against RaidShield's 21 Hard Security Rules.
-   * Catches fake Nitro QR codes, phishing screenshots, token stealers, scam banners, and raid graphics.
-   *
-   * @param {Object} options
-   * @param {string} [options.messageText] - The message content to evaluate
-   * @param {string} [options.authorId] - Discord user ID of the sender
-   * @param {string} [options.imageUrl] - Discord attachment URL or remote image URL
-   * @param {string} [options.imageData] - Base64 Data URL (data:image/png;base64,...)
-   * @returns {Promise<{
-   *   classification: 'safe' | 'scam' | 'spam' | 'bot' | 'raid',
-   *   confidence: number,
-   *   reason: string,
-   *   actionRecommended: 'ALLOW' | 'DELETE_AND_TIMEOUT' | 'FLAG_FOR_REVIEW',
-   *   authorId: string | null,
-   *   scannedImage?: boolean,
-   *   timestamp: string
-   * }>}
-   */
-  async checkSecurity({ messageText = '', authorId = '', imageUrl = '', imageData = '' }) {
-    const response = await fetch(`${this.baseUrl}/raidshield`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.apiKey}`,
-        'x-api-key': this.apiKey,
-      },
-      body: JSON.stringify({
-        messageText,
-        authorId,
-        imageUrl,
-        imageData,
-      }),
-    });
+  // ────────────────────────────────────────────────────────────
+  // CONVENIENT PERSONA SHORTCUTS
+  // ────────────────────────────────────────────────────────────
 
-    if (!response.ok) {
-      const errBody = await response.text().catch(() => '');
-      throw new Error(`RaidShield API HTTP error ${response.status}: ${errBody || response.statusText}`);
-    }
-
-    return await response.json();
+  async askCrashout(options) {
+    const opts = typeof options === 'string' ? { prompt: options } : options;
+    return this.ask({ ...opts, persona: 'crashout-bot' });
   }
 
-  /**
-   * Dedicated Vision analysis for deep inspection of any image in JSON format.
-   *
-   * @param {Object} options
-   * @param {string} [options.imageUrl] - Image URL
-   * @param {string} [options.imageData] - Base64 Data URL
-   * @param {string} [options.prompt] - Custom analysis question
-   * @param {'general' | 'security'} [options.mode] - Inspection mode
-   */
-  async analyzeImage({ imageUrl = '', imageData = '', prompt = '', mode = 'general' }) {
-    const response = await fetch(`${this.baseUrl}/vision/analyze`, {
+  async askRoast(options) {
+    const opts = typeof options === 'string' ? { prompt: options } : options;
+    return this.ask({ ...opts, persona: 'roast-master' });
+  }
+
+  async askChill(options) {
+    const opts = typeof options === 'string' ? { prompt: options } : options;
+    return this.ask({ ...opts, persona: 'chill-mod' });
+  }
+
+  async askCode(options) {
+    const opts = typeof options === 'string' ? { prompt: options } : options;
+    return this.ask({ ...opts, persona: 'code-architect' });
+  }
+
+  async askResearcher(options) {
+    const opts = typeof options === 'string' ? { prompt: options } : options;
+    return this.ask({ ...opts, persona: 'deep-researcher' });
+  }
+
+  async askHomie(options) {
+    const opts = typeof options === 'string' ? { prompt: options } : options;
+    return this.ask({ ...opts, persona: 'nexus-homie' });
+  }
+
+  async askSentinel(options) {
+    const opts = typeof options === 'string' ? { prompt: options } : options;
+    return this.ask({ ...opts, persona: 'discord-sentinel' });
+  }
+
+  // ────────────────────────────────────────────────────────────
+  // MULTI-DOCUMENT KNOWLEDGE CORPUS & GROUNDING API
+  // ────────────────────────────────────────────────────────────
+
+  async listDocuments({ category = '' } = {}) {
+    const url = category
+      ? `${this.baseUrl}/documents?category=${encodeURIComponent(category)}`
+      : `${this.baseUrl}/documents`;
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: this._getHeaders(),
+    });
+    if (!res.ok) throw new Error(`Failed to list documents: HTTP ${res.status}`);
+    return await res.json();
+  }
+
+  async searchDocuments({ query, limit = 5 }) {
+    const res = await fetch(`${this.baseUrl}/documents/search`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.apiKey}`,
-        'x-api-key': this.apiKey,
-      },
+      headers: this._getHeaders(),
+      body: JSON.stringify({ query, limit }),
+    });
+    if (!res.ok) throw new Error(`Failed to search documents: HTTP ${res.status}`);
+    return await res.json();
+  }
+
+  async addDocument({ title, content, category = 'custom-api-doc', keywords = [] }) {
+    const res = await fetch(`${this.baseUrl}/documents`, {
+      method: 'POST',
+      headers: this._getHeaders(),
+      body: JSON.stringify({ title, content, category, keywords }),
+    });
+    if (!res.ok) throw new Error(`Failed to add document: HTTP ${res.status}`);
+    return await res.json();
+  }
+
+  async deleteDocument(documentId) {
+    const res = await fetch(`${this.baseUrl}/documents/${encodeURIComponent(documentId)}`, {
+      method: 'DELETE',
+      headers: this._getHeaders(),
+    });
+    if (!res.ok) throw new Error(`Failed to delete document: HTTP ${res.status}`);
+    return await res.json();
+  }
+
+  async getCorpusStats() {
+    const res = await fetch(`${this.baseUrl}/corpus`, {
+      method: 'GET',
+      headers: this._getHeaders(),
+    });
+    if (!res.ok) throw new Error(`Failed to get corpus stats: HTTP ${res.status}`);
+    return await res.json();
+  }
+
+  // ────────────────────────────────────────────────────────────
+  // RAIDSHIELD 21-RULE AUTOMOD & SECURITY
+  // ────────────────────────────────────────────────────────────
+
+  async checkSecurity({ messageText = '', authorId = '', imageUrl = '', imageData = '' }) {
+    const res = await fetch(`${this.baseUrl}/raidshield`, {
+      method: 'POST',
+      headers: this._getHeaders(),
+      body: JSON.stringify({ messageText, authorId, imageUrl, imageData }),
+    });
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '');
+      throw new Error(`RaidShield API HTTP ${res.status}: ${errText || res.statusText}`);
+    }
+    return await res.json();
+  }
+
+  async isSafe(messageText) {
+    const sec = await this.checkSecurity({ messageText });
+    return sec.classification === 'safe';
+  }
+
+  // ────────────────────────────────────────────────────────────
+  // MULTIMODAL VISION OCR & IMAGE SCANNER
+  // ────────────────────────────────────────────────────────────
+
+  async analyzeImage({ imageUrl = '', imageData = '', prompt = '', mode = 'general' }) {
+    const res = await fetch(`${this.baseUrl}/vision/analyze`, {
+      method: 'POST',
+      headers: this._getHeaders(),
       body: JSON.stringify({ imageUrl, imageData, prompt, mode }),
     });
-
-    if (!response.ok) {
-      const errBody = await response.text().catch(() => '');
-      throw new Error(`Vision API error ${response.status}: ${errBody || response.statusText}`);
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '');
+      throw new Error(`Vision API error HTTP ${res.status}: ${errText || res.statusText}`);
     }
-
-    return await response.json();
+    return await res.json();
   }
 
-  /**
-   * Alias for analyzeImage() to support all coding conventions.
-   */
   async analyzeVision(options) {
-    return await this.analyzeImage(options);
+    return this.analyzeImage(options);
   }
 
-  /**
-   * Check AI server waitlist queue status.
-   */
-  async getQueueStatus() {
-    const response = await fetch(`${this.baseUrl}/queue/status`, {
-      headers: { Authorization: `Bearer ${this.apiKey}` },
+  // ────────────────────────────────────────────────────────────
+  // RULE INSPECTION & DIRECT ENFORCEMENT
+  // ────────────────────────────────────────────────────────────
+
+  async listSupportedRules() {
+    const res = await fetch(`${this.baseUrl}/sdk/rules`, {
+      method: 'GET',
+      headers: this._getHeaders(),
     });
-    return await response.json();
+    if (!res.ok) throw new Error(`Failed to fetch SDK rules: HTTP ${res.status}`);
+    return await res.json();
   }
 
-  /**
-   * Check AI server health.
-   */
+  async enforceRules({ text, rules, isSuperChillUser = false }) {
+    const res = await fetch(`${this.baseUrl}/sdk/rules/enforce`, {
+      method: 'POST',
+      headers: this._getHeaders(),
+      body: JSON.stringify({ text, rules, isSuperChillUser }),
+    });
+    if (!res.ok) throw new Error(`Failed to enforce rules: HTTP ${res.status}`);
+    return await res.json();
+  }
+
+  // ────────────────────────────────────────────────────────────
+  // GEMINI & OPENAI FORMAT COMPATIBILITY
+  // ────────────────────────────────────────────────────────────
+
+  async generate(options = {}) {
+    const res = await fetch(`${this.baseUrl}/generate`, {
+      method: 'POST',
+      headers: this._getHeaders(),
+      body: JSON.stringify(options),
+    });
+    if (!res.ok) throw new Error(`Generate API HTTP ${res.status}`);
+    return await res.json();
+  }
+
+  async chatCompletion(options = {}) {
+    const res = await fetch(`${this.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: this._getHeaders(),
+      body: JSON.stringify(options),
+    });
+    if (!res.ok) throw new Error(`Chat Completions HTTP ${res.status}`);
+    return await res.json();
+  }
+
+  // ────────────────────────────────────────────────────────────
+  // DIAGNOSTICS & SYSTEM STATUS
+  // ────────────────────────────────────────────────────────────
+
+  async verifyAuth() {
+    const res = await fetch(`${this.baseUrl}/auth/verify`, {
+      method: 'GET',
+      headers: this._getHeaders(),
+    });
+    if (!res.ok) throw new Error(`Auth verification failed with status ${res.status}`);
+    return await res.json();
+  }
+
+  async listKeys() {
+    const res = await fetch(`${this.baseUrl}/keys`, {
+      method: 'GET',
+      headers: this._getHeaders(),
+    });
+    if (!res.ok) throw new Error(`Failed to list keys: HTTP ${res.status}`);
+    return await res.json();
+  }
+
+  async generateKey(label = 'discord_bot') {
+    const res = await fetch(`${this.baseUrl}/keys/generate`, {
+      method: 'POST',
+      headers: this._getHeaders(),
+      body: JSON.stringify({ label }),
+    });
+    if (!res.ok) throw new Error(`Failed to generate key: HTTP ${res.status}`);
+    return await res.json();
+  }
+
+  async getQueueStatus() {
+    const res = await fetch(`${this.baseUrl}/queue/status`, {
+      method: 'GET',
+      headers: this._getHeaders(),
+    });
+    if (!res.ok) throw new Error(`Failed to get queue status: HTTP ${res.status}`);
+    return await res.json();
+  }
+
   async getHealth() {
     const rootUrl = this.baseUrl.replace(/\/v1$/, '');
-    const response = await fetch(`${rootUrl}/health`, {
-      headers: { Authorization: `Bearer ${this.apiKey}` },
+    const res = await fetch(`${rootUrl}/health`, {
+      method: 'GET',
+      headers: this._getHeaders(),
     });
-    return await response.json();
+    if (!res.ok) throw new Error(`Failed to get health: HTTP ${res.status}`);
+    return await res.json();
   }
+}
+
+// Universal export support for CommonJS & ESM
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = { NexusAI, default: NexusAI };
 }
 
 export default NexusAI;

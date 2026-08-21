@@ -472,13 +472,12 @@ try {
     process.on('SIGTERM', () => bot.shutdown('SIGTERM'));
     process.on('SIGINT', () => bot.shutdown('SIGINT'));
     
-    process.on('uncaughtException', (error) => {
-      logger.error('Uncaught Exception:', error);
-      bot.shutdown('UNCAUGHT_EXCEPTION');
+    process.on('uncaughtException', (error, origin) => {
+      logger.error(`[Railway Shield] Uncaught Exception at ${origin}:`, error?.stack || error?.message || error);
     });
     
     process.on('unhandledRejection', (reason, promise) => {
-      logger.error('Unhandled Rejection at:', promise, 'reason:', reason);
+      logger.warn('[Railway Shield] Unhandled Rejection:', reason?.message || reason);
     });
   };
   
@@ -486,7 +485,6 @@ try {
   bot.start();
 } catch (error) {
   logger.error('Fatal error during bot startup:', error);
-  process.exit(1);
 }
 
 export default TitanBot;

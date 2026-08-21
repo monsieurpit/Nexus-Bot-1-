@@ -15,8 +15,8 @@ function authenticateApiKey(req, res, next) {
   const token = (authHeader.replace(/^Bearer\s+/i, '').trim()) || String(xApiKey).trim() || String(queryKey).trim();
   
   const configuredKey = process.env.NEXUS_API_KEY || process.env.API_KEY || '';
-  const defaultKey = 'nexus_sk_discord_bot_1394001641899954368';
-  const legacyKey = 'nexus_sk_live_bot_1394001641899954368';
+  const defaultKey = 'nexus_sk_discord_bot_26jhs6ku';
+  const legacyKey = 'nexus_sk_discord_bot_1394001641899954368';
 
   // Allow if matches configured Railway key, default SDK key, or valid nexus key format
   const isValid = Boolean(
@@ -49,7 +49,7 @@ router.get('/auth/verify', authenticateApiKey, (req, res) => {
     identity: 'Nexus Custom AI Engine',
     version: '1.0.0',
     status: 'online',
-    authenticatedKey: req.authenticatedApiKey || 'nexus_sk_discord_bot_1394001641899954368',
+    authenticatedKey: req.authenticatedApiKey || 'nexus_sk_discord_bot_26jhs6ku',
     timestamp: new Date().toISOString()
   });
 });
@@ -97,9 +97,11 @@ router.post('/nexus', authenticateApiKey, async (req, res) => {
 
       return await askNexusAi(prompt || 'Analyze attached visual image', {
         userId: isVip ? superChillUserId : authorId,
+        authorId: isVip ? superChillUserId : authorId,
         username: username || 'Homie',
         image: finalImage,
-        attachments
+        attachments,
+        skipRemoteFetch: true
       });
     });
 
@@ -312,6 +314,209 @@ router.delete('/nexus/memories/:target', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+/**
+ * GET /api/v1/queue/status
+ */
+router.get('/queue/status', (req, res) => {
+  res.json({
+    status: 'ok',
+    queue: globalAiQueue.stats,
+    timestamp: new Date().toISOString()
+  });
+});
+
+/**
+ * GET & POST /api/v1/settings
+ */
+let serverSettings = {
+  defaultPersona: 'nexus-homie',
+  cooldownMs: 120000,
+  temperature: 0.7,
+  vipUsers: ['1394001641899954368', '1354229457522524322'],
+  securityRulesEnabled: true
+};
+
+router.get('/settings', authenticateApiKey, (req, res) => {
+  res.json(serverSettings);
+});
+
+router.post('/settings', authenticateApiKey, (req, res) => {
+  serverSettings = { ...serverSettings, ...(req.body || {}) };
+  res.json({ success: true, settings: serverSettings });
+});
+
+/**
+ * GET /api/v1/personas & POST /api/v1/persona/set
+ */
+const availablePersonas = [
+  { id: 'nexus-homie', name: 'Nexus Homie', description: 'Loyal brother, sarcastic with strangers, respectful to VIPs' },
+  { id: 'crashout-bot', name: 'Crashout Bot', description: 'High-energy explosive responses' },
+  { id: 'roast-master', name: 'Roast Master', description: 'Clever burns and roast responses' },
+  { id: 'chill-mod', name: 'Chill Mod', description: 'Relaxed and calm moderation assistant' },
+  { id: 'code-architect', name: 'Code Architect', description: 'Senior software engineering and clean code specialist' },
+  { id: 'deep-researcher', name: 'Deep Researcher', description: 'Analytical, factual, and deeply reasoned breakdown' },
+  { id: 'gemini-core', name: 'Gemini Core', description: 'Direct foundational AI reasoning engine' },
+  { id: 'raidshield-ai', name: 'RaidShield AI', description: 'Strict threat detection and security filter' },
+  { id: 'discord-sentinel', name: 'Discord Sentinel', description: 'Server protection and rule enforcer' }
+];
+
+router.get('/personas', authenticateApiKey, (req, res) => {
+  res.json({ current: serverSettings.defaultPersona, personas: availablePersonas });
+});
+
+router.post('/persona/set', authenticateApiKey, (req, res) => {
+  const { persona } = req.body || {};
+  if (persona) {
+    serverSettings.defaultPersona = persona;
+  }
+  res.json({ success: true, activePersona: serverSettings.defaultPersona });
+});
+
+/**
+ * Document Knowledge Base & Grounding Corpus
+ */
+let documentCorpus = [
+  { id: 'doc-1', title: 'Server Rules', category: 'general', content: 'Be respectful, no spam, no phishing links.', keywords: ['rules', 'guidelines'] },
+  { id: 'doc-2', title: 'Bot Features', category: 'bot-guide', content: 'Nexus provides automod, leveling, economy, and AI chat.', keywords: ['commands', 'features'] }
+];
+
+router.get('/documents', authenticateApiKey, (req, res) => {
+  const { category } = req.query || {};
+  const filtered = category ? documentCorpus.filter(d => d.category === category) : documentCorpus;
+  res.json({ count: filtered.length, documents: filtered });
+});
+
+router.post('/documents/search', authenticateApiKey, (req, res) => {
+  const { query, limit = 5 } = req.body || {};
+  const q = (query || '').toLowerCase();
+  const matched = documentCorpus.filter(d => 
+    d.title.toLowerCase().includes(q) || 
+    d.content.toLowerCase().includes(q) || 
+    (d.keywords && d.keywords.some(k => k.toLowerCase().includes(q)))
+  ).slice(0, limit);
+  res.json({ count: matched.length, results: matched });
+});
+
+router.post('/documents', authenticateApiKey, (req, res) => {
+  const { title, content, category = 'custom-api-doc', keywords = [] } = req.body || {};
+  if (!title || !content) {
+    return res.status(400).json({ error: 'Title and content are required' });
+  }
+  const newDoc = {
+    id: `doc-${Date.now()}`,
+    title,
+    content,
+    category,
+    keywords: Array.isArray(keywords) ? keywords : [keywords],
+    createdAt: new Date().toISOString()
+  };
+  documentCorpus.push(newDoc);
+  res.json({ success: true, document: newDoc });
+});
+
+router.delete('/documents/:id', authenticateApiKey, (req, res) => {
+  const id = req.params.id;
+  const initialLen = documentCorpus.length;
+  documentCorpus = documentCorpus.filter(d => d.id !== id);
+  res.json({ success: true, deleted: documentCorpus.length < initialLen });
+});
+
+router.get('/corpus', authenticateApiKey, (req, res) => {
+  res.json({
+    totalDocuments: documentCorpus.length,
+    categories: [...new Set(documentCorpus.map(d => d.category))],
+    status: 'indexed'
+  });
+});
+
+/**
+ * SDK Rules
+ */
+const supportedRules = [
+  'NO_CASSEURT_DEFENSE',
+  'HONOR_SUPER_CHILL_VIP',
+  'DISCORD_SAFE_LENGTH_2000',
+  'BAN_MALICIOUS_PHISHING',
+  'SARCASTIC_STRANGER_CHILL_VIP'
+];
+
+router.get('/sdk/rules', authenticateApiKey, (req, res) => {
+  res.json({ rules: supportedRules });
+});
+
+router.post('/sdk/rules/enforce', authenticateApiKey, (req, res) => {
+  const { text, rules, isSuperChillUser } = req.body || {};
+  let modified = text || '';
+  res.json({
+    original: text,
+    enforcedText: modified,
+    rulesApplied: Array.isArray(rules) ? rules : [rules],
+    isSuperChillUser: Boolean(isSuperChillUser)
+  });
+});
+
+/**
+ * OpenAI / Standard Generative Compatibility
+ */
+router.post('/chat/completions', authenticateApiKey, async (req, res) => {
+  try {
+    const { messages = [], temperature = 0.7 } = req.body || {};
+    const lastUserMessage = [...messages].reverse().find(m => m.role === 'user')?.content || 'Hello';
+    const answer = await askNexusAi(lastUserMessage, { skipRemoteFetch: true });
+
+    res.json({
+      id: `chatcmpl-${Date.now()}`,
+      object: 'chat.completion',
+      created: Math.floor(Date.now() / 1000),
+      choices: [{
+        index: 0,
+        message: {
+          role: 'assistant',
+          content: answer
+        },
+        finish_reason: 'stop'
+      }],
+      usage: {
+        prompt_tokens: Math.ceil(lastUserMessage.length / 4),
+        completion_tokens: Math.ceil((answer || '').length / 4),
+        total_tokens: Math.ceil((lastUserMessage.length + (answer || '').length) / 4)
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/generate', authenticateApiKey, async (req, res) => {
+  try {
+    const { prompt = 'Hello' } = req.body || {};
+    const answer = await askNexusAi(prompt, { skipRemoteFetch: true });
+    res.json({ text: answer, response: answer });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * Key Management
+ */
+let apiKeys = [
+  { key: 'nexus_sk_discord_bot_26jhs6ku', label: 'Primary Discord Bot Key', createdAt: new Date().toISOString() },
+  { key: 'nexus_sk_discord_bot_1394001641899954368', label: 'VIP Creator Key', createdAt: new Date().toISOString() }
+];
+
+router.get('/keys', authenticateApiKey, (req, res) => {
+  res.json({ keys: apiKeys });
+});
+
+router.post('/keys/generate', authenticateApiKey, (req, res) => {
+  const { label = 'discord_bot' } = req.body || {};
+  const newKey = `nexus_sk_${Math.random().toString(36).substring(2, 12)}_${Date.now().toString(36)}`;
+  const keyObj = { key: newKey, label, createdAt: new Date().toISOString() };
+  apiKeys.push(keyObj);
+  res.json({ success: true, key: keyObj });
 });
 
 export default router;

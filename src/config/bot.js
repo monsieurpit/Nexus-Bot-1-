@@ -403,43 +403,32 @@ export const botConfig = {
 export function validateConfig(config) {
   const errors = [];
 
-  
+  const hasToken = !!(process.env.DISCORD_BOT_TOKEN || process.env.DISCORD_TOKEN || process.env.TOKEN || process.env.BOT_TOKEN);
+  const hasClientId = !!process.env.CLIENT_ID;
+
   if (process.env.NODE_ENV !== 'production') {
     logger.debug('Environment variables check:');
-    logger.debug('CLIENT_ID exists:', !!process.env.CLIENT_ID);
+    logger.debug('DISCORD_TOKEN / BOT_TOKEN exists:', hasToken);
+    logger.debug('CLIENT_ID exists:', hasClientId);
     logger.debug('GUILD_ID exists:', !!process.env.GUILD_ID);
     logger.debug('POSTGRES_HOST exists:', !!process.env.POSTGRES_HOST);
     logger.debug('NODE_ENV:', process.env.NODE_ENV);
   }
 
-  if (!process.env.DISCORD_TOKEN && !process.env.TOKEN) {
-    errors.push("Bot token is required (DISCORD_TOKEN or TOKEN environment variable)");
+  if (!hasToken) {
+    logger.warn('ℹ️ Discord token not found (DISCORD_BOT_TOKEN, DISCORD_TOKEN, or TOKEN). Bot running in API/dashboard mode.');
   }
 
-  if (!process.env.CLIENT_ID) {
-    errors.push("Client ID is required (CLIENT_ID environment variable)");
-  }
-
-  // Accept Firebase Firestore (default), or a Postgres connection URL / individual vars if provided
-  if (process.env.NODE_ENV === 'production') {
-    const hasFirebase = true; // Firebase Firestore is bundled via firebase-applet-config.json
-    const hasUrl = !!(process.env.POSTGRES_URL || process.env.DATABASE_URL || process.env.DATABASE_PUBLIC_URL || process.env.RAILWAY_URL || process.env.NEON_URL);
-    const hasIndividual = !!(process.env.POSTGRES_HOST && process.env.POSTGRES_USER && process.env.POSTGRES_PASSWORD);
-    if (!hasFirebase && !hasUrl && !hasIndividual) {
-      errors.push("Database connection required in production.");
-    }
+  if (!hasClientId) {
+    logger.info('ℹ️ CLIENT_ID not set in env; client ID will be auto-inferred from Discord client login.');
   }
 
   return errors;
 }
 
-
 const configErrors = validateConfig(botConfig);
 if (configErrors.length > 0) {
-  logger.error("Bot configuration errors:", configErrors.join("\n"));
-  if (process.env.NODE_ENV === "production") {
-    process.exit(1);
-  }
+  logger.warn("Bot configuration warnings:\n" + configErrors.join("\n"));
 }
 
 

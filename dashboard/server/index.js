@@ -28,6 +28,10 @@ if (!process.env.DATABASE_PUBLIC_URL && !process.env.DATABASE_URL && !process.en
 app.use(cors({ origin: '*' }))
 app.use(express.json())
 
+app.get('/health', (_req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() })
+})
+
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() })
 })
