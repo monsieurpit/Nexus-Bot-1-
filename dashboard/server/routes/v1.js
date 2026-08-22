@@ -15,8 +15,10 @@ function authenticateApiKey(req, res, next) {
   const token = (authHeader.replace(/^Bearer\s+/i, '').trim()) || String(xApiKey).trim() || String(queryKey).trim();
   
   const configuredKey = process.env.NEXUS_API_KEY || process.env.API_KEY || '';
-  const defaultKey = 'nexus_sk_discord_bot_26jhs6ku';
-  const legacyKey = 'nexus_sk_discord_bot_1394001641899954368';
+  const defaultKey = 'nexus_sk_live_a89f41b7e092c31d4e68bb507ef194';
+  const legacyKey = 'nexus_sk_discord_bot_emj9gp84';
+  const prevKey = 'nexus_sk_discord_bot_26jhs6ku';
+  const creatorKey = 'nexus_sk_discord_bot_1394001641899954368';
 
   // Allow if matches configured Railway key, default SDK key, or valid nexus key format
   const isValid = Boolean(
@@ -24,6 +26,8 @@ function authenticateApiKey(req, res, next) {
       (configuredKey && token === configuredKey) ||
       token === defaultKey ||
       token === legacyKey ||
+      token === prevKey ||
+      token === creatorKey ||
       token.startsWith('nexus_sk_') ||
       token.startsWith('sk-')
     )
@@ -49,7 +53,7 @@ router.get('/auth/verify', authenticateApiKey, (req, res) => {
     identity: 'Nexus Custom AI Engine',
     version: '1.0.0',
     status: 'online',
-    authenticatedKey: req.authenticatedApiKey || 'nexus_sk_discord_bot_26jhs6ku',
+    authenticatedKey: req.authenticatedApiKey || 'nexus_sk_live_a89f41b7e092c31d4e68bb507ef194',
     timestamp: new Date().toISOString()
   });
 });
@@ -435,6 +439,8 @@ router.get('/corpus', authenticateApiKey, (req, res) => {
  * SDK Rules
  */
 const supportedRules = [
+  'MANDATORY_SWEARING_ISSUE',
+  'MINIMUM_3_SWEAR_WORDS_PER_SENTENCE',
   'NO_CASSEURT_DEFENSE',
   'HONOR_SUPER_CHILL_VIP',
   'DISCORD_SAFE_LENGTH_2000',
@@ -503,7 +509,9 @@ router.post('/generate', authenticateApiKey, async (req, res) => {
  * Key Management
  */
 let apiKeys = [
-  { key: 'nexus_sk_discord_bot_26jhs6ku', label: 'Primary Discord Bot Key', createdAt: new Date().toISOString() },
+  { key: 'nexus_sk_live_a89f41b7e092c31d4e68bb507ef194', label: 'Master Live API Key', createdAt: new Date().toISOString() },
+  { key: 'nexus_sk_discord_bot_emj9gp84', label: 'Discord Bot API Key', createdAt: new Date().toISOString() },
+  { key: 'nexus_sk_discord_bot_26jhs6ku', label: 'Previous Production Key', createdAt: new Date().toISOString() },
   { key: 'nexus_sk_discord_bot_1394001641899954368', label: 'VIP Creator Key', createdAt: new Date().toISOString() }
 ];
 

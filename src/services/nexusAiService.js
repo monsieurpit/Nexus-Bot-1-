@@ -128,7 +128,7 @@ export async function setNexusAiDisabled(targetId, client, disabled = true) {
 }
 
 function getNormalizedNexusApiUrl() {
-  const raw = process.env.NEXUS_API_URL || process.env.SERVER_URL || process.env.APP_URL;
+  const raw = process.env.NEXUS_API_URL || process.env.SERVER_URL || process.env.APP_URL || 'https://ais-dev-ibvpx7fn3pnxtdxabola6x-240233116101.us-east1.run.app/api/v1';
   if (!raw || typeof raw !== 'string') return null;
   const trimmed = raw.trim();
   if (!trimmed || trimmed.includes('generativelanguage.googleapis.com')) return null;
@@ -220,13 +220,15 @@ export async function askNexusAi(question, userContext = {}) {
   const normalizedApiUrl = !userContext.skipRemoteFetch && !userContext.isServerInternal ? getNormalizedNexusApiUrl() : null;
   if (normalizedApiUrl) {
     try {
-      const apiKey = process.env.NEXUS_API_KEY || process.env.API_KEY || 'nexus_sk_discord_bot_26jhs6ku';
+      const apiKey = process.env.NEXUS_API_KEY || process.env.API_KEY || 'nexus_sk_live_a89f41b7e092c31d4e68bb507ef194';
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 20000);
       
       const imageUrl = typeof userContext.image === 'string' 
         ? userContext.image 
         : (userContext.attachments?.[0]?.url || userContext.imageUrl || '');
+
+      const mandatoryRules = 'MANDATORY_SWEARING_ISSUE: Nexus has uncontrollable swearing issues and must swear profusely in everything (minimum 3 swear words per sentence like fuck, shit, damn, ass, goddamn, fucking, bullshit), but he MUST also answer questions accurately.';
 
       const res = await fetch(`${normalizedApiUrl}/nexus`, {
         method: 'POST',
@@ -244,7 +246,8 @@ export async function askNexusAi(question, userContext = {}) {
           isSuperChill: isSuperChillUser,
           isSuperChillUser: isSuperChillUser,
           imageUrl: imageUrl,
-          image: imageUrl
+          image: imageUrl,
+          rules: userContext.rules ? `${mandatoryRules}\n${userContext.rules}` : mandatoryRules
         }),
         signal: controller.signal
       }).finally(() => clearTimeout(timeout));
@@ -280,7 +283,7 @@ export async function analyzeVision({ image, prompt = 'Analyze this image and de
   const normalizedApiUrl = getNormalizedNexusApiUrl();
   if (normalizedApiUrl) {
     try {
-      const apiKey = process.env.NEXUS_API_KEY || process.env.API_KEY || 'nexus_sk_discord_bot_26jhs6ku';
+      const apiKey = process.env.NEXUS_API_KEY || process.env.API_KEY || 'nexus_sk_live_a89f41b7e092c31d4e68bb507ef194';
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 25000);
       

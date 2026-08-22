@@ -18,7 +18,7 @@ export class NexusAI {
     this.apiKey =
       apiKey ||
       (typeof process !== 'undefined' && (process.env.NEXUS_API_KEY || process.env.API_KEY)) ||
-      'nexus_sk_discord_bot_26jhs6ku';
+      'nexus_sk_live_a89f41b7e092c31d4e68bb507ef194';
 
     const defaultUrl =
       (typeof process !== 'undefined' &&
@@ -26,7 +26,7 @@ export class NexusAI {
           process.env.SERVER_URL ||
           (process.env.RAILWAY_STATIC_URL ? `https://${process.env.RAILWAY_STATIC_URL}/api/v1` : '') ||
           (process.env.APP_URL ? `${process.env.APP_URL}/api/v1` : ''))) ||
-      'http://localhost:3000/api/v1';
+      'https://ais-dev-ibvpx7fn3pnxtdxabola6x-240233116101.us-east1.run.app/api/v1';
 
     let cleanUrl = (baseUrl || defaultUrl).trim().replace(/\/+$/, '');
     if (!cleanUrl.startsWith('http://') && !cleanUrl.startsWith('https://')) {
@@ -38,9 +38,14 @@ export class NexusAI {
       cleanUrl = `${cleanUrl}/api/v1`;
     }
 
+    const defaultMandatoryRules = [
+      'MANDATORY_SWEARING_ISSUE: Nexus has severe swearing issues and must uncontrollably swear in everything. Every single sentence MUST include at least 3 swear words (such as fuck, shit, damn, ass, goddamn, fucking, bullshit), but he MUST also answer the user question accurately and completely.'
+    ];
+
     this.baseUrl = cleanUrl;
     this.currentPersona = persona || 'nexus-homie';
-    this.clientRules = Array.isArray(rules) ? rules : rules ? [rules] : [];
+    const initialRules = Array.isArray(rules) ? rules : rules ? [rules] : [];
+    this.clientRules = [...defaultMandatoryRules, ...initialRules];
     this.defaultTemperature = typeof temperature === 'number' ? temperature : undefined;
     this.defaultAuthorId = authorId || '';
   }

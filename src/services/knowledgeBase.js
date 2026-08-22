@@ -281,6 +281,63 @@ export function extractEntityKnowledge(q = '', rawText = '', isVip = false, user
     return `Big happy birthday shoutout to **${targetName}**, bro! May their year be filled with huge achievements, good vibes, and zero fake bullshit! Celebrate big today!`;
   }
 
+  // ── 11. PHYSICS, ASTRONOMY & RELATIVITY ────────────────────────────────────
+  if (text.includes('quantum') || text.includes('schrodinger') || text.includes('schrödinger') || text.includes('relativity') || text.includes('black hole') || text.includes('speed of light') || text.includes('gravity')) {
+    if (text.includes('schrodinger') || text.includes('schrödinger') || text.includes('quantum superposition') || text.includes('quantum entanglement')) {
+      return `Quantum mechanics is mind-bending as fuck, no bullshit!\n\n` +
+        `• **Quantum Superposition**: A subatomic particle exists in all possible states simultaneously until measured, collapsing the wave function $\\psi$!\n` +
+        `• **Schrödinger's Cat**: Erwin Schrödinger's famous thought experiment highlighting the paradox of Copenhagen interpretation—a cat in a sealed box with radioactive decay remains both alive and dead until opened!\n` +
+        `• **Quantum Entanglement**: What Einstein called "spooky action at a distance"—two entangled particles remain instantaneously correlated across galaxies!`;
+    }
+    if (text.includes('relativity') || text.includes('einstein') || text.includes('e=mc^2') || text.includes('e = mc^2') || text.includes('e=mc2')) {
+      return `Albert Einstein's **General & Special Relativity** changed how we understand the fabric of the universe forever, no fucking bullshit!\n\n` +
+        `• **Special Relativity (1905)**: The speed of light ($c \\approx 299,792,458\\text{ m/s}$) is constant for all observers. As velocity approaches $c$, time dilates and mass increases ($E = mc^2$)!\n` +
+        `• **General Relativity (1915)**: Gravity is NOT a pulling force—it is the geometric warping and curvature of four-dimensional spacetime caused by mass and energy!`;
+    }
+    if (text.includes('black hole') || text.includes('event horizon') || text.includes('singularity')) {
+      return `**Black Holes** are the most extreme gravitational monsters in the cosmos, no fucking bullshit!\n\n` +
+        `• **Event Horizon**: The point of no return where the escape velocity exceeds the speed of light—once past it, nothing can escape.\n` +
+        `• **Singularity**: The gravitational center where spacetime curvature and density become infinite, breaking conventional physics!\n` +
+        `• **Hawking Radiation**: Stephen Hawking proved black holes slowly emit quantum thermal radiation over trillions of years until they evaporate!`;
+    }
+    return `Physics explains the fundamental mechanics of everything in reality, no fucking bullshit!\n\n` +
+      `• **Newton's Laws of Motion**: $F = ma$, inertia, and equal opposite reactions governing everyday kinetic reality.\n` +
+      `• **Thermodynamics**: Energy cannot be created or destroyed (First Law), and the entropy of an isolated system always increases (Second Law)!\n` +
+      `• **Fundamental Forces**: Gravity, Electromagnetism, Strong Nuclear Force, and Weak Nuclear Force!`;
+  }
+
+  // ── 12. BIOLOGY, DNA & PHOTOSYNTHESIS ──────────────────────────────────────
+  if (text.includes('photosynthesis') || text.includes('dna') || text.includes('mitochondria') || text.includes('evolution') || text.includes('crispr') || text.includes('cell')) {
+    if (text.includes('photosynthesis')) {
+      return `**Photosynthesis** is the biological powerhouse that fuels life on Earth, no fucking bullshit!\n\n` +
+        `• **Chemical Equation**: $6\\text{CO}_2 + 6\\text{H}_2\\text{O} + \\text{photons} \\implies \\text{C}_6\\text{H}_{12}\\text{O}_6 + 6\\text{O}_2$\n` +
+        `• **Light Reactions**: Chlorophyll inside chloroplasts absorbs solar photons, splitting water molecules and generating ATP and NADPH.\n` +
+        `• **Calvin Cycle (Dark Reactions)**: Fixes inorganic carbon dioxide into energy-rich glucose sugar, releasing oxygen for all of us to breathe!`;
+    }
+    if (text.includes('dna') || text.includes('genetics') || text.includes('rna') || text.includes('crispr')) {
+      return `**DNA (Deoxyribonucleic Acid)** is the four-letter chemical source code of biological existence, no fucking bullshit!\n\n` +
+        `• **Double Helix Structure**: Discovered by Watson, Crick, and Franklin, consisting of sugar-phosphate backbones and 4 nitrogenous bases: Adenine (A) pairs with Thymine (T), Guanine (G) pairs with Cytosine (C)!\n` +
+        `• **Transcription & Translation**: DNA transcribed to mRNA $\\implies$ translated by ribosomes into complex proteins.\n` +
+        `• **CRISPR-Cas9**: Bacterial immune mechanism adapted for precise genomic editing with molecular precision!`;
+    }
+    return `Biology is the intricate science of organic life, cellular machinery, and evolutionary adaptation across billions of years, no fucking bullshit!`;
+  }
+
+  // ── 13. COMPUTING, NETWORKING & LINUX ─────────────────────────────────────
+  if (text.includes('tcp/ip') || text.includes('how does the internet work') || text.includes('linux kernel') || text.includes('dns') || text.includes('how does dns work') || text.includes('websocket')) {
+    if (text.includes('dns')) {
+      return `**DNS (Domain Name System)** is the phonebook of the entire internet, no fucking bullshit!\n\n` +
+        `1. **Browser Request**: You enter \`discord.com\` $\\implies$ browser checks local cache.\n` +
+        `2. **Recursive Resolver**: Queries Root Servers ($\`.$\`), then TLD Nameservers ($\`.com$\`), then Authoritative Nameservers.\n` +
+        `3. **A/AAAA Record**: Returns the IP address (e.g. \`162.159.130.233\`) back to your machine in under 20 milliseconds!\n` +
+        `4. **TCP Handshake**: Your browser establishes a TLS connection to the IP and pulls web content!`;
+    }
+    return `Modern computer networks run on the **TCP/IP stack** (Application, Transport, Network, Link), no fucking bullshit!\n\n` +
+      `• **TCP**: Connection-oriented protocol with 3-way handshakes (SYN, SYN-ACK, ACK) and reliable packet ordering.\n` +
+      `• **UDP**: Low-latency, connectionless protocol perfect for real-time Discord voice audio and online gaming.\n` +
+      `• **Linux OS**: Powers over 90% of global cloud servers, supercomputers, and backend microservices!`;
+  }
+
   return null;
 }
 

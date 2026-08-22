@@ -32,18 +32,30 @@ test('evaluateRaidShieldDirect classifies phishing, scams, and safe content', ()
   assert.equal(safe.classification, 'safe');
 });
 
-test('askNexusAi integrates Casseurt crash-out roasts and Nexus Brain fallback', async () => {
+test('askNexusAi integrates Casseurt crash-out roasts, swearing rules and Nexus Brain fallback', async () => {
   // Casseurt trigger
   const casseurtResp = await askNexusAi('do you like casseurt', { userId: '1394001641899954368' });
   assert.ok(casseurtResp.toLowerCase().includes('casseurt'));
 
-  // Math question
+  // Physical How-To Action: apple from bowl
+  const appleResp = await askNexusAi('how to remove an apple from a bowl', { userId: '1394001641899954368' });
+  assert.ok(appleResp.includes('apple') && appleResp.includes('bowl'));
+  assert.ok(appleResp.includes('Approach & Locate') || appleResp.includes('Grip Firmly') || appleResp.includes('Lift Upward'));
+  assert.ok(/fuck|shit|damn|ass|goddamn|bullshit/i.test(appleResp));
+
+  // Math question - accurate result + swearing
   const mathResp = await askNexusAi('what is 10 + 25', { userId: '1394001641899954368' });
   assert.ok(mathResp.includes('35'));
+  assert.ok(/fuck|shit|damn|ass|goddamn|bullshit/i.test(mathResp));
+
+  // Deductive Logic Engine
+  const logicResp = await askNexusAi('all dogs are animals and all animals are living', { userId: '1394001641899954368' });
+  assert.ok(logicResp.includes('dogs') && logicResp.includes('living'));
 
   // General conversational query
   const identityResp = await askNexusAi('who are you', { userId: '1394001641899954368' });
   assert.ok(identityResp.includes('Nexus'));
+  assert.ok(/fuck|shit|damn|ass|goddamn|bullshit/i.test(identityResp));
 });
 
 test('setNexusAiDisabled and isNexusAiDisabled manage toggle states', async () => {

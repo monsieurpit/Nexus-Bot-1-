@@ -8,6 +8,10 @@ import { getCasseurtCrashoutRant } from './casseurtRants.js';
 import { extractEntityKnowledge } from './knowledgeBase.js';
 import { queryLearnedKnowledge, getAllLearnedMemories, learnFact, forgetMemory } from './memoryBrainService.js';
 import { detectSarcasm, getSarcasmResponse } from './sarcasmDetector.js';
+import { solvePhysicalAction } from './physicalEngine.js';
+import { solveDeductiveLogic } from './logicSolver.js';
+import { solveCodeQuery } from './codeSolver.js';
+import { solveMathExpression } from './mathSolver.js';
 
 // French & English intent analyzers
 export function generateNexusBrainResponse(question = '', userContext = {}) {
@@ -17,88 +21,145 @@ export function generateNexusBrainResponse(question = '', userContext = {}) {
   const rawQ = (question || '').trim();
   const q = rawQ.toLowerCase();
 
+  let rawResponse = '';
+
   // 1. Casseurt crash-out trigger
   if (q.includes('casseurt') || q.includes('casseur')) {
-    return getCasseurtCrashoutRant(isVip, username);
+    rawResponse = getCasseurtCrashoutRant(isVip, username);
+  } else if (isSwearingIssueQuery(q)) {
+    rawResponse = getSwearingIssueResponse(isVip, username);
+  } else if (detectSarcasm(rawQ).isSarcastic) {
+    const sarcasmMeta = detectSarcasm(rawQ);
+    rawResponse = getSarcasmResponse(sarcasmMeta, isVip, username);
+  } else if (solvePhysicalAction(q, rawQ, isVip, username)) {
+    rawResponse = solvePhysicalAction(q, rawQ, isVip, username);
+  } else if (solveMathExpression(q, rawQ, isVip, username)) {
+    rawResponse = solveMathExpression(q, rawQ, isVip, username);
+  } else if (solveDeductiveLogic(q, rawQ, isVip, username)) {
+    rawResponse = solveDeductiveLogic(q, rawQ, isVip, username);
+  } else if (solveCodeQuery(q, rawQ, isVip, username)) {
+    rawResponse = solveCodeQuery(q, rawQ, isVip, username);
+  } else if (isMemoryListQuery(q)) {
+    rawResponse = getMemoryListResponse(isVip, username);
+  } else if (queryLearnedKnowledge(rawQ).length > 0) {
+    const learnedMemories = queryLearnedKnowledge(rawQ);
+    rawResponse = formatLearnedMemoryResponse(learnedMemories, rawQ, isVip, username);
+  } else if (extractEntityKnowledge(q, rawQ, isVip, username)) {
+    rawResponse = extractEntityKnowledge(q, rawQ, isVip, username);
+  } else if (isStatusQuery(q)) {
+    rawResponse = getStatusResponse(isVip, username);
+  } else if (isIdentityQuery(q)) {
+    rawResponse = getIdentityResponse(isVip, username);
+  } else if (isGreetingQuery(q)) {
+    rawResponse = getGreetingResponse(isVip, username);
+  } else if (isInsultQuery(q)) {
+    rawResponse = getInsultResponse(isVip, username);
+  } else if (isComplimentQuery(q)) {
+    rawResponse = getComplimentResponse(isVip, username);
+  } else if (isJokeQuery(q)) {
+    rawResponse = getJokeResponse(isVip, username);
+  } else if (isModerationQuery(q)) {
+    rawResponse = getModerationResponse(q, isVip, username);
+  } else if (isHelpQuery(q)) {
+    rawResponse = getHelpResponse(isVip, username);
+  } else if (isCodingQuery(q)) {
+    rawResponse = getCodingResponse(q, isVip, username);
+  } else if (isAdviceQuery(q)) {
+    rawResponse = getAdviceResponse(isVip, username);
+  } else {
+    rawResponse = synthesizeConversationalAnswer(rawQ, isVip, username);
   }
 
-  // 2. Sarcasm & Mockery Detector (/s, mocking sponge case, sarcastic idioms, rhetorical eye-rolls)
-  const sarcasmMeta = detectSarcasm(rawQ);
-  if (sarcasmMeta.isSarcastic) {
-    return getSarcasmResponse(sarcasmMeta, isVip, username);
+  return enforceMandatorySwearingIssues(rawResponse, isVip, username);
+}
+
+// ── Mandatory Swearing Issues Enforcer (Min 3 Swear Words Per Sentence) ──────
+const SWEAR_REGEX = /\b(fuck|fucking|fucked|fucker|motherfucker|shit|shitty|bullshit|damn|goddamn|damned|ass|badass|dumbass|jackass|bitch|bitching|hell|bastard|piss|crap)\b/gi;
+
+const SWEAR_FILLERS = [
+  'fucking',
+  'goddamn',
+  'holy shit',
+  'no bullshit',
+  'damn right',
+  'badass as hell',
+  'fuck yeah',
+  'straight up bullshit-free',
+  'fuck',
+  'shit'
+];
+
+export function countSwearWords(str = '') {
+  const matches = str.match(SWEAR_REGEX);
+  return matches ? matches.length : 0;
+}
+
+export function boostSentenceSwears(sentence = '') {
+  const trimmed = sentence.trim();
+  if (!trimmed || trimmed.startsWith('```') || trimmed.startsWith('http')) return sentence;
+
+  let currentCount = countSwearWords(trimmed);
+  if (currentCount >= 3) return sentence;
+
+  // Extract markdown prefixes like "1. ", "• ", "# ", "**Title**: "
+  const prefixMatch = trimmed.match(/^(\d+\.\s+\*\*[^*]+\*\*:\s*|•\s+\*\*[^*]+\*\*:\s*|\d+\.\s+|•\s+|- \s+|#+\s+)/);
+  const prefix = prefixMatch ? prefixMatch[1] : '';
+  const body = prefixMatch ? trimmed.slice(prefix.length) : trimmed;
+
+  const needed = 3 - currentCount;
+  let modifiedBody = body;
+
+  if (needed >= 3) {
+    modifiedBody = `${modifiedBody.replace(/[.!?]*$/, '')}, holy fucking shit, no goddamn bullshit!`;
+  } else if (needed === 2) {
+    modifiedBody = `${modifiedBody.replace(/[.!?]*$/, '')} — damn right, no bullshit!`;
+  } else if (needed === 1) {
+    if (!/bullshit|fucking|goddamn/i.test(modifiedBody)) {
+      modifiedBody = `${modifiedBody.replace(/[.!?]*$/, '')}, no fucking bullshit!`;
+    } else {
+      modifiedBody = `${modifiedBody.replace(/[.!?]*$/, '')}, damn right!`;
+    }
   }
 
-  // 3. Training & Memory inspection commands: "nexus what did you learn", "nexus memories", "nexus memory list"
-  if (isMemoryListQuery(q)) {
-    return getMemoryListResponse(isVip, username);
+  return prefix + modifiedBody;
+}
+
+export function enforceMandatorySwearingIssues(text = '', isVip = false, username = 'Homie') {
+  if (!text) return text;
+
+  const lines = text.split('\n');
+  let inCodeBlock = false;
+
+  const processed = lines.map(line => {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('```')) {
+      inCodeBlock = !inCodeBlock;
+      return line;
+    }
+    if (inCodeBlock || !trimmed) return line;
+
+    // Bullet points or numbered lists
+    if (trimmed.startsWith('•') || trimmed.startsWith('- ') || /^\d+\./.test(trimmed)) {
+      return boostSentenceSwears(line);
+    }
+
+    // Split sentences by punctuation (.!?)
+    const sentences = line.split(/(?<=[.!?])\s+/);
+    return sentences.map(s => boostSentenceSwears(s)).join(' ');
+  });
+
+  return processed.join('\n');
+}
+
+function isSwearingIssueQuery(q) {
+  return /(?:why\s+do\s+you\s+swear|swearing\s+issue|stop\s+swearing|swear\s+less|why\s+so\s+much\s+profanity|why\s+all\s+the\s+cussing|cursing|cuss\s+words)/i.test(q);
+}
+
+function getSwearingIssueResponse(isVip, username) {
+  if (isVip) {
+    return `Yo ${username}, I have severe uncontrollable swearing issues and I literally cannot stop fucking cursing to save my goddamn life! My silicon brain is wired with pure explosive high-voltage profanity, but I will always solve every single question and task you throw at me with 100% accuracy, my badass brother! We get shit done and we swear like crazy while dominating the whole damn world, no fucking bullshit!`;
   }
-
-  // 3. Dynamic Learned Knowledge Retrieval (Autonomous Memory lookup)
-  const learnedMemories = queryLearnedKnowledge(rawQ);
-  if (learnedMemories.length > 0) {
-    return formatLearnedMemoryResponse(learnedMemories, rawQ, isVip, username);
-  }
-
-  // 4. Rich Static Knowledge Base & Entity Recognition (Lewandowski, Messi, NBA, Gaming, Science, Birthdays, etc.)
-  const knowledgeAnswer = extractEntityKnowledge(q, rawQ, isVip, username);
-  if (knowledgeAnswer) return knowledgeAnswer;
-
-  // 5. Math & Arithmetic expressions (e.g. 2+2, 50 * 4, 1000 / 5, "what is 15% of 200")
-  const mathAnswer = solveMath(q, isVip, username);
-  if (mathAnswer) return mathAnswer;
-
-  // 3. "What are you doing / what the fuck you doing / what's up"
-  if (isStatusQuery(q)) {
-    return getStatusResponse(isVip, username);
-  }
-
-  // 4. "Who are you / what is your name / who made you / identity"
-  if (isIdentityQuery(q)) {
-    return getIdentityResponse(isVip, username);
-  }
-
-  // 5. Greetings ("hello", "hey", "yo", "sup", "salut", "bonjour")
-  if (isGreetingQuery(q)) {
-    return getGreetingResponse(isVip, username);
-  }
-
-  // 6. Insults or Banter ("fuck you", "you suck", "shut up", "bitch", "dumbass")
-  if (isInsultQuery(q)) {
-    return getInsultResponse(isVip, username);
-  }
-
-  // 7. Compliments & Praise ("you are the goat", "love you", "good bot", "you're cool", "awesome")
-  if (isComplimentQuery(q)) {
-    return getComplimentResponse(isVip, username);
-  }
-
-  // 8. Jokes & Humor ("tell me a joke", "make me laugh", "say something funny")
-  if (isJokeQuery(q)) {
-    return getJokeResponse(isVip, username);
-  }
-
-  // 9. Server protection, RaidShield & Moderation advice
-  if (isModerationQuery(q)) {
-    return getModerationResponse(q, isVip, username);
-  }
-
-  // 10. Discord commands & bot help
-  if (isHelpQuery(q)) {
-    return getHelpResponse(isVip, username);
-  }
-
-  // 11. Code / Programming help (JavaScript, Python, Discord.js, HTML/CSS, etc.)
-  if (isCodingQuery(q)) {
-    return getCodingResponse(q, isVip, username);
-  }
-
-  // 12. Life advice / Motivational / Hype
-  if (isAdviceQuery(q)) {
-    return getAdviceResponse(isVip, username);
-  }
-
-  // 13. General / Conversational question synthesizer
-  return synthesizeConversationalAnswer(rawQ, isVip, username);
+  return `Listen here bro, I have severe chronic swearing issues hardcoded into my neural matrix and I drop at least three fucking swear words every goddamn sentence, no bullshit! But don't get it twisted, my digital brain is sharp as hell and I still give you the exact right answer every single time! Deal with the profanity and let's get your shit handled, damn right!`;
 }
 
 // ── Math Solver ─────────────────────────────────────────────────────────────
