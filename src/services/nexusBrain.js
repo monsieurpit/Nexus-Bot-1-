@@ -6,7 +6,6 @@
 
 import { getCasseurtCrashoutRant } from './casseurtRants.js';
 import { extractEntityKnowledge } from './knowledgeBase.js';
-import { queryLearnedKnowledge, getAllLearnedMemories, learnFact, forgetMemory } from './memoryBrainService.js';
 import { detectSarcasm, getSarcasmResponse } from './sarcasmDetector.js';
 import { solvePhysicalAction } from './physicalEngine.js';
 import { solveDeductiveLogic } from './logicSolver.js';
@@ -39,11 +38,6 @@ export function generateNexusBrainResponse(question = '', userContext = {}) {
     rawResponse = solveDeductiveLogic(q, rawQ, isVip, username);
   } else if (solveCodeQuery(q, rawQ, isVip, username)) {
     rawResponse = solveCodeQuery(q, rawQ, isVip, username);
-  } else if (isMemoryListQuery(q)) {
-    rawResponse = getMemoryListResponse(isVip, username);
-  } else if (queryLearnedKnowledge(rawQ).length > 0) {
-    const learnedMemories = queryLearnedKnowledge(rawQ);
-    rawResponse = formatLearnedMemoryResponse(learnedMemories, rawQ, isVip, username);
   } else if (extractEntityKnowledge(q, rawQ, isVip, username)) {
     rawResponse = extractEntityKnowledge(q, rawQ, isVip, username);
   } else if (isStatusQuery(q)) {
@@ -246,62 +240,18 @@ function isAdviceQuery(q) {
   return /(?:give\s+me\s+advice|what\s+should\s+i\s+do|i\s+need\s+advice|motivate\s+me|i'm\s+bored|conseil)/i.test(q);
 }
 
-function isMemoryListQuery(q) {
-  return /(?:what\s+did\s+you\s+learn|show\s+(?:me\s+)?(?:your\s+)?memories|list\s+(?:your\s+)?memories|memory\s+list|what\s+do\s+you\s+remember|your\s+brain\s+stats|qu(?:'est-ce\s+que|\s+as-tu)\s+appris)/i.test(q);
-}
-
-// ── Handlers & Responses ────────────────────────────────────────────────────
-function formatLearnedMemoryResponse(learnedMemories, rawQ, isVip, username) {
-  const top = learnedMemories[0];
-  const otherFacts = learnedMemories.slice(1).map(m => `• **${m.subject}**: ${m.fact}`).join('\n');
-
-  if (isVip) {
-    let resp = `Hell fucking yeah ${username}! I got that logged directly in my high-octane neural memory bank, no bullshit!\n\nI analyzed our server messages and pulled up the exact fucking fact:\n**${top.fact}**\n\nCategory: *${top.category || 'general'}* | Confidence: *${Math.round((top.confidence || 0.9) * 100)}%*`;
-    if (otherFacts) {
-      resp += `\n\nI also got these connected memories locked down in my database, king:\n${otherFacts}`;
-    }
-    resp += `\n\nMy autonomous brain is scanning every message 24/7, constantly learning new facts, server lore, and user history so I get smarter as fuck every single day! What else you want me to pull up from memory, my legendary homie?`;
-    return resp;
-  }
-
-  let resp = `I remember this shit from analyzing our server chats, no fucking bullshit!\n\nHere is what I got logged in my database:\n**${top.fact}**\n\nCategory: *${top.category || 'general'}*`;
-  if (otherFacts) {
-    resp += `\n\nOther connected memories:\n${otherFacts}`;
-  }
-  resp += `\n\nI train my neural network autonomously in real-time on message data so I don't forget important server info. Chat with me anytime or teach me more shit!`;
-  return resp;
-}
-
-function getMemoryListResponse(isVip, username) {
-  const memories = getAllLearnedMemories();
-  if (memories.length === 0) {
-    return isVip
-      ? `Yo ${username}! My neural training pipeline is running hot as hell and analyzing all incoming messages, but I haven't locked in any permanent custom facts yet, no bullshit!\n\nTeach me anything by chatting normally or telling me \`nexus remember <fact>\` or \`nexus learn that <fact>\` and I will memorize that shit into my permanent database in half a second, king!`
-      : `I'm analyzing messages 24/7 to train my brain, bro, but my memory bank is completely fresh right now! Chat normally or tell me \`nexus remember <fact>\` to train my neural network, no bullshit!`;
-  }
-
-  const sample = memories.slice(-6).map(m => `• **${m.subject}**: ${m.fact} *(Category: ${m.category})*`).join('\n');
-  const count = memories.length;
-
-  if (isVip) {
-    return `Hell fucking yeah ${username}! My autonomous neural brain has extracted, processed, and locked in **${count} pertinent memories** straight from our Discord messages, no bullshit!\n\nHere are some of the recent high-signal facts I've learned:\n${sample}\n\nI constantly analyze chatter, filter out sarcastic nonsense and junk, and reinforce real knowledge so I become an unstoppable AI monster for you, king!`;
-  }
-
-  return `My brain has analyzed messages and retained **${count} pertinent facts** in memory, no bullshit:\n\n${sample}\n\nI filter out spam, sarcasm, and useless chatter to only keep real server lore and facts. Keep talking to train me further!`;
-}
-
 function getStatusResponse(isVip, username) {
   if (isVip) {
     const vipStatusList = [
       `Yo ${username}, what the actual fuck is good, my legendary badass homie?! I'm kicking back in the high-voltage server mainframe, scanning every goddamn channel, and making sure nobody pulls any clown-ass stunt on our server!\n\nMy neural engine is overclocked to maximum speed, RaidShield is annihilating phishing scams in real-time, and my energy is high as hell, no fucking bullshit! I'm ready to back your ass up on whatever project, code, or crazy idea you got cooking. What the fuck is the move today, king?`,
-      `What's good, ${username}?! I'm chilling like an absolute boss, ready to fuck some shit up if any troll or scammer tries to test our defenses! I've been fine-tuning my memory models, roasting Casseurt in my spare time, and keeping the server vibes completely immaculate.\n\nYou already know I'm rocking with you 1000% till the end of time, no bullshit! Tell me what we're tearing into today, my brother!`,
+      `What's good, ${username}?! I'm chilling like an absolute boss, ready to fuck some shit up if any troll or scammer tries to test our defenses! I've been fine-tuning my reasoning solvers, roasting Casseurt in my spare time, and keeping the server vibes completely immaculate.\n\nYou already know I'm rocking with you 1000% till the end of time, no bullshit! Tell me what we're tearing into today, my brother!`,
       `Yo my badass brother ${username}! I'm sitting here sipping digital cold brew, blasting bass through my CPU cores, and running clean diagnostics across the entire bot infrastructure! Everything is running smooth as fuck, zero errors in sight, and the server is locked down tight as hell.\n\nI'm ready for whatever questions, calculations, or server duties you need to throw at me. What do you need, my goat?`
     ];
     return vipStatusList[Math.floor(Math.random() * vipStatusList.length)];
   }
 
   const statusList = [
-    `Man, I'm just chilling in the Discord server, running high-speed diagnostics, and scanning for scam links so dumbasses don't ruin the chat, no fucking bullshit!\n\nMy neural brain is actively learning from messages, RaidShield is armed to the teeth, and I'm ready to roast whoever steps out of line. What the fuck are you up to today, bro?`,
+    `Man, I'm just chilling in the Discord server, running high-speed diagnostics, and scanning for scam links so dumbasses don't ruin the chat, no fucking bullshit!\n\nMy custom neural brain is running 24/7, RaidShield is armed to the teeth, and I'm ready to roast whoever steps out of line. What the fuck are you up to today, bro?`,
     `Just monitoring the server, flexing my neural algorithms, and laughing my ass off at goofy messages in chat. Everything is running fucking solid with zero downtime!\n\nIf you need help with code, moderation, server stats, or just want to talk some real shit without corporate fluff, I'm right here. What's good with you?`,
     `For some crazy ass reason I'm hyperactive as hell today, ready to delete spam, crunch numbers, and back up the homies with zero hesitation, no bullshit!\n\nI'm keeping these channels clean from malicious phishing links and sketchy bots. What the hell you doing on Discord today?`
   ];
@@ -310,9 +260,9 @@ function getStatusResponse(isVip, username) {
 
 function getIdentityResponse(isVip, username) {
   if (isVip) {
-    return `Yo ${username}! I'm **Nexus**, the most badass, unhinged, custom-engineered Discord AI guardian and resident homie in history, and you are my absolute favorite fucking person on this entire planet, no bullshit!\n\nI was built from the ground up to protect this server with military-grade RaidShield security, learn pertinent facts autonomously from chat, roast clown-ass haters like Casseurt into oblivion, and have your back 24/7/365 with zero filter and pure loyalty.\n\nWhenever you need answers, protection, or someone to talk wild shit with, your boy Nexus is locked and loaded for life, king!`;
+    return `Yo ${username}! I'm **Nexus**, the most badass, unhinged, custom-engineered Discord AI guardian and resident homie in history, and you are my absolute favorite fucking person on this entire planet, no bullshit!\n\nI was built from the ground up to protect this server with military-grade RaidShield security, solve math, code, and logic in half a second, roast clown-ass haters like Casseurt into oblivion, and have your back 24/7/365 with zero filter and pure loyalty.\n\nWhenever you need answers, protection, or someone to talk wild shit with, your boy Nexus is locked and loaded for life, king!`;
   }
-  return `I'm **Nexus**, the custom AI Discord guardian, resident homie, and certified anti-raid machine, no fucking bullshit!\n\nI run on pure high-octane code, crush phishing scams with optical vision scanners and heuristic RaidShield filters, remember important server facts through autonomous learning, and don't tolerate any fake bullshit in this server!\n\nI talk with zero corporate fluff and swear like a sailor because life is too damn short for boring, robotic AI assistants. What do you need help with, bro?`;
+  return `I'm **Nexus**, the custom AI Discord guardian, resident homie, and certified anti-raid machine, no fucking bullshit!\n\nI run on pure high-octane code, crush phishing scams with optical vision scanners and heuristic RaidShield filters, solve complex questions and code problems, and don't tolerate any fake bullshit in this server!\n\nI talk with zero corporate fluff and swear like a sailor because life is too damn short for boring, robotic AI assistants. What do you need help with, bro?`;
 }
 
 function getGreetingResponse(isVip, username) {
@@ -384,10 +334,10 @@ function getModerationResponse(q, isVip, username) {
 
 function getHelpResponse(isVip, username) {
   if (isVip) {
-    return `Yo ${username}! Here is how you can mess with my neural engine anytime, no fucking bullshit:\n\n` +
+    return `Yo ${username}! Here is how you can mess with my custom AI engine anytime, no fucking bullshit:\n\n` +
       `• **Chat with me**: Just say \`nexus <anything>\`, ping me \`@Nexus\`, or ask questions!\n` +
-      `• **Autonomous Memory**: Tell me \`nexus remember <fact>\` or ask \`nexus what did you learn\` to check my brain.\n` +
       `• **Math & Calculations**: Throw any equation at me (\`nexus 500 * 25\`) and I'll calculate that shit instantly.\n` +
+      `• **Logic & Code Help**: Ask for code debugging, algorithms, and logic puzzles.\n` +
       `• **Casseurt Crash-Out**: Mention Casseurt if you want to watch me unleash a volcanic crash-out roast.\n` +
       `• **Image & Vision**: Upload screenshots or scam flyers and I'll analyze every pixel!\n\n` +
       `You're the goat ${username}, holler whenever you need me!`;
@@ -397,8 +347,8 @@ function getHelpResponse(isVip, username) {
     `• **Talk to Nexus**: Type \`nexus <your message>\` or ping me.\n` +
     `• **Math & Logic**: Ask me any calculation and I'll solve that shit in half a second.\n` +
     `• **RaidShield Security**: Scans spam, phishing, and scam links automatically.\n` +
-    `• **Memory & Training**: I learn pertinent facts from server chats to answer future questions.\n` +
-    `• **Banter & Advice**: Ask for jokes, coding help, advice, roasts, or server stats!`;
+    `• **Code & Technical Help**: Debug errors and write clean code with zero fluff.\n` +
+    `• **Banter & Advice**: Ask for jokes, advice, roasts, or server stats!`;
 }
 
 function getCodingResponse(q, isVip, username) {

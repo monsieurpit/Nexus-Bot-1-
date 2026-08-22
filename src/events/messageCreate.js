@@ -15,7 +15,6 @@ import { handleStickyNote } from '../services/stickyNoteService.js';
 import { handleNexusAiMessage } from '../services/nexusAiService.js';
 import { recordWeeklyStat } from '../services/weeklySummaryService.js';
 import { handleDirectMessage } from '../services/dmService.js';
-import { analyzeMessageForKnowledge } from '../services/memoryBrainService.js';
 
 const MESSAGE_XP_RATE_LIMIT_ATTEMPTS = 12;
 const MESSAGE_XP_RATE_LIMIT_WINDOW_MS = 10000;
@@ -81,10 +80,6 @@ export default {
         ),
         handleStickyNote(message, client).catch(err =>
           logger.debug('Error in sticky note handling:', err)
-        ),
-        // Autonomous AI message analyzer & pertinent knowledge learning
-        analyzeMessageForKnowledge(message).catch(err =>
-          logger.debug('Error in knowledge extraction analyzer:', err)
         ),
       ]);
 

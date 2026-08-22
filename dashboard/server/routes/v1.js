@@ -1,7 +1,6 @@
 import express from 'express';
 import { askNexusAi, analyzeVision, resolveImagePart, getCasseurtCrashoutRant } from '../../../src/services/nexusAiService.js';
 import { globalAiQueue } from '../../../src/utils/requestQueue.js';
-import { getAllLearnedMemories, learnFact, forgetMemory } from '../../../src/services/memoryBrainService.js';
 
 const router = express.Router();
 
@@ -272,52 +271,34 @@ router.post('/vision/analyze', authenticateApiKey, async (req, res) => {
 
 /**
  * GET /api/v1/nexus/memories
- * Returns all autonomous learned memories & facts
+ * Returns memories count (training disabled - stateless custom AI)
  */
 router.get('/nexus/memories', (req, res) => {
-  const memories = getAllLearnedMemories();
   res.json({
-    count: memories.length,
-    memories,
+    count: 0,
+    memories: [],
+    trainingEnabled: false,
+    message: 'Nexus AI operates as a pure custom AI engine with fact training disabled.',
     timestamp: new Date().toISOString()
   });
 });
 
 /**
  * POST /api/v1/nexus/memories
- * Explicitly teach or inject a pertinent fact into Nexus's brain
  */
 router.post('/nexus/memories', async (req, res) => {
-  try {
-    const { subject, relation, fact, category, author } = req.body || {};
-    if (!subject || !fact) {
-      return res.status(400).json({ error: 'Subject and fact are required' });
-    }
-    const learned = await learnFact({
-      subject,
-      relation: relation || 'fact',
-      fact,
-      category: category || 'manual_training',
-      author: author || 'Dashboard Admin'
-    });
-    res.json({ success: true, memory: learned });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  res.json({
+    success: true,
+    trainingEnabled: false,
+    message: 'Fact training is disabled. Nexus AI operates as a standalone customized AI engine.'
+  });
 });
 
 /**
  * DELETE /api/v1/nexus/memories/:target
- * Forget a memory by ID or subject
  */
 router.delete('/nexus/memories/:target', async (req, res) => {
-  try {
-    const target = req.params.target;
-    const deletedCount = await forgetMemory(target);
-    res.json({ success: true, deletedCount });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  res.json({ success: true, deletedCount: 0 });
 });
 
 /**
@@ -361,7 +342,7 @@ const availablePersonas = [
   { id: 'chill-mod', name: 'Chill Mod', description: 'Relaxed and calm moderation assistant' },
   { id: 'code-architect', name: 'Code Architect', description: 'Senior software engineering and clean code specialist' },
   { id: 'deep-researcher', name: 'Deep Researcher', description: 'Analytical, factual, and deeply reasoned breakdown' },
-  { id: 'gemini-core', name: 'Gemini Core', description: 'Direct foundational AI reasoning engine' },
+  { id: 'nexus-core', name: 'Nexus Core', description: 'Direct foundational Nexus AI reasoning engine' },
   { id: 'raidshield-ai', name: 'RaidShield AI', description: 'Strict threat detection and security filter' },
   { id: 'discord-sentinel', name: 'Discord Sentinel', description: 'Server protection and rule enforcer' }
 ];
