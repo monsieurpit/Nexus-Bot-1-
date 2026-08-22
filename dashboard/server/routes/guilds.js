@@ -5,6 +5,10 @@ import {
   syncBarcelonaFixturesFromApi,
   getFootballApiStatus
 } from '../../../src/services/footballService.js'
+import {
+  getServerCounters,
+  saveServerCounters
+} from '../../../src/services/serverstatsService.js'
 
 const router = Router()
 
@@ -338,6 +342,51 @@ router.post('/:guildId/football/sync', async (_req, res, next) => {
     const updated = await syncBarcelonaFixturesFromApi()
     const status = getFootballApiStatus()
     res.json({ success: true, count: updated.length, status })
+  } catch (err) {
+    next(err)
+  }
+})
+
+// Server Stats & Counters endpoints
+router.get('/:guildId/counters', async (req, res, next) => {
+  try {
+    const { guildId } = req.params
+    const counters = await getServerCounters(null, guildId)
+    res.json(counters)
+  } catch (err) {
+    next(err)
+  }
+})
+
+router.put('/:guildId/counters', async (req, res, next) => {
+  try {
+    const { guildId } = req.params
+    const counters = Array.isArray(req.body) ? req.body : (req.body?.counters || [])
+    await saveServerCounters(null, guildId, counters)
+    notifyBot('/api/internal/config-update', { guildId, config: { counters, serverStats: counters } })
+    res.json({ ok: true, counters })
+  } catch (err) {
+    next(err)
+  }
+})
+
+router.get('/:guildId/serverstats', async (req, res, next) => {
+  try {
+    const { guildId } = req.params
+    const counters = await getServerCounters(null, guildId)
+    res.json({ enabled: counters.length > 0, counters })
+  } catch (err) {
+    next(err)
+  }
+})
+
+router.put('/:guildId/serverstats', async (req, res, next) => {
+  try {
+    const { guildId } = req.params
+    const counters = Array.isArray(req.body) ? req.body : (req.body?.counters || [])
+    await saveServerCounters(null, guildId, counters)
+    notifyBot('/api/internal/config-update', { guildId, config: { counters, serverStats: counters } })
+    res.json({ ok: true, enabled: counters.length > 0, counters })
   } catch (err) {
     next(err)
   }

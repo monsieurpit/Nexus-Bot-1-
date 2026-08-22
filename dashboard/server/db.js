@@ -2,6 +2,8 @@ import pg from 'pg'
 import dotenv from 'dotenv'
 import { fileURLToPath } from 'url'
 import { dirname, resolve } from 'path'
+import { getDocs, collection, doc, setDoc } from 'firebase/firestore'
+import { firestoreDb } from '../../src/utils/firestoreDatabase.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 dotenv.config({ path: resolve(__dirname, '../../.env') })
@@ -246,12 +248,31 @@ function logMockNotice() {
   }
 }
 
-function handleMockQuery(text, params = []) {
+async function handleMockQuery(text, params = []) {
   logMockNotice()
   const trimmed = text.trim()
 
   // 1. SELECT id, config, counters, created_at, updated_at FROM guilds ORDER BY created_at DESC
   if (trimmed.startsWith('SELECT id, config, counters, created_at, updated_at FROM guilds')) {
+    if (firestoreDb.isAvailable()) {
+      try {
+        const snap = await getDocs(collection(firestoreDb.db, 'guilds'));
+        snap.forEach(docSnap => {
+          const data = docSnap.data();
+          const id = docSnap.id;
+          const conf = (data && 'value' in data && typeof data.value === 'object' && data.value !== null) ? data.value : data;
+          inMemoryData.guilds.set(id, {
+            id,
+            config: conf || {},
+            counters: data?.counters || conf?.counters || conf?.serverStats || { members: 0, online: 0, channels: 0, roles: 0 },
+            created_at: data?.createdAt || new Date().toISOString(),
+            updated_at: data?.updatedAt || new Date().toISOString()
+          });
+        });
+      } catch (err) {
+        console.warn('Firestore guild fetch failed:', err.message);
+      }
+    }
     const rows = Array.from(inMemoryData.guilds.values())
     return { rows, rowCount: rows.length }
   }
@@ -267,6 +288,9 @@ function handleMockQuery(text, params = []) {
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
       })
+      if (firestoreDb.isAvailable()) {
+        await firestoreDb.set(`guild:${id}:config`, {}).catch(() => null);
+      }
     }
     return { rows: [], rowCount: 1 }
   }
@@ -279,6 +303,9 @@ function handleMockQuery(text, params = []) {
         guild_id: guildId,
         config: {}
       })
+      if (firestoreDb.isAvailable()) {
+        await firestoreDb.set(`guild:${guildId}:welcome`, {}).catch(() => null);
+      }
     }
     return { rows: [], rowCount: 1 }
   }
@@ -286,6 +313,12 @@ function handleMockQuery(text, params = []) {
   // 4. SELECT value FROM temp_data WHERE key = $1 ...
   if (trimmed.startsWith('SELECT value FROM temp_data WHERE key =')) {
     const key = params[0] || (trimmed.includes("'bot:global:status'") ? 'bot:global:status' : '')
+    if (firestoreDb.isAvailable()) {
+      const fsVal = await firestoreDb.get(key, null);
+      if (fsVal !== null) {
+        return { rows: [{ value: fsVal }], rowCount: 1 };
+      }
+    }
     const item = inMemoryData.tempData.get(key)
     if (item && (!item.expires_at || new Date(item.expires_at) > new Date())) {
       return { rows: [{ value: item.value }], rowCount: 1 }
@@ -303,12 +336,22 @@ function handleMockQuery(text, params = []) {
     }
     const parsedValue = typeof value === 'string' ? JSON.parse(value) : value
     inMemoryData.tempData.set(key, { value: parsedValue, expires_at: null })
+    if (firestoreDb.isAvailable()) {
+      await firestoreDb.set(key, parsedValue).catch(() => null);
+    }
     return { rows: [], rowCount: 1 }
   }
 
   // 6. SELECT config FROM guilds WHERE id = $1
   if (trimmed.startsWith('SELECT config FROM guilds WHERE id =')) {
-    const guild = inMemoryData.guilds.get(params[0])
+    const guildId = params[0];
+    if (firestoreDb.isAvailable()) {
+      const fsConfig = await firestoreDb.get(`guild:${guildId}:config`, null);
+      if (fsConfig) {
+        return { rows: [{ config: fsConfig }], rowCount: 1 };
+      }
+    }
+    const guild = inMemoryData.guilds.get(guildId)
     if (guild) {
       return { rows: [{ config: guild.config }], rowCount: 1 }
     }
@@ -326,12 +369,22 @@ function handleMockQuery(text, params = []) {
     }
     guild.config = { ...(guild.config || {}), ...patch }
     guild.updated_at = new Date().toISOString()
+    if (firestoreDb.isAvailable()) {
+      await firestoreDb.set(`guild:${guildId}:config`, guild.config).catch(() => null);
+    }
     return { rows: [{ config: guild.config }], rowCount: 1 }
   }
 
   // 8. SELECT config FROM welcome_configs WHERE guild_id = $1
   if (trimmed.startsWith('SELECT config FROM welcome_configs WHERE guild_id =')) {
-    const wc = inMemoryData.welcomeConfigs.get(params[0])
+    const guildId = params[0];
+    if (firestoreDb.isAvailable()) {
+      const fsWelcome = await firestoreDb.get(`guild:${guildId}:welcome`, null);
+      if (fsWelcome) {
+        return { rows: [{ config: fsWelcome }], rowCount: 1 };
+      }
+    }
+    const wc = inMemoryData.welcomeConfigs.get(guildId)
     if (wc) {
       return { rows: [{ config: wc.config }], rowCount: 1 }
     }
@@ -348,12 +401,22 @@ function handleMockQuery(text, params = []) {
       inMemoryData.welcomeConfigs.set(guildId, wc)
     }
     wc.config = { ...(wc.config || {}), ...patch }
+    if (firestoreDb.isAvailable()) {
+      await firestoreDb.set(`guild:${guildId}:welcome`, wc.config).catch(() => null);
+    }
     return { rows: [{ config: wc.config }], rowCount: 1 }
   }
 
   // 10. SELECT config->'leveling' AS leveling FROM guilds WHERE id = $1
   if (trimmed.includes("config->'leveling' AS leveling FROM guilds WHERE id =")) {
-    const guild = inMemoryData.guilds.get(params[0])
+    const guildId = params[0];
+    if (firestoreDb.isAvailable()) {
+      const fsLeveling = await firestoreDb.get(`guild:${guildId}:leveling:config`, null);
+      if (fsLeveling) {
+        return { rows: [{ leveling: fsLeveling }], rowCount: 1 };
+      }
+    }
+    const guild = inMemoryData.guilds.get(guildId)
     return { rows: [{ leveling: guild?.config?.leveling || {} }], rowCount: guild ? 1 : 0 }
   }
 
@@ -368,6 +431,10 @@ function handleMockQuery(text, params = []) {
     }
     guild.config = { ...(guild.config || {}), leveling }
     guild.updated_at = new Date().toISOString()
+    if (firestoreDb.isAvailable()) {
+      await firestoreDb.set(`guild:${guildId}:leveling:config`, leveling).catch(() => null);
+      await firestoreDb.set(`guild:${guildId}:config`, guild.config).catch(() => null);
+    }
     return { rows: [{ leveling }], rowCount: 1 }
   }
 
@@ -381,10 +448,10 @@ const pool = {
         return await realPool.query(text, params)
       } catch (err) {
         // Fallback to in-memory on connection or database error
-        return handleMockQuery(text, params)
+        return await handleMockQuery(text, params)
       }
     }
-    return handleMockQuery(text, params)
+    return await handleMockQuery(text, params)
   },
   connect: async () => {
     if (realPool) {
@@ -392,13 +459,13 @@ const pool = {
         return await realPool.connect()
       } catch (err) {
         return {
-          query: async (text, params = []) => handleMockQuery(text, params),
+          query: async (text, params = []) => await handleMockQuery(text, params),
           release: () => {}
         }
       }
     }
     return {
-      query: async (text, params = []) => handleMockQuery(text, params),
+      query: async (text, params = []) => await handleMockQuery(text, params),
       release: () => {}
     }
   },

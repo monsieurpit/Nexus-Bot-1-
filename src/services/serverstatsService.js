@@ -1,5 +1,6 @@
 import { logger } from '../utils/logger.js';
 import { logEvent, EVENT_TYPES } from './loggingService.js';
+import { db } from '../utils/database.js';
 
 export const COUNTER_TYPE_CONFIG = {
   members: {
@@ -81,11 +82,11 @@ function isValidCounterShape(counter) {
   return Boolean(
     counter &&
     typeof counter === 'object' &&
-    typeof counter.id === 'string' &&
-    counter.id.length > 0 &&
+    (typeof counter.id === 'string' || typeof counter.id === 'number') &&
+    String(counter.id).length > 0 &&
     typeof counter.type === 'string' &&
-    typeof counter.channelId === 'string' &&
-    counter.channelId.length > 0
+    (typeof counter.channelId === 'string' || typeof counter.channelId === 'number' || typeof counter.channelId === 'bigint') &&
+    String(counter.channelId).length > 0
   );
 }
 
@@ -115,13 +116,6 @@ function sanitizeCounters(counters, guildId) {
     .filter(isValidCounterShape)
     .map(counter => normalizeCounter(counter, guildId));
 }
-
-
-
-
-
-
-
 
 export async function updateCounter(client, guild, counter) {
   try {
@@ -160,7 +154,6 @@ export async function updateCounter(client, guild, counter) {
           logger.debug(`Updated channel name to: "${newName}"`);
         }
 
-        
         try {
           await logEvent({
             client,
@@ -208,20 +201,30 @@ export async function updateCounter(client, guild, counter) {
   }
 }
 
-
-
-
-
-
-
 export async function getServerCounters(client, guildId) {
   try {
-    if (!client || !client.db) {
+    const database = client?.db || db;
+    if (!database) {
       logger.warn('Database not available for getServerCounters');
       return [];
     }
     
-    const data = await client.db.get(`counters:${guildId}`);
+    let data = await database.get(`counters:${guildId}`);
+    if (!data || (Array.isArray(data) && data.length === 0)) {
+      data = await database.get(`guild:${guildId}:serverstats:counters`);
+    }
+    if (!data || (Array.isArray(data) && data.length === 0)) {
+      const statsCfg = await database.get(`guild:${guildId}:serverstats:config`);
+      if (statsCfg?.counters && Array.isArray(statsCfg.counters)) {
+        data = statsCfg.counters;
+      }
+    }
+    if (!data || (Array.isArray(data) && data.length === 0)) {
+      const gConfig = await database.get(`guild:${guildId}:config`);
+      if (gConfig?.counters || gConfig?.serverStats) {
+        data = gConfig.counters || gConfig.serverStats;
+      }
+    }
     
     let counters = [];
     
@@ -239,9 +242,6 @@ export async function getServerCounters(client, guildId) {
     } else if (data && typeof data === 'object' && !data.ok && isValidCounterShape(data)) {
       counters = [data];
     } else {
-      if (process.env.NODE_ENV !== 'production') {
-        logger.debug('No counter data found, returning empty array');
-      }
       return [];
     }
 
@@ -252,30 +252,25 @@ export async function getServerCounters(client, guildId) {
   }
 }
 
-
-
-
-
-
-
-
 export async function saveServerCounters(client, guildId, counters) {
   try {
-    if (!client || !client.db) {
+    const database = client?.db || db;
+    if (!database) {
       logger.warn('Database not available for saveServerCounters');
       return false;
     }
     
     const sanitizedCounters = sanitizeCounters(counters, guildId);
 
-    if (process.env.NODE_ENV !== 'production') {
-      logger.debug(`Saving ${sanitizedCounters.length} counters for guild ${guildId}:`, sanitizedCounters);
-    }
+    // Save across primary and guild-scoped keys
+    await database.set(`counters:${guildId}`, sanitizedCounters);
+    await database.set(`guild:${guildId}:serverstats:counters`, sanitizedCounters);
+    await database.set(`guild:${guildId}:serverstats:config`, {
+      enabled: sanitizedCounters.length > 0,
+      counters: sanitizedCounters,
+      updatedAt: new Date().toISOString()
+    });
 
-    await client.db.set(`counters:${guildId}`, sanitizedCounters);
-    if (process.env.NODE_ENV !== 'production') {
-      logger.debug('Counters saved successfully');
-    }
     return true;
   } catch (error) {
     logger.error("Error saving server counters:", error);

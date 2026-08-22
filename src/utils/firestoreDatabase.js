@@ -332,19 +332,20 @@ class FirestoreDatabase {
             const guildId = parts[1];
             
             // Core Configs
-            if (parts[2] === 'config') return doc(this.db, 'guilds', guildId);
+            if (parts[2] === 'config' || !parts[2]) return doc(this.db, 'guilds', guildId);
             if (parts[2] === 'welcome') return doc(this.db, 'welcome', guildId);
             
             // Leveling
             if (parts[2] === 'leveling') {
-                if (parts[3] === 'config') return doc(this.db, 'leveling_configs', guildId);
+                if (parts[3] === 'config' || !parts[3]) return doc(this.db, 'leveling_configs', guildId);
                 if (parts[3] === 'users' && parts[4]) return doc(this.db, 'leveling', `${guildId}_${parts[4]}`);
+                return doc(this.db, 'leveling_configs', guildId);
             }
             
             // Tickets
             if (parts[2] === 'tickets') return doc(this.db, 'ticket_configs', guildId);
             if (parts[2] === 'ticket') {
-                if (parts[3] === 'config') return doc(this.db, 'ticket_configs', guildId);
+                if (parts[3] === 'config' || !parts[3]) return doc(this.db, 'ticket_configs', guildId);
                 if (parts[3] === 'counter') return doc(this.db, 'ticket_counters', guildId);
                 if (parts[3]) return doc(this.db, 'tickets', `${guildId}_${parts[3]}`); // Format: guildId_channelId
             }
@@ -352,7 +353,7 @@ class FirestoreDatabase {
             // Modlogs & Warnings
             if (parts[2] === 'warnings' && parts[3]) return doc(this.db, 'moderation', `${guildId}_${parts[3]}`);
             if (parts[2] === 'modlog') {
-                if (parts[3] === 'settings') return doc(this.db, 'modlog_settings', guildId);
+                if (parts[3] === 'settings' || !parts[3]) return doc(this.db, 'modlog_settings', guildId);
                 if (parts[3] === 'cases' && parts[4]) return doc(this.db, 'modlogs', `${guildId}_${parts[4]}`);
                 if (parts[3] === 'users' && parts[4]) return doc(this.db, 'modlog_users', `${guildId}_${parts[4]}`);
             }
@@ -360,15 +361,16 @@ class FirestoreDatabase {
             // Applications
             if (parts[2] === 'applications') {
                 if (parts[3] === 'roles') return doc(this.db, 'app_roles', guildId);
-                if (parts[3] === 'settings') return doc(this.db, 'app_settings', guildId);
+                if (parts[3] === 'settings' || !parts[3]) return doc(this.db, 'app_settings', guildId);
                 if (parts[3] === 'users' && parts[4]) return doc(this.db, 'app_users', `${guildId}_${parts[4]}`);
                 if (parts[3] && !parts[4]) return doc(this.db, 'applications', `${guildId}_${parts[3]}`);
+                return doc(this.db, 'app_settings', guildId);
             }
             
             // Join to Create
             if (parts[2] === 'jointocreate') {
-                if (!parts[3]) return doc(this.db, 'jointocreate_configs', guildId);
                 if (parts[3] === 'channels') return doc(this.db, 'jointocreate_channels', guildId);
+                return doc(this.db, 'jointocreate_configs', guildId);
             }
             
             // AFK & Invites
@@ -403,11 +405,25 @@ class FirestoreDatabase {
                 if (parts[3] === 'saves') return doc(this.db, 'server_saves', guildId);
                 if (parts[3] === 'save' && parts[4]) return doc(this.db, 'server_save_snapshots', `${guildId}_${parts[4]}`);
             }
+            if (parts[2] === 'autosave') {
+                return doc(this.db, 'autosave_configs', guildId);
+            }
+
+            // Verification System
+            if (parts[2] === 'verification') {
+                return doc(this.db, 'verification_configs', guildId);
+            }
+
+            // Logging System
+            if (parts[2] === 'logging') {
+                return doc(this.db, 'logging_configs', guildId);
+            }
 
             // Server Stats System
             if (parts[2] === 'serverstats' || parts[2] === 'counters') {
                 if (parts[3] === 'config') return doc(this.db, 'serverstats_configs', guildId);
                 if (parts[3] === 'cache') return doc(this.db, 'serverstats_cache', guildId);
+                if (parts[3] === 'counters') return doc(this.db, 'serverstats_counters', guildId);
                 return doc(this.db, 'serverstats_counters', guildId);
             }
 
@@ -422,6 +438,9 @@ class FirestoreDatabase {
                 if (parts[3] === 'history' || parts[3] === 'summaries') return doc(this.db, 'weekly_stats_history', guildId);
                 return doc(this.db, 'weekly_stats', guildId);
             }
+
+            // Reaction Roles
+            if (parts[2] === 'reaction_roles' && parts[3]) return doc(this.db, 'reaction_roles', `${guildId}_${parts[3]}`);
         }
 
         // Global Scoped Modules
@@ -429,7 +448,7 @@ class FirestoreDatabase {
         // Economy System
         if (parts[0] === 'economy' && parts[1]) {
             const guildId = parts[1];
-            if (parts[2] === 'config') return doc(this.db, 'economy_configs', guildId);
+            if (parts[2] === 'config' || !parts[2]) return doc(this.db, 'economy_configs', guildId);
             if (parts[2] === 'user' && parts[3]) return doc(this.db, 'economy_balances', `${guildId}_${parts[3]}`);
             if (parts[2] === 'inventory' && parts[3]) return doc(this.db, 'economy_inventories', `${guildId}_${parts[3]}`);
             if (parts[2] === 'participants') return doc(this.db, 'economy_participants', guildId);
@@ -437,8 +456,31 @@ class FirestoreDatabase {
             return doc(this.db, 'economy_configs', guildId);
         }
 
-        // Server Stats Counters
+        // Server Stats Counters & Configs
         if (parts[0] === 'counters' && parts[1]) return doc(this.db, 'serverstats_counters', parts[1]);
+        if (parts[0] === 'serverstats' && parts[1]) {
+            if (parts[2] === 'counters') return doc(this.db, 'serverstats_counters', parts[1]);
+            return doc(this.db, 'serverstats_configs', parts[1]);
+        }
+
+        // Leveling
+        if (parts[0] === 'leveling' && parts[1]) {
+            if (parts[2] === 'config' || !parts[2]) return doc(this.db, 'leveling_configs', parts[1]);
+            return doc(this.db, 'leveling', `${parts[1]}_${parts[2]}`);
+        }
+
+        // Tickets
+        if (parts[0] === 'ticket' && parts[1] && parts[2]) return doc(this.db, 'tickets', `${parts[1]}_${parts[2]}`);
+        if (parts[0] === 'tickets' && parts[1]) return doc(this.db, 'ticket_configs', parts[1]);
+
+        // Sticky notes
+        if (parts[0] === 'stickynote' && parts[1] && parts[2]) return doc(this.db, 'sticky_notes', `${parts[1]}_${parts[2]}`);
+
+        // Verification
+        if (parts[0] === 'verification') {
+            if (parts[1] === 'audit' && parts[2]) return doc(this.db, 'verification_audit', parts[2]);
+            if (parts[1]) return doc(this.db, 'verification_configs', parts[1]);
+        }
 
         // Raidshield Quarantine & Reports
         if (parts[0] === 'quarantine' && parts[1]) return doc(this.db, 'quarantines', parts[1]);
@@ -447,6 +489,7 @@ class FirestoreDatabase {
             if (parts[2]) return doc(this.db, 'reports', `${parts[1]}_${parts[2]}`);
             return doc(this.db, 'reports', parts[1]);
         }
+        if (parts[0] === 'reports' && parts[1]) return doc(this.db, 'reports', parts[1]);
 
         // Football Fixtures & Live
         if (parts[0] === 'football') {
@@ -500,24 +543,24 @@ class FirestoreDatabase {
         if (!this.isAvailable() || !key) return defaultValue;
         try {
             const docRef = this.getDocRef(key);
-            if (!docRef) return defaultValue;
-
-            const snapshot = await getDoc(docRef);
-            if (snapshot.exists()) {
-                const data = snapshot.data();
-                if (data.expiresAt && new Date(data.expiresAt) < new Date()) {
-                    await this.delete(key).catch(() => null);
-                    return defaultValue;
+            if (docRef) {
+                const snapshot = await getDoc(docRef);
+                if (snapshot.exists()) {
+                    const data = snapshot.data();
+                    if (data.expiresAt && new Date(data.expiresAt) < new Date()) {
+                        await this.delete(key).catch(() => null);
+                        return defaultValue;
+                    }
+                    if (data && 'value' in data) {
+                        return data.value;
+                    }
+                    return data;
                 }
-                if (data && 'value' in data) {
-                    return data.value;
-                }
-                return data;
             }
 
             // Fallback check kv_data location if not found in dedicated collection
             const kvRef = this.getKvDocRef(key);
-            if (kvRef && kvRef.path !== docRef.path) {
+            if (kvRef && (!docRef || kvRef.path !== docRef.path)) {
                 const kvSnap = await getDoc(kvRef);
                 if (kvSnap.exists()) {
                     const kvData = kvSnap.data();
@@ -529,6 +572,33 @@ class FirestoreDatabase {
                         return kvData.value;
                     }
                     return kvData;
+                }
+            }
+
+            // Fallback check inside main guilds doc if this is a guild sub-feature
+            const parts = key.split(':');
+            let guildId = null;
+            if (parts[0] === 'guild' && parts[1]) guildId = parts[1];
+            else if ((parts[0] === 'counters' || parts[0] === 'serverstats' || parts[0] === 'tickets' || parts[0] === 'giveaways' || parts[0] === 'economy') && parts[1]) guildId = parts[1];
+
+            if (guildId) {
+                const guildSnap = await getDoc(doc(this.db, 'guilds', guildId)).catch(() => null);
+                if (guildSnap && guildSnap.exists()) {
+                    const gData = guildSnap.data();
+                    const gVal = (gData && 'value' in gData && typeof gData.value === 'object' && gData.value !== null) ? gData.value : gData;
+                    if (gVal) {
+                        if (key.includes('counters') || key.includes('serverstats')) {
+                            if (gVal.counters) return gVal.counters;
+                            if (gVal.serverStats) return gVal.serverStats;
+                        }
+                        if (key.includes('welcome') && gVal.welcome) return gVal.welcome;
+                        if (key.includes('leveling') && gVal.leveling) return gVal.leveling;
+                        if (key.includes('ticket') && gVal.tickets) return gVal.tickets;
+                        if (key.includes('raidshield') && gVal.raidShield) return gVal.raidShield;
+                        if (key.includes('football') && gVal.football) return gVal.football;
+                        if (key.includes('autosave') && gVal.autoSave) return gVal.autoSave;
+                        if (key.includes('verification') && gVal.verification) return gVal.verification;
+                    }
                 }
             }
 
@@ -606,7 +676,23 @@ class FirestoreDatabase {
                         guildId,
                         updatedAt: new Date().toISOString()
                     }), { merge: true }).catch(() => null);
+                    await setDoc(doc(this.db, 'serverstats_counters', guildId), sanitizeForFirestore({
+                        key: `counters:${guildId}`,
+                        value: value.counters || value.serverStats,
+                        guildId,
+                        updatedAt: new Date().toISOString()
+                    }), { merge: true }).catch(() => null);
                 }
+            }
+
+            // If saving server counters directly, also keep guild doc and secondary doc in sync
+            if ((parts[0] === 'counters' && parts[1]) || (parts[0] === 'guild' && parts[1] && (parts[2] === 'serverstats' || parts[2] === 'counters'))) {
+                const guildId = parts[1];
+                await setDoc(doc(this.db, 'serverstats_counters', guildId), cleanPayload, { merge: true }).catch(() => null);
+                await setDoc(doc(this.db, 'guilds', guildId), sanitizeForFirestore({
+                    counters: value,
+                    updatedAt: new Date().toISOString()
+                }), { merge: true }).catch(() => null);
             }
 
             // Synchronize with kv_data and legacy collection so all views stay updated
@@ -719,31 +805,90 @@ class FirestoreDatabase {
         if (!this.isAvailable()) return [];
         try {
             const keys = new Set();
-            const kvSnap = await getDocs(collection(this.db, 'kv_data'));
             const now = new Date();
 
-            kvSnap.forEach((docSnap) => {
-                const data = docSnap.data();
-                if (data.expiresAt && new Date(data.expiresAt) < now) {
-                    return; // Skip expired
-                }
-                const key = data.key || this.decodeKey(docSnap.id);
-                if (!prefix || key.startsWith(prefix)) {
-                    keys.add(key);
-                }
-            });
-
-            // Also check legacy guilds collection
+            // 1. Read kv_data
             try {
-                const guildsSnap = await getDocs(collection(this.db, 'guilds'));
-                guildsSnap.forEach((docSnap) => {
-                    const key = `guild:${docSnap.id}:config`;
+                const kvSnap = await getDocs(collection(this.db, 'kv_data'));
+                kvSnap.forEach((docSnap) => {
+                    const data = docSnap.data();
+                    if (data.expiresAt && new Date(data.expiresAt) < now) {
+                        return; // Skip expired
+                    }
+                    const key = data.key || this.decodeKey(docSnap.id);
                     if (!prefix || key.startsWith(prefix)) {
                         keys.add(key);
                     }
                 });
+            } catch (err) {
+                logger.debug('Firestore list kv_data error:', err);
+            }
+
+            // 2. Check guilds collection
+            try {
+                const guildsSnap = await getDocs(collection(this.db, 'guilds'));
+                guildsSnap.forEach((docSnap) => {
+                    const kConfig = `guild:${docSnap.id}:config`;
+                    if (!prefix || kConfig.startsWith(prefix)) keys.add(kConfig);
+                    const kGuild = `guild:${docSnap.id}`;
+                    if (!prefix || kGuild.startsWith(prefix)) keys.add(kGuild);
+                });
             } catch {
-                // Ignore if legacy collection doesn't exist
+                // Ignore if collection doesn't exist
+            }
+
+            // 3. Check serverstats collections
+            if (!prefix || prefix.includes('counter') || prefix.includes('serverstats')) {
+                try {
+                    const snap = await getDocs(collection(this.db, 'serverstats_counters'));
+                    snap.forEach((docSnap) => {
+                        const k1 = `counters:${docSnap.id}`;
+                        if (!prefix || k1.startsWith(prefix)) keys.add(k1);
+                        const k2 = `guild:${docSnap.id}:serverstats:counters`;
+                        if (!prefix || k2.startsWith(prefix)) keys.add(k2);
+                    });
+                } catch {}
+                try {
+                    const snap = await getDocs(collection(this.db, 'serverstats_configs'));
+                    snap.forEach((docSnap) => {
+                        const k = `guild:${docSnap.id}:serverstats:config`;
+                        if (!prefix || k.startsWith(prefix)) keys.add(k);
+                    });
+                } catch {}
+            }
+
+            // 4. Check sticky_notes collection
+            if (!prefix || prefix.includes('sticky')) {
+                try {
+                    const snap = await getDocs(collection(this.db, 'sticky_notes'));
+                    snap.forEach((docSnap) => {
+                        const data = docSnap.data();
+                        const key = data.key || (docSnap.id.includes('_') ? `guild:${docSnap.id.split('_')[0]}:stickynote:${docSnap.id.split('_')[1]}` : `guild:${docSnap.id}:stickynotes`);
+                        if (!prefix || key.startsWith(prefix)) keys.add(key);
+                    });
+                } catch {}
+            }
+
+            // 5. Check server_saves collection
+            if (!prefix || prefix.includes('backup') || prefix.includes('save')) {
+                try {
+                    const snap = await getDocs(collection(this.db, 'server_saves'));
+                    snap.forEach((docSnap) => {
+                        const k = `guild:${docSnap.id}:server_backup:saves`;
+                        if (!prefix || k.startsWith(prefix)) keys.add(k);
+                    });
+                } catch {}
+            }
+
+            // 6. Check giveaways collection
+            if (!prefix || prefix.includes('giveaway')) {
+                try {
+                    const snap = await getDocs(collection(this.db, 'giveaways'));
+                    snap.forEach((docSnap) => {
+                        const k = `guild:${docSnap.id}:giveaways`;
+                        if (!prefix || k.startsWith(prefix)) keys.add(k);
+                    });
+                } catch {}
             }
 
             return Array.from(keys);
