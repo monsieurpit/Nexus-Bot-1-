@@ -82,9 +82,19 @@ const REGISTERED_API_KEYS = new Map([
     'nexus-dev-key',
     {
       label: 'test_local_dev',
-      role: 'Test / Local Dev Key',
-      capabilities: ['nexus_chat', 'raidshield_21_rules', 'multimodal_vision', 'strict_rules_enforcement', 'math_engine', 'bm25_search'],
-      isVip: false,
+      role: 'Dev & Testing Key',
+      capabilities: ['nexus_chat', 'raidshield_21_rules', 'multimodal_vision', 'strict_rules_enforcement', 'swear_engine', 'vip_mode', 'math_engine', 'bm25_search'],
+      isVip: true,
+      createdAt: '2026-08-22T00:00:00.000Z'
+    }
+  ],
+  [
+    'nexus_sk_discord_bot_master',
+    {
+      label: 'discord_bot_master_alias',
+      role: 'Discord Bot Master Alias',
+      capabilities: ['nexus_chat', 'raidshield_21_rules', 'multimodal_vision', 'strict_rules_enforcement', 'swear_engine', 'vip_mode', 'math_engine', 'bm25_search'],
+      isVip: true,
       createdAt: '2026-08-22T00:00:00.000Z'
     }
   ],
@@ -93,7 +103,7 @@ const REGISTERED_API_KEYS = new Map([
     {
       label: 'legacy_live_sdk',
       role: 'Legacy SDK Live Key',
-      capabilities: ['nexus_chat', 'raidshield_21_rules', 'multimodal_vision', 'strict_rules_enforcement', 'math_engine', 'bm25_search'],
+      capabilities: ['nexus_chat', 'raidshield_21_rules', 'multimodal_vision', 'strict_rules_enforcement', 'swear_engine', 'vip_mode', 'math_engine', 'bm25_search'],
       isVip: false,
       createdAt: '2026-08-22T00:00:00.000Z'
     }
