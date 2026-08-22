@@ -131,7 +131,7 @@ function getNormalizedNexusApiUrl() {
   const raw = process.env.NEXUS_API_URL || process.env.SERVER_URL || process.env.APP_URL || 'https://ais-dev-ibvpx7fn3pnxtdxabola6x-240233116101.us-east1.run.app/api/v1';
   if (!raw || typeof raw !== 'string') return null;
   const trimmed = raw.trim();
-  if (!trimmed || trimmed.includes('generativelanguage.googleapis.com')) return null;
+  if (!trimmed) return null;
   let base = trimmed.replace(/\/+$/, '');
   if (!base.startsWith('http://') && !base.startsWith('https://')) {
     base = `https://${base}`;

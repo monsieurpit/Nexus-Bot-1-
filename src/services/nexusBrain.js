@@ -1,6 +1,6 @@
 /**
  * Nexus Native Conversational Brain
- * 100% autonomous local AI engine - zero external API / Gemini dependencies required.
+ * 100% autonomous local AI engine - zero external API dependencies required.
  * Implements conversational NLP, context recognition, math solver, code help, roasts, jokes, and VIP homie personality.
  */
 

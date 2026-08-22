@@ -1,18 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { NexusAI } from '../../nexus-ai.js';
+import { NexusAI, NexusChatSession } from '../../nexus-ai.js';
 
 test('NexusAI SDK constructor and default configurations', () => {
   const client = new NexusAI({ apiKey: 'nexus_sk_live_a89f41b7e092c31d4e68bb507ef194' });
   assert.equal(client.apiKey, 'nexus_sk_live_a89f41b7e092c31d4e68bb507ef194');
   assert.equal(client.getPersona(), 'nexus-homie');
   assert.ok(client.baseUrl.endsWith('/api/v1'));
-  assert.ok(client.getClientRules().some(r => r.includes('MANDATORY_SWEARING_ISSUE')));
+  assert.deepEqual(client.getClientRules(), []);
 });
 
 test('NexusAI persona and rules builder pattern', () => {
   const client = new NexusAI();
-  client.clearRules();
   client.setPersona('crashout-bot')
         .addRule('Always insult Casseurt')
         .addRule('Honor VIP');
@@ -32,41 +31,72 @@ test('NexusAI headers creation', () => {
   assert.equal(headers['Custom-Header'], 'test');
 });
 
-test('NexusAI math solver and unit conversions', async () => {
-  const client = new NexusAI();
-  const res1 = await client.solveMath('sqrt(144) + 12');
-  assert.equal(res1.isMath, true);
-  assert.equal(res1.result, '24');
+test('NexusAI askJSON builds the correct /nexus payload', async (t) => {
+  const client = new NexusAI({ apiKey: 'test-key', rules: ['Global rule'] });
+  let capturedUrl;
+  let capturedBody;
 
-  const res2 = await client.solveMath('100 C to F');
-  assert.equal(res2.isMath, true);
-  assert.equal(res2.result, '212 °F');
+  t.mock.method(global, 'fetch', async (url, init) => {
+    capturedUrl = url;
+    capturedBody = JSON.parse(init.body);
+    return { ok: true, json: async () => ({ response: 'hi there' }) };
+  });
 
-  const res3 = await client.solveMath('10 km to miles');
-  assert.equal(res3.isMath, true);
-  assert.ok(res3.result.includes('miles'));
+  const result = await client.askJSON({
+    prompt: 'hello',
+    authorId: '1394001641899954368',
+    username: 'Homie',
+    mode: 'deep-cot',
+    rules: 'Extra rule'
+  });
+
+  assert.equal(capturedUrl, `${client.baseUrl}/nexus`);
+  assert.equal(capturedBody.prompt, 'hello');
+  assert.equal(capturedBody.persona, 'nexus-homie');
+  assert.equal(capturedBody.isSuperChillUser, true);
+  assert.equal(capturedBody.mode, 'deep-cot');
+  assert.equal(capturedBody.rules, 'Global rule\nExtra rule');
+  assert.equal(result.response, 'hi there');
 });
 
-test('NexusAI RaidShield security classification', async () => {
+test('NexusAI ask() returns plain text and throws on HTTP failure', async (t) => {
   const client = new NexusAI();
-  const safeRes = await client.checkSecurity({ messageText: 'Hello world how is everyone doing?' });
+
+  t.mock.method(global, 'fetch', async () => ({ ok: true, json: async () => ({ text: 'sup bro' }) }));
+  assert.equal(await client.ask('yo'), 'sup bro');
+
+  t.mock.method(global, 'fetch', async () => ({ ok: false, status: 500, statusText: 'Server Error', text: async () => '' }));
+  await assert.rejects(() => client.ask('yo'), /Nexus API HTTP 500/);
+});
+
+test('NexusAI checkSecurity forwards the RaidShield response and throws on failure', async (t) => {
+  const client = new NexusAI();
+
+  t.mock.method(global, 'fetch', async () => ({
+    ok: true,
+    json: async () => ({ classification: 'safe', confidence: 0.95, reason: 'looks fine' })
+  }));
+  const safeRes = await client.checkSecurity({ messageText: 'Hello world' });
   assert.equal(safeRes.classification, 'safe');
-  assert.equal(safeRes.actionRecommended, 'NONE');
+  assert.equal(await client.isSafe('Hello world'), true);
 
-  const phishingRes = await client.checkSecurity({ messageText: 'Free nitro gift claim now at http://steamcommunity-gift-nitro.xyz/claim' });
-  assert.equal(phishingRes.classification, 'scam');
-  assert.equal(phishingRes.actionRecommended, 'DELETE_AND_TIMEOUT');
+  t.mock.method(global, 'fetch', async () => ({ ok: false, status: 503, statusText: 'Unavailable', text: async () => '' }));
+  await assert.rejects(() => client.checkSecurity({ messageText: 'test' }), /RaidShield API HTTP 503/);
 });
 
-test('NexusAI stateful chat session creation and history', () => {
+test('NexusAI stateful chat session creation and history', async (t) => {
   const client = new NexusAI();
   const session = client.createChatSession({ authorId: '123', username: 'TestUser', persona: 'nexus-homie' });
+  assert.ok(session instanceof NexusChatSession);
   assert.equal(session.authorId, '123');
   assert.equal(session.username, 'TestUser');
   assert.equal(session.persona, 'nexus-homie');
   assert.deepEqual(session.getHistory(), []);
 
+  t.mock.method(global, 'fetch', async () => ({ ok: true, json: async () => ({ response: 'yo' }) }));
+  await session.sendMessage('hey nexus');
+  assert.equal(session.getHistory().length, 2);
+
   session.clearHistory();
   assert.deepEqual(session.getHistory(), []);
 });
-

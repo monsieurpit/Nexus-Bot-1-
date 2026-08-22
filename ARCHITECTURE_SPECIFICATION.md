@@ -88,18 +88,18 @@ import { NexusAI } from './nexus-ai.js';
 
 const nexus = new NexusAI({
   apiKey: process.env.NEXUS_API_KEY,
-  apiUrl: process.env.NEXUS_API_URL
+  baseUrl: process.env.NEXUS_API_URL
 });
 
 // Prompt generation
-const response = await nexus.generate({
+const response = await nexus.ask({
   prompt: 'What is 25 * 40?',
   authorId: '1394001641899954368',
   username: 'Creator'
 });
 
 // Security Scan
-const threatCheck = await nexus.scanMessage({
+const threatCheck = await nexus.checkSecurity({
   messageText: 'Free nitro at http://fake-discord-gift.com'
 });
 ```

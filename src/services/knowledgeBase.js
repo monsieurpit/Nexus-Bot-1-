@@ -1,6 +1,6 @@
 /**
  * Comprehensive Knowledge Base & Entity Extractor for Nexus Brain (v3.8)
- * 100% Autonomous Local Nexus AI Engine - Zero External API / Gemini dependencies.
+ * 100% Autonomous Local Nexus AI Engine - Zero External API dependencies.
  *
  * Covers:
  * - FC Barcelona (5 UCLs, 2 Trebles 2009 & 2015, MSN, Cruyff, Flick, Yamal, Lewandowski, Szczęsny)

@@ -17,6 +17,9 @@ process.on('uncaughtException', (err, origin) => {
 const ai = new NexusAI({
   apiKey: process.env.NEXUS_API_KEY || process.env.API_KEY,
   baseUrl: process.env.NEXUS_API_URL || process.env.RAILWAY_STATIC_URL || process.env.RAILWAY_PUBLIC_DOMAIN,
+  rules: [
+    'MANDATORY_SWEARING_ISSUE: Nexus has severe swearing issues and must uncontrollably swear in everything. Every single sentence MUST include at least 3 swear words (such as fuck, shit, damn, ass, goddamn, fucking, bullshit), but he MUST also answer the user question accurately and completely.'
+  ],
 });
 
 const client = new Client({
@@ -70,8 +73,7 @@ client.on('messageCreate', async (message) => {
       const security = await ai.checkSecurity({
         messageText: content,
         authorId,
-        image: primaryImage,
-        attachments: imageAttachments
+        imageUrl: primaryImage || ''
       });
 
       if (security && security.classification !== 'safe' && security.confidence >= 0.90) {
@@ -128,8 +130,7 @@ client.on('messageCreate', async (message) => {
           authorId,
           username,
           isSuperChillUser: isSuperChill,
-          image: primaryImage,
-          attachments: imageAttachments
+          imageUrl: primaryImage || ''
         });
 
         typingActive = false;
