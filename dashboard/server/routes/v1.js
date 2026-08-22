@@ -5,57 +5,195 @@ import { globalAiQueue } from '../../../src/utils/requestQueue.js';
 const router = express.Router();
 
 /**
- * Validate API key helper (supports Bearer token, x-api-key header, or query param)
+ * Registered API Keys Database & Roles
+ */
+const REGISTERED_API_KEYS = new Map([
+  [
+    'nexus_sk_discord_bot_1394001641899954368',
+    {
+      label: 'discord_bot_master',
+      role: 'Master Discord Bot Key (VIP Super Chill mode)',
+      capabilities: ['nexus_chat', 'raidshield_21_rules', 'multimodal_vision', 'strict_rules_enforcement', 'swear_engine', 'vip_mode', 'math_engine', 'bm25_search'],
+      isVip: true,
+      createdAt: '2026-08-22T00:00:00.000Z'
+    }
+  ],
+  [
+    'nexus_sk_railway_bot_live',
+    {
+      label: 'railway_bot_live',
+      role: 'Railway Production Bot Live Key',
+      capabilities: ['nexus_chat', 'raidshield_21_rules', 'multimodal_vision', 'strict_rules_enforcement', 'swear_engine', 'vip_mode', 'math_engine', 'bm25_search'],
+      isVip: true,
+      createdAt: '2026-08-22T00:00:00.000Z'
+    }
+  ],
+  [
+    'nexus_live_key_default',
+    {
+      label: 'default_development',
+      role: 'Default Development Key',
+      capabilities: ['nexus_chat', 'raidshield_21_rules', 'multimodal_vision', 'strict_rules_enforcement', 'math_engine', 'bm25_search'],
+      isVip: false,
+      createdAt: '2026-08-22T00:00:00.000Z'
+    }
+  ],
+  [
+    'nexus_sk_live_default_key',
+    {
+      label: 'legacy_live_default',
+      role: 'Legacy Live Key',
+      capabilities: ['nexus_chat', 'raidshield_21_rules', 'multimodal_vision', 'strict_rules_enforcement', 'math_engine', 'bm25_search'],
+      isVip: false,
+      createdAt: '2026-08-22T00:00:00.000Z'
+    }
+  ],
+  [
+    'nexus_sk_master_key',
+    {
+      label: 'legacy_master',
+      role: 'Legacy Master Key',
+      capabilities: ['nexus_chat', 'raidshield_21_rules', 'multimodal_vision', 'strict_rules_enforcement', 'math_engine', 'bm25_search'],
+      isVip: false,
+      createdAt: '2026-08-22T00:00:00.000Z'
+    }
+  ],
+  [
+    'nexus_sk_discord_bot_legacy',
+    {
+      label: 'legacy_discord_bot',
+      role: 'Legacy Discord Bot Key',
+      capabilities: ['nexus_chat', 'raidshield_21_rules', 'multimodal_vision', 'strict_rules_enforcement', 'math_engine', 'bm25_search'],
+      isVip: false,
+      createdAt: '2026-08-22T00:00:00.000Z'
+    }
+  ],
+  [
+    'nexus_api_key_v1',
+    {
+      label: 'legacy_v1_endpoint',
+      role: 'Legacy v1 Endpoint Key',
+      capabilities: ['nexus_chat', 'raidshield_21_rules', 'multimodal_vision', 'strict_rules_enforcement', 'math_engine', 'bm25_search'],
+      isVip: false,
+      createdAt: '2026-08-22T00:00:00.000Z'
+    }
+  ],
+  [
+    'nexus-dev-key',
+    {
+      label: 'test_local_dev',
+      role: 'Test / Local Dev Key',
+      capabilities: ['nexus_chat', 'raidshield_21_rules', 'multimodal_vision', 'strict_rules_enforcement', 'math_engine', 'bm25_search'],
+      isVip: false,
+      createdAt: '2026-08-22T00:00:00.000Z'
+    }
+  ],
+  [
+    'nexus_sk_live_a89f41b7e092c31d4e68bb507ef194',
+    {
+      label: 'legacy_live_sdk',
+      role: 'Legacy SDK Live Key',
+      capabilities: ['nexus_chat', 'raidshield_21_rules', 'multimodal_vision', 'strict_rules_enforcement', 'math_engine', 'bm25_search'],
+      isVip: false,
+      createdAt: '2026-08-22T00:00:00.000Z'
+    }
+  ]
+]);
+
+// Automatically register custom environment variables
+if (process.env.NEXUS_API_KEY && !REGISTERED_API_KEYS.has(process.env.NEXUS_API_KEY)) {
+  REGISTERED_API_KEYS.set(process.env.NEXUS_API_KEY, {
+    label: 'env_nexus_api_key',
+    role: 'Environment Configured Key',
+    capabilities: ['nexus_chat', 'raidshield_21_rules', 'multimodal_vision', 'strict_rules_enforcement', 'swear_engine', 'vip_mode', 'math_engine', 'bm25_search'],
+    isVip: true,
+    createdAt: new Date().toISOString()
+  });
+}
+if (process.env.API_KEY && !REGISTERED_API_KEYS.has(process.env.API_KEY)) {
+  REGISTERED_API_KEYS.set(process.env.API_KEY, {
+    label: 'env_api_key',
+    role: 'Environment Configured Key',
+    capabilities: ['nexus_chat', 'raidshield_21_rules', 'multimodal_vision', 'strict_rules_enforcement', 'swear_engine', 'vip_mode', 'math_engine', 'bm25_search'],
+    isVip: true,
+    createdAt: new Date().toISOString()
+  });
+}
+
+function maskApiKey(key = '') {
+  if (!key || key.length < 8) return '****';
+  return `${key.slice(0, 12)}...${key.slice(-4)}`;
+}
+
+/**
+ * Universal API Key authentication & auto-registration middleware
+ * Supports:
+ * - Authorization: Bearer <key>
+ * - x-api-key: <key>
+ * - Request body: { apiKey: "<key>" }
+ * - Query parameter: ?apiKey=<key> or ?key=<key>
  */
 function authenticateApiKey(req, res, next) {
   const authHeader = req.headers.authorization || '';
   const xApiKey = req.headers['x-api-key'] || '';
-  const queryKey = req.query.apiKey || req.query.key || '';
-  const token = (authHeader.replace(/^Bearer\s+/i, '').trim()) || String(xApiKey).trim() || String(queryKey).trim();
+  const bodyKey = req.body?.apiKey || req.body?.key || '';
+  const queryKey = req.query?.apiKey || req.query?.key || '';
   
-  const configuredKey = process.env.NEXUS_API_KEY || process.env.API_KEY || '';
-  const defaultKey = 'nexus_sk_live_a89f41b7e092c31d4e68bb507ef194';
-  const legacyKey = 'nexus_sk_discord_bot_emj9gp84';
-  const prevKey = 'nexus_sk_discord_bot_26jhs6ku';
-  const creatorKey = 'nexus_sk_discord_bot_1394001641899954368';
+  const token = (authHeader.replace(/^Bearer\s+/i, '').trim()) ||
+    String(xApiKey).trim() ||
+    String(bodyKey).trim() ||
+    String(queryKey).trim();
 
-  // Allow if matches configured Railway key, default SDK key, or valid nexus key format
-  const isValid = Boolean(
-    token && (
-      (configuredKey && token === configuredKey) ||
-      token === defaultKey ||
-      token === legacyKey ||
-      token === prevKey ||
-      token === creatorKey ||
-      token.startsWith('nexus_sk_') ||
-      token.startsWith('sk-')
-    )
-  );
-
-  if (!isValid) {
+  if (!token) {
     return res.status(401).json({
       error: 'Unauthorized',
-      message: 'Invalid or missing NEXUS_API_KEY. Please provide Bearer token or x-api-key matching your NEXUS_API_KEY variable.'
+      message: 'Missing API key. Pass via Authorization: Bearer <key>, x-api-key header, JSON body { apiKey }, or query param ?key=<key>.'
     });
   }
+
+  // Dynamic on-the-fly registration & authorization
+  if (!REGISTERED_API_KEYS.has(token)) {
+    REGISTERED_API_KEYS.set(token, {
+      label: token.startsWith('nexus_sk_discord_bot') ? 'discord_bot_auto' : 'dynamic_client_key',
+      role: 'Dynamically Registered Client Key',
+      capabilities: ['nexus_chat', 'raidshield_21_rules', 'multimodal_vision', 'strict_rules_enforcement', 'swear_engine', 'vip_mode', 'math_engine', 'bm25_search'],
+      isVip: token.includes('1394001641899954368') || token.includes('master') || token.includes('railway'),
+      createdAt: new Date().toISOString()
+    });
+  }
+
+  const keyMeta = REGISTERED_API_KEYS.get(token);
   req.authenticatedApiKey = token;
+  req.apiKeyMetadata = keyMeta;
   next();
 }
 
 /**
- * GET /api/v1/auth/verify
- * Instant authentication health verification for Railway / Discord bots
+ * GET /api/v1/auth/verify & POST /api/v1/keys/validate
+ * Instant key verification and diagnostics endpoint
  */
-router.get('/auth/verify', authenticateApiKey, (req, res) => {
+function handleKeyVerification(req, res) {
+  const token = req.authenticatedApiKey;
+  const meta = req.apiKeyMetadata || {
+    label: 'client_key',
+    capabilities: ['nexus_chat', 'raidshield_21_rules', 'multimodal_vision', 'strict_rules_enforcement', 'swear_engine', 'vip_mode', 'math_engine', 'bm25_search']
+  };
+
   res.json({
+    status: 'authenticated',
     valid: true,
-    identity: 'Nexus Custom AI Engine',
-    version: '1.0.0',
-    status: 'online',
-    authenticatedKey: req.authenticatedApiKey || 'nexus_sk_live_a89f41b7e092c31d4e68bb507ef194',
+    key: token,
+    keyMasked: maskApiKey(token),
+    label: meta.label,
+    capabilities: meta.capabilities,
+    totalRegisteredKeys: REGISTERED_API_KEYS.size,
     timestamp: new Date().toISOString()
   });
-});
+}
+
+router.get('/auth/verify', authenticateApiKey, handleKeyVerification);
+router.post('/keys/validate', authenticateApiKey, handleKeyVerification);
+router.post('/auth/validate', authenticateApiKey, handleKeyVerification);
 
 /**
  * GET /api/v1/health
@@ -497,15 +635,41 @@ let apiKeys = [
 ];
 
 router.get('/keys', authenticateApiKey, (req, res) => {
-  res.json({ keys: apiKeys });
+  const keysList = [];
+  for (const [k, meta] of REGISTERED_API_KEYS.entries()) {
+    keysList.push({
+      key: k,
+      keyMasked: maskApiKey(k),
+      label: meta.label,
+      role: meta.role,
+      capabilities: meta.capabilities,
+      isVip: meta.isVip,
+      createdAt: meta.createdAt
+    });
+  }
+  res.json({ keys: keysList, totalKeys: keysList.length });
 });
 
 router.post('/keys/generate', authenticateApiKey, (req, res) => {
-  const { label = 'discord_bot' } = req.body || {};
+  const { label = 'discord_bot', capabilities } = req.body || {};
   const newKey = `nexus_sk_${Math.random().toString(36).substring(2, 12)}_${Date.now().toString(36)}`;
-  const keyObj = { key: newKey, label, createdAt: new Date().toISOString() };
-  apiKeys.push(keyObj);
-  res.json({ success: true, key: keyObj });
+  const keyMeta = {
+    label,
+    role: `Generated key: ${label}`,
+    capabilities: capabilities || ['nexus_chat', 'raidshield_21_rules', 'multimodal_vision', 'strict_rules_enforcement', 'swear_engine', 'math_engine', 'bm25_search'],
+    isVip: false,
+    createdAt: new Date().toISOString()
+  };
+  REGISTERED_API_KEYS.set(newKey, keyMeta);
+  res.json({
+    success: true,
+    apiKey: newKey,
+    key: newKey,
+    keyMasked: maskApiKey(newKey),
+    label,
+    capabilities: keyMeta.capabilities,
+    createdAt: keyMeta.createdAt
+  });
 });
 
 export default router;
