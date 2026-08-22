@@ -7,12 +7,35 @@ const INTERACTION_TIMEOUT_MS = 15 * 60 * 1000;
 const DEFAULT_DEFER_OPTIONS = { flags: MessageFlags.Ephemeral };
 
 function sanitizeEditReplyOptions(options = {}) {
-    if (!options || typeof options !== 'object') {
-        return options;
+    if (!options) {
+        return { content: '' };
     }
 
-    const { flags, ephemeral, ...rest } = options;
-    return rest;
+    if (typeof options === 'string') {
+        return { content: options };
+    }
+
+    if (Array.isArray(options)) {
+        return { embeds: options };
+    }
+
+    if (typeof options === 'object') {
+        // If it is an EmbedBuilder instance or has embed .data without top-level message keys
+        if ((typeof options.toJSON === 'function' || options.data) && !options.embeds && !options.content && !options.components && !options.files) {
+            return { embeds: [options] };
+        }
+
+        const { flags, ephemeral, ...rest } = options;
+
+        // If after stripping flags the object has no content/embeds/components/files but has data, wrap in embeds
+        if (!rest.content && !rest.embeds && !rest.components && !rest.files && !rest.attachments && !rest.poll && rest.data) {
+            return { embeds: [options] };
+        }
+
+        return rest;
+    }
+
+    return options;
 }
 
 

@@ -40,7 +40,7 @@ export default {
         if (!memberVoiceState?.channel) {
           return await InteractionHelper.safeEditReply(
             interaction,
-            errorEmbed('You must either be in a voice channel or specify a target voice channel with the `channel` option.')
+            { embeds: [errorEmbed('You must either be in a voice channel or specify a target voice channel with the `channel` option.')] }
           );
         }
         channel = memberVoiceState.channel;
@@ -51,7 +51,7 @@ export default {
       if (!permissions?.has(PermissionFlagsBits.Connect)) {
         return await InteractionHelper.safeEditReply(
           interaction,
-          errorEmbed(`I don't have permission to **Connect** to <#${channel.id}>.`)
+          { embeds: [errorEmbed(`I don't have permission to **Connect** to <#${channel.id}>.`)] }
         );
       }
 
@@ -65,11 +65,13 @@ export default {
       if (result.alreadyConnected) {
         return await InteractionHelper.safeEditReply(
           interaction,
-          createEmbed({
-            title: '🔊 Already Connected',
-            description: `I am already in <#${channel.id}>!`,
-            color: 'info'
-          })
+          {
+            embeds: [createEmbed({
+              title: '🔊 Already Connected',
+              description: `I am already in <#${channel.id}>!`,
+              color: 'info'
+            })]
+          }
         );
       }
 
@@ -81,7 +83,7 @@ export default {
         { name: 'Deafened', value: selfDeaf ? 'Yes' : 'No', inline: true }
       );
 
-      return await InteractionHelper.safeEditReply(interaction, embed);
+      return await InteractionHelper.safeEditReply(interaction, { embeds: [embed] });
     } catch (error) {
       logger.error('[Join Command] Error executing join command:', error);
       return await handleInteractionError(interaction, error, 'join');

@@ -64,7 +64,7 @@ export default {
           if (!memberVoiceState?.channel) {
             return await InteractionHelper.safeEditReply(
               interaction,
-              errorEmbed('You must either be in a voice channel or specify a target voice channel with the `channel` option.')
+              { embeds: [errorEmbed('You must either be in a voice channel or specify a target voice channel with the `channel` option.')] }
             );
           }
           channel = memberVoiceState.channel;
@@ -75,7 +75,7 @@ export default {
         if (!permissions?.has(PermissionFlagsBits.Connect)) {
           return await InteractionHelper.safeEditReply(
             interaction,
-            errorEmbed(`I don't have permission to **Connect** to <#${channel.id}>.`)
+            { embeds: [errorEmbed(`I don't have permission to **Connect** to <#${channel.id}>.`)] }
           );
         }
 
@@ -93,11 +93,13 @@ export default {
         if (result.alreadyConnected) {
           return await InteractionHelper.safeEditReply(
             interaction,
-            createEmbed({
-              title: '🔊 Already Connected',
-              description: `I am already connected to <#${channel.id}>!`,
-              color: 'info'
-            })
+            {
+              embeds: [createEmbed({
+                title: '🔊 Already Connected',
+                description: `I am already connected to <#${channel.id}>!`,
+                color: 'info'
+              })]
+            }
           );
         }
 
@@ -110,7 +112,7 @@ export default {
           { name: 'Muted', value: selfMute ? 'Yes' : 'No', inline: true }
         );
 
-        return await InteractionHelper.safeEditReply(interaction, embed);
+        return await InteractionHelper.safeEditReply(interaction, { embeds: [embed] });
       }
 
       if (subcommand === 'leave') {
@@ -119,7 +121,7 @@ export default {
         if (!result.left) {
           return await InteractionHelper.safeEditReply(
             interaction,
-            errorEmbed('I am not currently connected to any voice channel in this server.')
+            { embeds: [errorEmbed('I am not currently connected to any voice channel in this server.')] }
           );
         }
 
@@ -130,7 +132,7 @@ export default {
           '🔇 Left Voice Channel'
         );
 
-        return await InteractionHelper.safeEditReply(interaction, embed);
+        return await InteractionHelper.safeEditReply(interaction, { embeds: [embed] });
       }
 
       if (subcommand === 'status') {
@@ -139,14 +141,16 @@ export default {
         if (!status.connected) {
           return await InteractionHelper.safeEditReply(
             interaction,
-            createEmbed({
-              title: '🔊 Voice Status',
-              description: 'The bot is not currently connected to any voice channel in this server.',
-              color: 'primary',
-              fields: [
-                { name: 'Status', value: 'Disconnected', inline: true }
-              ]
-            })
+            {
+              embeds: [createEmbed({
+                title: '🔊 Voice Status',
+                description: 'The bot is not currently connected to any voice channel in this server.',
+                color: 'primary',
+                fields: [
+                  { name: 'Status', value: 'Disconnected', inline: true }
+                ]
+              })]
+            }
           );
         }
 
@@ -167,7 +171,7 @@ export default {
           ]
         });
 
-        return await InteractionHelper.safeEditReply(interaction, embed);
+        return await InteractionHelper.safeEditReply(interaction, { embeds: [embed] });
       }
     } catch (error) {
       logger.error('[Voice Command] Error executing voice command:', error);

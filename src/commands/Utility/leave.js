@@ -21,7 +21,7 @@ export default {
       if (!result.left) {
         return await InteractionHelper.safeEditReply(
           interaction,
-          errorEmbed('I am not currently connected to any voice channel in this server.')
+          { embeds: [errorEmbed('I am not currently connected to any voice channel in this server.')] }
         );
       }
 
@@ -32,7 +32,7 @@ export default {
         '🔇 Left Voice Channel'
       );
 
-      return await InteractionHelper.safeEditReply(interaction, embed);
+      return await InteractionHelper.safeEditReply(interaction, { embeds: [embed] });
     } catch (error) {
       logger.error('[Leave Command] Error executing leave command:', error);
       return await handleInteractionError(interaction, error, 'leave');
