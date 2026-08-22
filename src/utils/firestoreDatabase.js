@@ -95,6 +95,18 @@ class FirestoreDatabase {
 
             this.connected = true;
 
+            // Validate read/write permissions from server to prevent false-positive connections
+            try {
+                await getDocFromServer(doc(this.db, 'system', 'status'));
+            } catch (permErr) {
+                if (permErr?.message?.includes('permission') || permErr?.code === 'permission-denied') {
+                    logger.warn('Firebase Firestore lacks permission or has restrictive security rules. Disabling Firestore.');
+                    this.connected = false;
+                    this.db = null;
+                    return false;
+                }
+            }
+
             // Write initial status document so kv_data collection is initialized
             await this.set('system:status', {
                 status: 'online',

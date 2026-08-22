@@ -21,14 +21,15 @@ class DatabaseWrapper {
             return;
         }
 
+        // 1. Primary Database: Firebase Firestore (connects directly via firebase-applet-config.json)
         try {
-            logger.info('Attempting to connect to Firebase Firestore...');
+            logger.info('Connecting to Firebase Firestore database...');
             const fsConnected = await firestoreDb.connect();
             if (fsConnected) {
                 this.db = firestoreDb;
                 this.connectionType = 'firestore';
                 this.degradedReason = null;
-                logger.info('🔥 Firebase Firestore Database initialized - using persistent cloud database');
+                logger.info('🔥 Firebase Firestore Database initialized - persistent cloud database active');
                 this.initialized = true;
                 return;
             }
@@ -36,26 +37,26 @@ class DatabaseWrapper {
             logger.warn('Firestore connection failed:', error.message);
         }
 
+        // 2. Secondary fallback if configured
         try {
-            logger.info('Attempting to connect to PostgreSQL fallback...');
             const pgConnected = await pgDb.connect();
             if (pgConnected) {
                 this.db = pgDb;
                 this.connectionType = 'postgresql';
                 this.degradedReason = null;
-                logger.info('✅ PostgreSQL Database initialized - using persistent database');
+                logger.info('✅ PostgreSQL Database initialized');
                 this.initialized = true;
                 return;
             }
         } catch (error) {
-            logger.warn('PostgreSQL connection failed:', error.message);
+            logger.debug('PostgreSQL fallback not available');
         }
 
         this.db = new MemoryStorage();
         this.useFallback = true;
         this.connectionType = 'memory';
         this.degradedReason = 'DATABASE_UNAVAILABLE';
-        logger.warn('⚠️  DATABASE DEGRADED MODE ENABLED – Using in-memory storage');
+        logger.warn('⚠️ DATABASE DEGRADED MODE ENABLED – Using in-memory storage');
         this.initialized = true;
         this.degradedModeWarningShown = true;
     }

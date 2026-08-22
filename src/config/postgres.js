@@ -2,13 +2,16 @@ import { assertAllowlistedIdentifier } from '../utils/sqlIdentifiers.js';
 import { EXPECTED_SCHEMA_LABEL, EXPECTED_SCHEMA_VERSION } from './schemaVersion.js';
 
 // ── Connection URL resolution ────────────────────────────────────────────────
+// PITCLOUD_DATABASE_URL / PITCLOUD_URL — PitCloud PostgreSQL connection
 // DATABASE_PUBLIC_URL  — Railway public proxy, reachable from anywhere (Replit, local dev, etc.)
-// DATABASE_URL         — may be internal or public depending on Railway project settings
-// POSTGRES_URL         — Railway internal private network URL (only reachable inside Railway)
+// DATABASE_URL         — may be internal or public depending on project settings
+// POSTGRES_URL         — PostgreSQL direct connection URL
 //
-// Prefer the public URL so the bot works from Replit and Railway alike.
-// On Railway in production, all three will be set; the public URL still works fine there.
+// Prefer public / PitCloud URLs so the bot works seamlessly in all environments.
 const CONNECTION_URL =
+    process.env.PITCLOUD_DATABASE_URL ||
+    process.env.PITCLOUD_URL ||
+    process.env.POSTGRES_PITCLOUD_URL ||
     process.env.RAILWAY_URL ||
     process.env.DATABASE_PUBLIC_URL ||
     process.env.DATABASE_URL ||
@@ -19,7 +22,7 @@ const CONNECTION_URL =
     null;
 
 // Parse the URL into individual options so the rest of the codebase can use
-// either approach.  Falls back gracefully if no URL is provided.
+// either approach. Falls back gracefully if no URL is provided.
 let _parsedUrl = {};
 if (CONNECTION_URL) {
     try {
@@ -27,11 +30,10 @@ if (CONNECTION_URL) {
         _parsedUrl = {
             host:     u.hostname,
             port:     parseInt(u.port, 10) || 5432,
-            database: u.pathname.replace(/^\//, ''),
-            user:     u.username,
+            database: u.pathname.replace(/^\//, '') || process.env.POSTGRES_DB || 'nexus',
+            user:     decodeURIComponent(u.username),
             password: decodeURIComponent(u.password),
-            // Railway (and most hosted Postgres) require SSL; disable cert
-            // verification because Railway uses self-signed certs.
+            // Hosted Postgres requires SSL; disable cert verification for cloud proxies
             ssl: { rejectUnauthorized: false },
         };
     } catch (_) {

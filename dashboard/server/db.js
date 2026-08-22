@@ -10,40 +10,32 @@ const { Pool } = pg
 const PUBLIC_PORT = 48953
 
 function buildConfig() {
-  const publicUrl = process.env.DATABASE_PUBLIC_URL
-  if (publicUrl) {
+  const connectionUrl =
+    process.env.PITCLOUD_DATABASE_URL ||
+    process.env.PITCLOUD_URL ||
+    process.env.POSTGRES_PITCLOUD_URL ||
+    process.env.DATABASE_PUBLIC_URL ||
+    process.env.DATABASE_URL ||
+    process.env.POSTGRES_URL ||
+    process.env.DATABASE_PRIVATE_URL ||
+    process.env.POSTGRESQL_URL ||
+    process.env.NEON_URL
+
+  if (connectionUrl) {
     try {
-      const u = new URL(publicUrl)
+      const u = new URL(connectionUrl)
       const config = {
+        connectionString: connectionUrl,
         host: u.hostname,
-        port: parseInt(u.port || String(PUBLIC_PORT), 10),
-        database: u.pathname.replace(/^\//, ''),
+        port: parseInt(u.port || '5432', 10),
+        database: u.pathname.replace(/^\//, '') || process.env.POSTGRES_DB || 'nexus',
         user: decodeURIComponent(u.username),
         password: decodeURIComponent(u.password),
         ssl: { rejectUnauthorized: false },
       }
       return config
     } catch (e) {
-      console.warn('⚠️ Could not parse DATABASE_PUBLIC_URL:', e.message)
-    }
-  }
-
-  const internalUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL
-  if (internalUrl) {
-    try {
-      const u = new URL(internalUrl)
-      const useSSL = process.env.POSTGRES_SSL === 'true'
-      const config = {
-        host: u.hostname,
-        port: parseInt(u.port || '5432', 10),
-        database: u.pathname.replace(/^\//, ''),
-        user: decodeURIComponent(u.username),
-        password: decodeURIComponent(u.password),
-        ssl: useSSL ? { rejectUnauthorized: false } : false,
-      }
-      return config
-    } catch (e) {
-      console.warn('⚠️ Could not parse DATABASE_URL:', e.message)
+      console.warn('⚠️ Could not parse connection URL:', e.message)
     }
   }
 
