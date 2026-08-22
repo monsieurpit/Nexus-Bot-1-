@@ -89,10 +89,16 @@ export function normalizeGuildConfig(raw, defaults = {}) {
 }
 
 export function validateGuildConfigOrThrow(rawConfig, context = {}) {
-  if (typeof rawConfig === 'object' && rawConfig !== null) {
-    return rawConfig;
+  const result = GuildConfigSchema.safeParse(rawConfig);
+  if (!result.success) {
+    throw createError(
+      `Invalid guild configuration payload: ${result.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join(', ')}`,
+      ErrorTypes.VALIDATION,
+      'Invalid guild configuration payload.',
+      { issues: result.error.issues, ...context }
+    );
   }
-  return {};
+  return result.data;
 }
 
 

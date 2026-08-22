@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { db, initializeDatabase } from '../../src/utils/database.js';
+import { firestoreDb } from '../../src/utils/firestoreDatabase.js';
 import { pgDb } from '../../src/utils/postgresDatabase.js';
 
 function resetDbSingleton() {
@@ -14,12 +15,14 @@ function resetDbSingleton() {
 }
 
 test('DB down path falls back to memory with degraded status', async () => {
+  const originalFsConnect = firestoreDb.connect;
   const originalConnect = pgDb.connect;
   const originalGetLastFailure = pgDb.getLastFailure;
 
   try {
     resetDbSingleton();
 
+    firestoreDb.connect = async () => false;
     pgDb.connect = async () => false;
     pgDb.getLastFailure = () => ({
       reason: 'POSTGRES_CONNECTION_FAILED',
@@ -32,14 +35,16 @@ test('DB down path falls back to memory with degraded status', async () => {
     assert.equal(status.initialized, true);
     assert.equal(status.isDegraded, true);
     assert.equal(status.connectionType, 'memory');
-    assert.equal(status.degradedReason, 'POSTGRES_UNAVAILABLE');
+    assert.equal(status.degradedReason, 'DATABASE_UNAVAILABLE');
 
     await db.set('health:key', { ok: true });
     const value = await db.get('health:key');
     assert.deepEqual(value, { ok: true });
   } finally {
+    firestoreDb.connect = originalFsConnect;
     pgDb.connect = originalConnect;
     pgDb.getLastFailure = originalGetLastFailure;
     resetDbSingleton();
   }
 });
+
