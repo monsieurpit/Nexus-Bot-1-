@@ -1,8 +1,60 @@
-import { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } from 'discord.js';
+import { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, parseEmoji } from 'discord.js';
 import { getEconomyConfig, getUserBalance } from '../../services/economy.js';
 import { errorEmbed } from '../../utils/embeds.js';
 import { handleInteractionError } from '../../utils/errorHandler.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
+
+function applySafeEmoji(optionBuilder, emojiInput, fallbackEmoji = '🏷️') {
+  if (!emojiInput || typeof emojiInput !== 'string') {
+    return optionBuilder;
+  }
+  const trimmed = emojiInput.trim();
+  if (!trimmed) {
+    return optionBuilder;
+  }
+
+  // 1. Custom emoji pattern: <:name:id> or <a:name:id>
+  const customMatch = trimmed.match(/^<(a)?:([a-zA-Z0-9_]+):([0-9]{17,20})>$/);
+  if (customMatch) {
+    try {
+      optionBuilder.setEmoji({ id: customMatch[3], name: customMatch[2], animated: Boolean(customMatch[1]) });
+      return optionBuilder;
+    } catch {}
+  }
+
+  // 2. Pure Discord snowflake ID
+  if (/^\d{17,20}$/.test(trimmed)) {
+    try {
+      optionBuilder.setEmoji(trimmed);
+      return optionBuilder;
+    } catch {}
+  }
+
+  // 3. Unicode emoji parsing
+  try {
+    const parsed = parseEmoji(trimmed);
+    if (parsed) {
+      if (parsed.id) {
+        optionBuilder.setEmoji({ id: parsed.id, name: parsed.name, animated: Boolean(parsed.animated) });
+        return optionBuilder;
+      }
+      // Ensure name is a real unicode character, not Discord shortcode text like ":role:" or word "role"
+      if (parsed.name && !parsed.name.startsWith(':') && !parsed.name.endsWith(':') && !/^[a-zA-Z0-9_\-\s]+$/.test(parsed.name)) {
+        optionBuilder.setEmoji(parsed.name);
+        return optionBuilder;
+      }
+    }
+  } catch {}
+
+  // 4. If invalid custom string / broken shortcode, set valid fallback
+  if (fallbackEmoji) {
+    try {
+      optionBuilder.setEmoji(fallbackEmoji);
+    } catch {}
+  }
+
+  return optionBuilder;
+}
 
 export default {
   data: new SlashCommandBuilder()
@@ -59,8 +111,9 @@ export default {
       const lines = items.slice(0, 25).map((item, i) => {
         const typeTag = item.type === 'role' ? '🏷️ Role' : '✨ Custom';
         const canAfford = userCoins >= item.price ? '✅' : '❌';
+        const displayEmoji = item.emoji || (item.type === 'role' ? '🏷️' : '✨');
         return (
-          `**${i + 1}. ${item.emoji} ${item.name}** — ${item.price.toLocaleString()} ${config.currencyEmoji} ${canAfford}\n` +
+          `**${i + 1}. ${displayEmoji} ${item.name}** — ${item.price.toLocaleString()} ${config.currencyEmoji} ${canAfford}\n` +
           `  ${typeTag} • *${item.description || 'No description'}*`
         );
       });
@@ -75,13 +128,15 @@ export default {
       }
 
       // Build buy select menu (max 25 options, Discord limit)
-      const selectOptions = items.slice(0, 25).map(item =>
-        new StringSelectMenuOptionBuilder()
+      const selectOptions = items.slice(0, 25).map(item => {
+        const option = new StringSelectMenuOptionBuilder()
           .setValue(item.id)
           .setLabel(`${item.name} — ${item.price.toLocaleString()} ${config.currencyEmoji}`.substring(0, 100))
-          .setDescription((item.description || 'No description').substring(0, 100))
-          .setEmoji(item.emoji)
-      );
+          .setDescription((item.description || 'No description').substring(0, 100));
+
+        const fallback = item.type === 'role' ? '🏷️' : '✨';
+        return applySafeEmoji(option, item.emoji, fallback);
+      });
 
       const selectMenu = new StringSelectMenuBuilder()
         .setCustomId(`shop_buy:${guildId}`)

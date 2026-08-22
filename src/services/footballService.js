@@ -920,7 +920,17 @@ export function getAllMatches(customMatches = []) {
  * Formats a match announcement with rich matchday details, bilingual kickoff times, dynamic Discord countdowns, venue access, and broadcast info
  */
 export function formatMatchAnnouncement(match, roleId = null) {
-    const roleMention = roleId ? `\n\n<@&${roleId}>` : '';
+    let roleMention = '';
+    if (roleId) {
+        const cleanRoleId = String(roleId).trim();
+        if (cleanRoleId === 'everyone' || cleanRoleId === '@everyone') {
+            roleMention = '\n\n@everyone';
+        } else if (cleanRoleId === 'here' || cleanRoleId === '@here') {
+            roleMention = '\n\n@here';
+        } else {
+            roleMention = `\n\n<@&${cleanRoleId}>`;
+        }
+    }
     const kickoffUnix = match.kickoffUtc ? Math.floor(new Date(match.kickoffUtc).getTime() / 1000) : null;
     const discordTime = kickoffUnix ? `<t:${kickoffUnix}:F> (<t:${kickoffUnix}:R>)` : 'TBA';
     const isHome = match.homeOrAway === 'home';
@@ -1161,13 +1171,17 @@ export async function sendMatchAlert(client, channelIdOrChannel, match, roleId =
 
     const messageContent = formatMatchAnnouncement(match, roleId);
 
-    // Build allowedMentions so role pings always dispatch cleanly
+    // Build allowedMentions so role pings always dispatch cleanly without Discord API parse/roles conflicts
     let allowedMentions = { parse: [] };
     if (roleId) {
-        if (roleId === 'everyone' || roleId === '@everyone' || (channel.guild && roleId === channel.guild.id)) {
-            allowedMentions = { parse: ['everyone', 'roles'] };
+        const cleanRoleId = String(roleId).trim();
+        if (cleanRoleId === 'everyone' || cleanRoleId === '@everyone' || (channel.guild && cleanRoleId === channel.guild.id)) {
+            allowedMentions = { parse: ['everyone'] };
+        } else if (cleanRoleId === 'here' || cleanRoleId === '@here') {
+            allowedMentions = { parse: ['everyone'] };
         } else {
-            allowedMentions = { roles: [roleId], parse: ['roles'] };
+            // Note: Discord API strictly requires either parse: ['roles'] OR roles: [ids], NEVER both!
+            allowedMentions = { roles: [cleanRoleId] };
         }
     }
 
