@@ -32,6 +32,8 @@ async function handleShopBuy(interaction, guildId) {
 
     const { item, remaining } = result;
 
+    const itemEmoji = item.emoji || (item.type === 'role' ? '🏷️' : '✨');
+
     // ── Role item: try to assign automatically ────────────────────────────────
     if (item.type === 'role' && item.roleId) {
       let roleGiven = false;
@@ -62,7 +64,7 @@ async function handleShopBuy(interaction, guildId) {
       if (roleGiven) {
         return interaction.editReply({
           embeds: [successEmbed(
-            `${item.emoji} Purchase Successful!`,
+            `${itemEmoji} Purchase Successful!`,
             `You bought **${item.name}** for **${item.price.toLocaleString()} ${config.currencyEmoji}**.\n` +
             `The role has been added to your profile!\n\n` +
             `**Remaining balance:** ${remaining.toLocaleString()} ${config.currencyEmoji}`
@@ -74,7 +76,7 @@ async function handleShopBuy(interaction, guildId) {
       await notifyAdmin(interaction, config, item, userId, roleError);
       return interaction.editReply({
         embeds: [successEmbed(
-          `${item.emoji} Purchase Successful!`,
+          `${itemEmoji} Purchase Successful!`,
           `You bought **${item.name}** for **${item.price.toLocaleString()} ${config.currencyEmoji}**.\n` +
           `An admin has been notified to deliver your item manually.\n\n` +
           `**Remaining balance:** ${remaining.toLocaleString()} ${config.currencyEmoji}`
@@ -86,7 +88,7 @@ async function handleShopBuy(interaction, guildId) {
     await notifyAdmin(interaction, config, item, userId, null);
     return interaction.editReply({
       embeds: [successEmbed(
-        `${item.emoji} Purchase Successful!`,
+        `${itemEmoji} Purchase Successful!`,
         `You bought **${item.name}** for **${item.price.toLocaleString()} ${config.currencyEmoji}**.\n` +
         `An admin has been notified to deliver your item.\n\n` +
         (item.deliveryNote ? `**What to expect:** ${item.deliveryNote}\n\n` : '') +
@@ -106,6 +108,7 @@ async function notifyAdmin(interaction, config, item, userId, errorReason) {
   if (!adminRoleId) return;
 
   try {
+    const itemEmoji = item.emoji || (item.type === 'role' ? '🏷️' : '✨');
     const reasonNote = errorReason
       ? `\n⚠️ Automatic delivery failed (\`${errorReason}\`) — please deliver manually.`
       : '';
@@ -118,7 +121,7 @@ async function notifyAdmin(interaction, config, item, userId, errorReason) {
       .setTitle(`🛒 Shop Purchase — Admin Notification`)
       .setColor('#F4A700')
       .setDescription(
-        `<@${userId}> purchased **${item.emoji} ${item.name}** and requires manual delivery.` +
+        `<@${userId}> purchased **${itemEmoji} ${item.name}** and requires manual delivery.` +
         typeInfo +
         deliveryNote +
         reasonNote

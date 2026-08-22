@@ -1,10 +1,10 @@
-import { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, parseEmoji } from 'discord.js';
+import { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } from 'discord.js';
 import { getEconomyConfig, getUserBalance } from '../../services/economy.js';
 import { errorEmbed } from '../../utils/embeds.js';
 import { handleInteractionError } from '../../utils/errorHandler.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 
-function applySafeEmoji(optionBuilder, emojiInput, fallbackEmoji = '🏷️') {
+function applySafeEmoji(optionBuilder, emojiInput) {
   if (!emojiInput || typeof emojiInput !== 'string') {
     return optionBuilder;
   }
@@ -25,31 +25,17 @@ function applySafeEmoji(optionBuilder, emojiInput, fallbackEmoji = '🏷️') {
   // 2. Pure Discord snowflake ID
   if (/^\d{17,20}$/.test(trimmed)) {
     try {
-      optionBuilder.setEmoji(trimmed);
+      optionBuilder.setEmoji({ id: trimmed });
       return optionBuilder;
     } catch {}
   }
 
-  // 3. Unicode emoji parsing
-  try {
-    const parsed = parseEmoji(trimmed);
-    if (parsed) {
-      if (parsed.id) {
-        optionBuilder.setEmoji({ id: parsed.id, name: parsed.name, animated: Boolean(parsed.animated) });
-        return optionBuilder;
-      }
-      // Ensure name is a real unicode character, not Discord shortcode text like ":role:" or word "role"
-      if (parsed.name && !parsed.name.startsWith(':') && !parsed.name.endsWith(':') && !/^[a-zA-Z0-9_\-\s]+$/.test(parsed.name)) {
-        optionBuilder.setEmoji(parsed.name);
-        return optionBuilder;
-      }
-    }
-  } catch {}
-
-  // 4. If invalid custom string / broken shortcode, set valid fallback
-  if (fallbackEmoji) {
+  // 3. Extract pure Unicode single emoji (e.g. 🏷️, ✨, 💰, 👑)
+  const emojiMatch = trimmed.match(/(\p{Extended_Pictographic}(?:\uFE0F|\uFE0E)?)/u);
+  if (emojiMatch && emojiMatch[1]) {
     try {
-      optionBuilder.setEmoji(fallbackEmoji);
+      optionBuilder.setEmoji(emojiMatch[1]);
+      return optionBuilder;
     } catch {}
   }
 
@@ -134,8 +120,7 @@ export default {
           .setLabel(`${item.name} — ${item.price.toLocaleString()} ${config.currencyEmoji}`.substring(0, 100))
           .setDescription((item.description || 'No description').substring(0, 100));
 
-        const fallback = item.type === 'role' ? '🏷️' : '✨';
-        return applySafeEmoji(option, item.emoji, fallback);
+        return applySafeEmoji(option, item.emoji);
       });
 
       const selectMenu = new StringSelectMenuBuilder()
@@ -145,7 +130,27 @@ export default {
 
       const row = new ActionRowBuilder().addComponents(selectMenu);
 
-      await InteractionHelper.safeEditReply(interaction, { embeds: [embed], components: [row] });
+      try {
+        await InteractionHelper.safeEditReply(interaction, { embeds: [embed], components: [row] });
+      } catch (replyError) {
+        // If Discord API complains about an invalid emoji in custom options, re-send menu without option emojis
+        if (replyError?.message?.includes('emoji') || replyError?.code === 50035 || replyError?.rawError?.errors?.components) {
+          const plainOptions = items.slice(0, 25).map(item =>
+            new StringSelectMenuOptionBuilder()
+              .setValue(item.id)
+              .setLabel(`${item.name} — ${item.price.toLocaleString()} ${config.currencyEmoji}`.substring(0, 100))
+              .setDescription((item.description || 'No description').substring(0, 100))
+          );
+          const plainMenu = new StringSelectMenuBuilder()
+            .setCustomId(`shop_buy:${guildId}`)
+            .setPlaceholder('Select an item to purchase…')
+            .addOptions(plainOptions);
+          const plainRow = new ActionRowBuilder().addComponents(plainMenu);
+          await InteractionHelper.safeEditReply(interaction, { embeds: [embed], components: [plainRow] });
+        } else {
+          throw replyError;
+        }
+      }
     } catch (error) {
       await handleInteractionError(interaction, error, { type: 'command', commandName: 'shop' });
     }
