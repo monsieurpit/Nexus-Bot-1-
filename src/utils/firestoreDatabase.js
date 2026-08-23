@@ -297,6 +297,14 @@ class FirestoreDatabase {
                     guildId,
                     updatedAt: new Date().toISOString()
                 }), { merge: true }).catch(() => null);
+
+                // K. VC Event System (/vc_event_configs)
+                await setDoc(doc(this.db, 'vc_event_configs', guildId), sanitizeForFirestore({
+                    key: `guild:${guildId}:vc_event`,
+                    value: config.vcEvent || { enabled: false },
+                    guildId,
+                    updatedAt: new Date().toISOString()
+                }), { merge: true }).catch(() => null);
             }
 
             logger.info(`✅ Synchronized dedicated tables for ${discoveredGuildIds.size} guild(s)`);
@@ -441,6 +449,9 @@ class FirestoreDatabase {
 
             // Reaction Roles
             if (parts[2] === 'reaction_roles' && parts[3]) return doc(this.db, 'reaction_roles', `${guildId}_${parts[3]}`);
+
+            // VC Event System
+            if (parts[2] === 'vc_event') return doc(this.db, 'vc_event_configs', guildId);
         }
 
         // Global Scoped Modules
@@ -665,6 +676,14 @@ class FirestoreDatabase {
                     await setDoc(doc(this.db, 'ticket_configs', guildId), sanitizeForFirestore({
                         key: `guild:${guildId}:ticket:config`,
                         value: value.tickets,
+                        guildId,
+                        updatedAt: new Date().toISOString()
+                    }), { merge: true }).catch(() => null);
+                }
+                if (value.vcEvent) {
+                    await setDoc(doc(this.db, 'vc_event_configs', guildId), sanitizeForFirestore({
+                        key: `guild:${guildId}:vc_event`,
+                        value: value.vcEvent,
                         guildId,
                         updatedAt: new Date().toISOString()
                     }), { merge: true }).catch(() => null);

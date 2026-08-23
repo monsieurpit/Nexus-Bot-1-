@@ -13,6 +13,7 @@ import { checkGiveaways } from './services/giveawayService.js';
 import { runAutoSave } from './services/autoSaveService.js';
 import { checkFootballAnnouncements, syncBarcelonaFixturesFromApi } from './services/footballService.js';
 import { checkWeeklySummaries } from './services/weeklySummaryService.js';
+import { checkVcEvents } from './services/vcEventService.js';
 import { loadCommands, registerCommands as registerSlashCommands } from './handlers/commandLoader.js';
 
 class TitanBot extends Client {
@@ -295,6 +296,11 @@ class TitanBot extends Client {
 
   setupCronJobs() {
     cron.schedule('* * * * *', () => checkGiveaways(this));
+    cron.schedule('* * * * *', () => {
+      checkVcEvents(this).catch(err => {
+        logger.error('[Cron] Error in VC event scheduler job:', err);
+      });
+    });
     cron.schedule('0 0 * * *', () => runAutoSave(this));
     cron.schedule('*/15 * * * *', () => this.updateAllCounters());
     // Poll DB every 5 minutes and apply botStatus if it changed
