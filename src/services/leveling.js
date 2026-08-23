@@ -234,9 +234,21 @@ export async function getUserLevelData(client, guildId, userId) {
       );
     }
 
-    const key = `${guildId}:leveling:users:${userId}`;
-    const data = await client.db.get(key);
-    
+    const key = `guild:${guildId}:leveling:users:${userId}`;
+    let data = await client.db.get(key);
+
+    if (!data) {
+      // Fall back to the pre-fix key format (missing the "guild:" prefix, which
+      // meant it never actually routed to the dedicated leveling table) so
+      // existing XP/levels saved under it aren't lost - migrate it forward.
+      const legacyKey = `${guildId}:leveling:users:${userId}`;
+      const legacyData = await client.db.get(legacyKey);
+      if (legacyData) {
+        data = legacyData;
+        await client.db.set(key, legacyData).catch(() => {});
+      }
+    }
+
     if (!data) {
       return {
         xp: 0,
@@ -246,7 +258,7 @@ export async function getUserLevelData(client, guildId, userId) {
         rank: 0
       };
     }
-    
+
     return {
       xp: Math.max(0, data.xp || 0),
       level: Math.max(0, Math.min(data.level || 0, MAX_LEVEL)),
@@ -299,7 +311,7 @@ export async function saveUserLevelData(client, guildId, userId, data) {
       rank: Number(data.rank) || 0
     };
 
-    const key = `${guildId}:leveling:users:${userId}`;
+    const key = `guild:${guildId}:leveling:users:${userId}`;
     await client.db.set(key, sanitizedData);
   } catch (error) {
     logger.error(`Error saving user level data for ${userId}:`, error);
@@ -540,9 +552,10 @@ export async function deleteUserLevelData(client, guildId, userId) {
       );
     }
 
-    const key = `${guildId}:leveling:users:${userId}`;
+    const key = `guild:${guildId}:leveling:users:${userId}`;
     await client.db.delete(key);
-    
+    await client.db.delete(`${guildId}:leveling:users:${userId}`).catch(() => {}); // legacy key cleanup
+
     logger.debug(`Deleted level data for user ${userId} in guild ${guildId}`);
   } catch (error) {
     logger.error(`Error deleting level data for user ${userId}:`, error);
