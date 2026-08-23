@@ -8,7 +8,10 @@ import { NexusAI } from '../../nexus-ai.js';
 // calling Gemini directly. Calling an external LLM here defeated the entire point of that custom
 // engine: none of its knowledge, personas, RaidShield checks, or fixes could ever reach a message
 // answered this way, no matter how much work went into the engine itself.
-const nexusClient = new NexusAI({
+// Exported so other services (e.g. the dashboard's API router) can reuse this single client
+// instance instead of constructing their own — one place to configure, one source of truth for
+// which deployment "the custom AI" actually means.
+export const nexusClient = new NexusAI({
   apiKey: process.env.NEXUS_API_KEY,
   baseUrl: process.env.NEXUS_API_URL,
 });

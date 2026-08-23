@@ -1,23 +1,43 @@
 import express from 'express';
-import { askNexusAi } from '../../../src/services/nexusAiService.js';
+import { askNexusAi, nexusClient } from '../../../src/services/nexusAiService.js';
 import { getCasseurtCrashoutRant } from '../../../src/services/casseurtRants.js';
 import { globalAiQueue } from '../../../src/utils/requestQueue.js';
 
 const router = express.Router();
 
 /**
- * Minimal local vision analysis used by /raidshield's optical scan step and the
- * dedicated /vision/analyze endpoint below. This is intentionally a lightweight
- * stand-in, not a duplicate of a real vision model - actual multimodal analysis
- * is handled by the real Nexus AI engine when NEXUS_API_URL points to it.
+ * Delegates to the real Nexus AI engine's own /vision/analyze endpoint instead of a local stub.
+ * Note this doesn't add real image-content security today — the real engine's vision endpoint
+ * (server.ts in the Nexus-AI- repo) doesn't do actual pixel/OCR analysis either, it's a metadata
+ * + canned-message response, same limitation, just in one place instead of two. The point of this
+ * change is architectural: when real vision analysis does get added, there's now only one
+ * implementation to update instead of a second local copy silently staying fake forever.
  */
 async function analyzeVision({ image, prompt = '', isSecurityScan = false } = {}) {
-  return {
-    analysis: 'Image received and processed securely via Nexus Vision Engine.',
-    ocrText: 'Visual content verified.',
-    safety: 'safe',
-    modelUsed: 'nexus-vision-native'
-  };
+  try {
+    const result = await nexusClient.analyzeImage({
+      imageUrl: typeof image === 'string' && image.startsWith('http') ? image : undefined,
+      imageData: typeof image === 'string' && !image.startsWith('http') ? image : undefined,
+      prompt,
+      mode: isSecurityScan ? 'security' : 'general',
+    });
+    return {
+      analysis: result.analysis || 'No analysis returned.',
+      ocrText: result.ocrText || '',
+      // Fail closed, not open: if the real engine doesn't explicitly say "safe", don't assume it.
+      safety: result.safety || (result.status === 'success' ? 'unverified' : 'unverified'),
+      modelUsed: result.model || 'nexus-vision-engine',
+    };
+  } catch (err) {
+    // A failed scan is NOT the same as a clean scan — reporting "safe" here would have meant an
+    // outage silently let every scam image through undetected.
+    return {
+      analysis: `Vision scan unavailable: ${err.message}`,
+      ocrText: '',
+      safety: 'unverified',
+      modelUsed: 'nexus-vision-engine',
+    };
+  }
 }
 
 /**
@@ -296,95 +316,73 @@ router.post('/nexus', authenticateApiKey, async (req, res) => {
  * POST /api/v1/raidshield
  * RaidShield 21-Hard-Rules Security Scanner with Multimodal Optical Inspection
  */
+/**
+ * Local regex heuristic \u2014 used ONLY when the real engine's RaidShield call fails outright (network
+ * error, deployment down). This used to be the primary classifier for every message, which meant
+ * "RaidShield" was really just these 4 patterns instead of the real engine's full 21-rule
+ * evaluator. Kept as a degraded-mode fallback, not the main decision path, and it fails toward
+ * caution: an image present with no fallback vision scan available gets flagged for review rather
+ * than waved through as safe, since this fallback genuinely cannot see images at all.
+ */
+function localHeuristicClassify(text, hasImage) {
+  const lower = text.toLowerCase();
+
+  const isPhishing = /https?:\/\/(?!discord\.com|discord\.gg|youtube\.com|youtu\.be|twitch\.tv|twitter\.com|x\.com|reddit\.com|github\.com|spotify\.com)[^\s]+(?:nitro|gift|steamcommunity|claim|airdrop|free-nitro|discord-app)/i.test(text);
+  const isCryptoScam = /(?:send\s+crypto|double\s+your\s+bitcoin|free\s+eth\s+giveaway|guaranteed\s+100x|wallet\s+seed\s+phrase)/i.test(lower);
+  if (isPhishing || isCryptoScam) {
+    return { classification: 'scam', confidence: 0.99, reason: 'Phishing domain or fraudulent cryptocurrency scheme detected (fallback heuristic)', actionRecommended: 'DELETE_AND_TIMEOUT' };
+  }
+
+  const isTokenStealer = /token\s*=\s*['"][MN][A-Za-z\d]{23,}\.[A-Za-z\d-_]{6}\.[A-Za-z\d-_]{27,}['"]/i.test(text) ||
+                         /localStorage\.setItem\(['"]token['"]/i.test(text) ||
+                         /[A-Za-z0-9_-]{24,28}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,38}/.test(text);
+  if (isTokenStealer) {
+    return { classification: 'bot', confidence: 0.98, reason: 'Malicious token logger or exposed Discord authentication token detected (fallback heuristic)', actionRecommended: 'DELETE_AND_TIMEOUT' };
+  }
+
+  const isMassPing = (text.match(/@(everyone|here)/gi) || []).length >= 2 || (text.match(/<@&[0-9]+>/g) || []).length >= 4;
+  const isZalgo = /[\u0300-\u036f\u0489]{6,}/g.test(text);
+  if (isMassPing || isZalgo) {
+    return { classification: 'raid', confidence: 0.96, reason: 'Mass ping or corrupted zalgo flood attempting channel disruption (fallback heuristic)', actionRecommended: 'DELETE_AND_TIMEOUT' };
+  }
+
+  const inviteCount = (text.match(/(?:discord\.gg\/|discord\.com\/invite\/)[a-zA-Z0-9]+/gi) || []).length;
+  const isRepeatedSpam = /(.)\1{18,}/.test(text);
+  if (inviteCount >= 2 || isRepeatedSpam) {
+    return { classification: 'spam', confidence: 0.94, reason: 'Mass server invite link dumps or repeated character wall (fallback heuristic)', actionRecommended: 'DELETE_AND_WARN' };
+  }
+
+  if (hasImage) {
+    return { classification: 'unverified', confidence: 0.5, reason: 'Real-time security engine unavailable and this fallback cannot scan images \u2014 flagged for manual review', actionRecommended: 'FLAG_FOR_REVIEW' };
+  }
+
+  return { classification: 'safe', confidence: 0.7, reason: 'No local heuristic matched (real engine unavailable, reduced-confidence fallback result)', actionRecommended: 'NONE' };
+}
+
 router.post('/raidshield', authenticateApiKey, async (req, res) => {
   try {
     const { messageText, authorId, image, attachments, imageUrl, imageData } = req.body || {};
-    const finalImage = image || imageUrl || imageData || null;
+    const finalImage = image || imageUrl || imageData || (Array.isArray(attachments) ? attachments[0] : null);
     const text = (messageText || '').trim();
-    const lower = text.toLowerCase();
 
     const queuedExecution = await globalAiQueue.enqueue(async () => {
-      // 1. Phishing & Malicious scam links
-      const isPhishing = /https?:\/\/(?!discord\.com|discord\.gg|youtube\.com|youtu\.be|twitch\.tv|twitter\.com|x\.com|reddit\.com|github\.com|spotify\.com)[^\s]+(?:nitro|gift|steamcommunity|claim|airdrop|free-nitro|discord-app)/i.test(text);
-      const isCryptoScam = /(?:send\s+crypto|double\s+your\s+bitcoin|free\s+eth\s+giveaway|guaranteed\s+100x|wallet\s+seed\s+phrase)/i.test(lower);
-
-      if (isPhishing || isCryptoScam) {
+      try {
+        const result = await nexusClient.checkSecurity({
+          messageText: text,
+          authorId,
+          imageUrl: typeof finalImage === 'string' && finalImage.startsWith('http') ? finalImage : undefined,
+          imageData: typeof finalImage === 'string' && !finalImage.startsWith('http') ? finalImage : undefined,
+        });
         return {
-          classification: 'scam',
-          confidence: 0.99,
-          reason: 'Phishing domain or fraudulent cryptocurrency scheme detected',
-          actionRecommended: 'DELETE_AND_TIMEOUT'
+          classification: result.classification,
+          confidence: result.confidence,
+          reason: result.reason,
+          actionRecommended: result.actionRecommended || (result.classification === 'safe' ? 'NONE' : 'FLAG_FOR_REVIEW'),
         };
+      } catch (err) {
+        console.warn('[RaidShield] Real engine call failed, using local heuristic fallback:', err.message);
+        return localHeuristicClassify(text, Boolean(finalImage));
       }
-
-      // 2. Token Stealer / Selfbot scraper patterns
-      const isTokenStealer = /token\s*=\s*['"][MN][A-Za-z\d]{23,}\.[A-Za-z\d-_]{6}\.[A-Za-z\d-_]{27,}['"]/i.test(text) || 
-                             /localStorage\.setItem\(['"]token['"]/i.test(text) ||
-                             /[A-Za-z0-9_-]{24,28}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,38}/.test(text);
-      if (isTokenStealer) {
-        return {
-          classification: 'bot',
-          confidence: 0.98,
-          reason: 'Malicious token logger or exposed Discord authentication token detected',
-          actionRecommended: 'DELETE_AND_TIMEOUT'
-        };
-      }
-
-      // 3. Coordinated Raid / Mass Ping / Zalgo
-      const isMassPing = (text.match(/@(everyone|here)/gi) || []).length >= 2 || (text.match(/<@&[0-9]+>/g) || []).length >= 4;
-      const isZalgo = /[\u0300-\u036f\u0489]{6,}/g.test(text);
-
-      if (isMassPing || isZalgo) {
-        return {
-          classification: 'raid',
-          confidence: 0.96,
-          reason: 'Mass ping or corrupted zalgo flood attempting channel disruption',
-          actionRecommended: 'DELETE_AND_TIMEOUT'
-        };
-      }
-
-      // 4. Spam / Mass Invites
-      const inviteCount = (text.match(/(?:discord\.gg\/|discord\.com\/invite\/)[a-zA-Z0-9]+/gi) || []).length;
-      const isRepeatedSpam = /(.)\1{18,}/.test(text);
-
-      if (inviteCount >= 2 || isRepeatedSpam) {
-        return {
-          classification: 'spam',
-          confidence: 0.94,
-          reason: 'Mass server invite link dumps or repeated character wall',
-          actionRecommended: 'DELETE_AND_WARN'
-        };
-      }
-
-      // 5. Optical Vision Scan for Image Attachments
-      const targetImage = finalImage || (Array.isArray(attachments) && attachments[0]);
-      if (targetImage) {
-        try {
-          const visionResult = await analyzeVision({
-            image: targetImage,
-            prompt: 'Check this image for QR code login phishing, fake Nitro gift popups, Steam trade scam overlays, or malware download buttons.',
-            isSecurityScan: true
-          });
-
-          if (visionResult.safety === 'threat_detected' || /scam|phishing|fake nitro|qr login/i.test(visionResult.analysis)) {
-            return {
-              classification: 'scam',
-              confidence: 0.95,
-              reason: `Visual threat detected in image attachment: ${visionResult.analysis.slice(0, 140)}`,
-              actionRecommended: 'DELETE_AND_TIMEOUT'
-            };
-          }
-        } catch (visionErr) {
-          console.warn('Optical image scan fallback:', visionErr.message);
-        }
-      }
-
-      return {
-        classification: 'safe',
-        confidence: 0.99,
-        reason: 'Message and attachments adhere to safe community guidelines',
-        actionRecommended: 'NONE'
-      };
     });
 
     return res.json({
