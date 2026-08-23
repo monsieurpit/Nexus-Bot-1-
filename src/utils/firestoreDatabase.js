@@ -305,6 +305,19 @@ class FirestoreDatabase {
                     guildId,
                     updatedAt: new Date().toISOString()
                 }), { merge: true }).catch(() => null);
+
+                // L. LaLiga Standings System (/laliga_standings_configs) - only guilds
+                // with hourly auto-refresh currently enabled are kept in this table.
+                if (config.laligaStandings?.enabled) {
+                    await setDoc(doc(this.db, 'laliga_standings_configs', guildId), sanitizeForFirestore({
+                        key: `guild:${guildId}:laliga_standings`,
+                        value: config.laligaStandings,
+                        guildId,
+                        updatedAt: new Date().toISOString()
+                    }), { merge: true }).catch(() => null);
+                } else {
+                    await deleteDoc(doc(this.db, 'laliga_standings_configs', guildId)).catch(() => null);
+                }
             }
 
             logger.info(`✅ Synchronized dedicated tables for ${discoveredGuildIds.size} guild(s)`);
@@ -452,6 +465,9 @@ class FirestoreDatabase {
 
             // VC Event System
             if (parts[2] === 'vc_event') return doc(this.db, 'vc_event_configs', guildId);
+
+            // LaLiga Standings System
+            if (parts[2] === 'laliga_standings') return doc(this.db, 'laliga_standings_configs', guildId);
         }
 
         // Global Scoped Modules
@@ -687,6 +703,20 @@ class FirestoreDatabase {
                         guildId,
                         updatedAt: new Date().toISOString()
                     }), { merge: true }).catch(() => null);
+                }
+                if (value.laligaStandings) {
+                    // Only guilds with hourly auto-refresh enabled belong in this table -
+                    // remove the entry the moment a guild disables it.
+                    if (value.laligaStandings.enabled) {
+                        await setDoc(doc(this.db, 'laliga_standings_configs', guildId), sanitizeForFirestore({
+                            key: `guild:${guildId}:laliga_standings`,
+                            value: value.laligaStandings,
+                            guildId,
+                            updatedAt: new Date().toISOString()
+                        }), { merge: true }).catch(() => null);
+                    } else {
+                        await deleteDoc(doc(this.db, 'laliga_standings_configs', guildId)).catch(() => null);
+                    }
                 }
                 if (value.serverStats || value.counters) {
                     await setDoc(doc(this.db, 'serverstats_configs', guildId), sanitizeForFirestore({
