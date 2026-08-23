@@ -14,6 +14,7 @@ import { runAutoSave } from './services/autoSaveService.js';
 import { checkFootballAnnouncements, syncBarcelonaFixturesFromApi } from './services/footballService.js';
 import { checkWeeklySummaries } from './services/weeklySummaryService.js';
 import { checkVcEvents } from './services/vcEventService.js';
+import { checkLaligaStandingsUpdates } from './services/laligaStandingsService.js';
 import { loadCommands, registerCommands as registerSlashCommands } from './handlers/commandLoader.js';
 
 class TitanBot extends Client {
@@ -317,6 +318,12 @@ class TitanBot extends Client {
     });
     // Daily sync of FC Barcelona match fixtures from API to check for modifications/rescheduled games (at 06:00 UTC)
     cron.schedule('0 6 * * *', () => syncBarcelonaFixturesFromApi());
+    // Refresh every configured LaLiga standings board once an hour, on the hour
+    cron.schedule('0 * * * *', () => {
+      checkLaligaStandingsUpdates(this).catch(err => {
+        logger.error('[Cron] Error in LaLiga standings scheduler job:', err);
+      });
+    });
 
     // Run initial startup check 15 seconds after launch once bot caches are populated
     setTimeout(() => {
