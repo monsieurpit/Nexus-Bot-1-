@@ -180,8 +180,8 @@ export async function registerCommands(client, clientId, guildId) {
             if (cmd.name && cmd.name.length > 32) {
                 validationErrors.push(`Command ${cmd.name} has name longer than 32 chars: "${cmd.name}" (${cmd.name.length} chars)`);
             }
-            if (cmd.description && cmd.description.length > 110) {
-                validationErrors.push(`Command ${cmd.name} has description longer than 110 chars: "${cmd.description}" (${cmd.description.length} chars)`);
+            if (cmd.description && cmd.description.length > 100) {
+                validationErrors.push(`Command ${cmd.name} has description longer than 100 chars: "${cmd.description}" (${cmd.description.length} chars)`);
             }
 
             if (cmd.options) {
@@ -189,14 +189,14 @@ export async function registerCommands(client, clientId, guildId) {
                     if (option.name && option.name.length > 32) {
                         validationErrors.push(`Command ${cmd.name} option ${option.name} has name longer than 32 chars: "${option.name}" (${option.name.length} chars)`);
                     }
-                    if (option.description && option.description.length > 110) {
-                        validationErrors.push(`Command ${cmd.name} option ${option.name} has description longer than 110 chars: "${option.description}" (${option.description.length} chars)`);
+                    if (option.description && option.description.length > 100) {
+                        validationErrors.push(`Command ${cmd.name} option ${option.name} has description longer than 100 chars: "${option.description}" (${option.description.length} chars)`);
                     }
 
                     if (option.choices) {
                         option.choices.forEach((choice, choiceIndex) => {
-                            if (choice.name && choice.name.length > 110) {
-                                validationErrors.push(`Command ${cmd.name} option ${option.name} choice ${choice.name} has name longer than 110 chars: "${choice.name}" (${choice.name.length} chars)`);
+                            if (choice.name && choice.name.length > 100) {
+                                validationErrors.push(`Command ${cmd.name} option ${option.name} choice ${choice.name} has name longer than 100 chars: "${choice.name}" (${choice.name.length} chars)`);
                             }
                             if (choice.value && choice.value.length > 100) {
                                 validationErrors.push(`Command ${cmd.name} option ${option.name} choice ${choice.name} has value longer than 100 chars: "${choice.value}" (${choice.value.length} chars)`);
@@ -209,14 +209,14 @@ export async function registerCommands(client, clientId, guildId) {
                             if (subOption.name && subOption.name.length > 32) {
                                 validationErrors.push(`Command ${cmd.name} subcommand ${option.name} option ${subOption.name} has name longer than 32 chars: "${subOption.name}" (${subOption.name.length} chars)`);
                             }
-                            if (subOption.description && subOption.description.length > 110) {
-                                validationErrors.push(`Command ${cmd.name} subcommand ${option.name} option ${subOption.name} has description longer than 110 chars: "${subOption.description}" (${subOption.description.length} chars)`);
+                            if (subOption.description && subOption.description.length > 100) {
+                                validationErrors.push(`Command ${cmd.name} subcommand ${option.name} option ${subOption.name} has description longer than 100 chars: "${subOption.description}" (${subOption.description.length} chars)`);
                             }
 
                             if (subOption.choices) {
                                 subOption.choices.forEach((choice, choiceIndex) => {
-                                    if (choice.name && choice.name.length > 110) {
-                                        validationErrors.push(`Command ${cmd.name} subcommand ${option.name} option ${subOption.name} choice ${choice.name} has name longer than 110 chars: "${choice.name}" (${choice.name.length} chars)`);
+                                    if (choice.name && choice.name.length > 100) {
+                                        validationErrors.push(`Command ${cmd.name} subcommand ${option.name} option ${subOption.name} choice ${choice.name} has name longer than 100 chars: "${choice.name}" (${choice.name.length} chars)`);
                                     }
                                     if (choice.value && choice.value.length > 100) {
                                         validationErrors.push(`Command ${cmd.name} subcommand ${option.name} option ${subOption.name} choice ${choice.name} has value longer than 100 chars: "${choice.value}" (${choice.value.length} chars)`);
@@ -267,28 +267,41 @@ export async function registerCommands(client, clientId, guildId) {
             throw error;
         }
 
-        // ─── GUILD-LEVEL REGISTRATION FOR INSTANT VISIBILITY ───────────────────
+        // ─── GUILD-LEVEL REGISTRATION FOR INSTANT VISIBILITY (dev guild only) ──
         // Global commands take up to an hour to propagate to Discord desktop/mobile clients.
-        // Registering to connected guilds makes new commands show up instantly (0 delay).
+        // Registering the same commands to a guild ALSO shows up there, as a SEPARATE
+        // command from the global one - so this must only ever target the single
+        // configured dev/test guild (GUILD_ID), never every connected guild, or every
+        // server ends up seeing each command twice.
         // ───────────────────────────────────────────────────────────────────────
-        const targetGuildIds = new Set();
-        if (guildId) targetGuildIds.add(guildId);
-        if (client.guilds?.cache) {
-            for (const [gId] of client.guilds.cache) {
-                targetGuildIds.add(gId);
-            }
-        }
-
-        for (const gId of targetGuildIds) {
+        if (guildId) {
             try {
-                const guild = await client.guilds.fetch(gId).catch(() => null);
+                const guild = await client.guilds.fetch(guildId).catch(() => null);
                 if (guild) {
-                    logger.info(`Registering ${commandsToRegister.length} instant guild commands in ${guild.name} (${guild.id})...`);
+                    logger.info(`Registering ${commandsToRegister.length} instant guild commands in dev guild ${guild.name} (${guild.id})...`);
                     await guild.commands.set(commandsToRegister);
                     logger.info(`Instant commands synced for ${guild.name}`);
                 }
             } catch (err) {
-                logger.debug(`Could not sync guild commands for ${gId}: ${err.message}`);
+                logger.debug(`Could not sync guild commands for dev guild ${guildId}: ${err.message}`);
+            }
+        }
+
+        // Clear any stray guild-scoped commands left over from a previous version of
+        // this function that registered to every connected guild - those are what
+        // caused every command to visibly appear twice in production servers.
+        if (client.guilds?.cache) {
+            for (const [gId, guild] of client.guilds.cache) {
+                if (gId === guildId) continue;
+                try {
+                    const existing = await guild.commands.fetch();
+                    if (existing.size > 0) {
+                        logger.info(`Clearing ${existing.size} stray guild-scoped command(s) in ${guild.name} (${guild.id}) to fix duplicate command entries...`);
+                        await guild.commands.set([]);
+                    }
+                } catch (err) {
+                    logger.debug(`Could not clear stray guild commands for ${gId}: ${err.message}`);
+                }
             }
         }
     } catch (error) {

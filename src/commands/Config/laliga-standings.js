@@ -33,7 +33,7 @@ function buildStandingsDescription(rows) {
 export default {
     data: new SlashCommandBuilder()
         .setName('laliga-standings')
-        .setDescription('View the LaLiga table, or configure an auto-updating standings board / Ver la clasificación de LaLiga')
+        .setDescription('View or auto-update the LaLiga standings table / Ver la clasificación de LaLiga')
         .addSubcommand(sub =>
             sub
                 .setName('view')
