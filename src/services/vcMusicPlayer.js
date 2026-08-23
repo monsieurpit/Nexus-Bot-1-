@@ -87,7 +87,7 @@ export async function startPlaylistPlayback({ guild, voiceChannel, playlistUrl, 
     channelId: voiceChannel.id,
     guildId,
     adapterCreator: guild.voiceAdapterCreator,
-    selfDeaf: true,
+    selfDeaf: false,
     selfMute: false
   });
 
