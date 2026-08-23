@@ -9,26 +9,11 @@ import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { logger } from '../../utils/logger.js';
 import {
     fetchLaLigaStandings,
+    buildStandingsEmbed,
     getLaligaStandingsConfig,
     setLaligaStandingsConfig,
     updateLaligaStandingsBoard
 } from '../../services/laligaStandingsService.js';
-
-function buildStandingsDescription(rows) {
-    const header = '#  Team                 GP  W  D  L   GD  PTS';
-    const lines = rows.map(r => {
-        const rank = String(r.rank).padStart(2, ' ');
-        const team = r.team.slice(0, 18).padEnd(18, ' ');
-        const gp = String(r.played).padStart(2, ' ');
-        const w = String(r.wins).padStart(2, ' ');
-        const d = String(r.draws).padStart(2, ' ');
-        const l = String(r.losses).padStart(2, ' ');
-        const gd = String(r.goalDiff).padStart(4, ' ');
-        const pts = String(r.points).padStart(3, ' ');
-        return `${rank} ${team} ${gp} ${w} ${d} ${l} ${gd} ${pts}`;
-    });
-    return '```\n' + header + '\n' + lines.join('\n') + '\n```';
-}
 
 export default {
     data: new SlashCommandBuilder()
@@ -72,14 +57,7 @@ export default {
         if (sub === 'view') {
             try {
                 const rows = await fetchLaLigaStandings();
-                const embed = {
-                    color: 0xEE8707,
-                    title: '🇪🇸 LaLiga Standings / Clasificación',
-                    description: buildStandingsDescription(rows),
-                    footer: { text: 'Source: ESPN' },
-                    timestamp: new Date().toISOString()
-                };
-                return await InteractionHelper.safeEditReply(interaction, { embeds: [embed] });
+                return await InteractionHelper.safeEditReply(interaction, { embeds: [buildStandingsEmbed(rows)] });
             } catch (err) {
                 logger.error('Failed to fetch LaLiga standings in /laliga-standings view:', err);
                 return await InteractionHelper.safeEditReply(interaction, {

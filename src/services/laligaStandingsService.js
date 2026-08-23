@@ -67,29 +67,55 @@ export async function fetchLaLigaStandings() {
   return rows;
 }
 
-function buildStandingsEmbed(rows) {
-  const header = '#  Team                 GP  W  D  L   GD  PTS';
-  const lines = rows.map(r => {
-    const rank = String(r.rank).padStart(2, ' ');
-    const team = r.team.slice(0, 18).padEnd(18, ' ');
-    const gp = String(r.played).padStart(2, ' ');
-    const w = String(r.wins).padStart(2, ' ');
-    const d = String(r.draws).padStart(2, ' ');
-    const l = String(r.losses).padStart(2, ' ');
-    const gd = String(r.goalDiff).padStart(4, ' ');
-    const pts = String(r.points).padStart(3, ' ');
-    return `${rank} ${team} ${gp} ${w} ${d} ${l} ${gd} ${pts}`;
-  });
+const MEDALS = { 1: '🥇', 2: '🥈', 3: '🥉' };
 
-  const table = '```\n' + header + '\n' + lines.join('\n') + '\n```';
+function getZoneEmoji(note) {
+  if (!note) return '';
+  const n = note.toLowerCase();
+  if (n.includes('champions')) return '🔵 ';
+  if (n.includes('europa')) return '🟠 ';
+  if (n.includes('conference')) return '🟢 ';
+  if (n.includes('relegat')) return '🔴 ';
+  return '';
+}
+
+function formatGoalDiff(gd) {
+  const num = Number(gd);
+  if (Number.isNaN(num)) return gd;
+  return num > 0 ? `+${num}` : String(num);
+}
+
+function formatStandingsRow(r) {
+  const rankLabel = MEDALS[r.rank] || `**${r.rank}.**`;
+  const zone = getZoneEmoji(r.note);
+  return `${rankLabel} ${zone}**${r.team}** — ${r.played} GP · ${r.wins}W-${r.draws}D-${r.losses}L · GD ${formatGoalDiff(r.goalDiff)} · **${r.points} pts**`;
+}
+
+/**
+ * Builds a polished, non-monospace standings embed (medals, qualification-zone
+ * markers, bold formatting) instead of a raw copyable code-block table.
+ */
+export function buildStandingsEmbed(rows) {
+  const top = rows.slice(0, 10);
+  const bottom = rows.slice(10, 20);
   const nowUtcStr = new Date().toISOString().slice(0, 16).replace('T', ' ');
 
-  return new EmbedBuilder()
+  const embed = new EmbedBuilder()
     .setColor(0xEE8707) // LaLiga orange
     .setTitle('🇪🇸 LaLiga Standings / Clasificación')
-    .setDescription(table)
-    .setFooter({ text: `🔄 Auto-Updates Hourly • Source: ESPN • Last Updated: ${nowUtcStr} UTC` })
+    .setDescription('🔵 Champions League · 🟠 Europa League · 🟢 Conference League · 🔴 Relegation');
+
+  if (top.length > 0) {
+    embed.addFields({ name: '📊 Positions 1–10', value: top.map(formatStandingsRow).join('\n') });
+  }
+  if (bottom.length > 0) {
+    embed.addFields({ name: '📊 Positions 11–20', value: bottom.map(formatStandingsRow).join('\n') });
+  }
+
+  embed.setFooter({ text: `🔄 Auto-Updates Hourly • Source: ESPN • Last Updated: ${nowUtcStr} UTC` })
     .setTimestamp();
+
+  return embed;
 }
 
 /**
