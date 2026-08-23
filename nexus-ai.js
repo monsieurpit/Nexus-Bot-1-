@@ -30,19 +30,14 @@ export class NexusChatSession {
       role: 'assistant',
       content: res.response || res.text || '',
       sources: res.knowledgeHits || [],
-      thoughtProcess: res.thoughtSteps || [],
       timestamp: new Date(),
     });
-
     if (this.history.length > 20) this.history = this.history.slice(-20);
 
     return {
       text: res.response || res.text || '',
       knowledgeHits: res.knowledgeHits || [],
-      matchedDocuments: res.matchedDocuments || [],
       followUpQuestions: res.followUpQuestions || [],
-      thoughtSteps: res.thoughtSteps || [],
-      tokens: res.tokens || 0,
     };
   }
 
@@ -51,6 +46,16 @@ export class NexusChatSession {
 }
 
 export class NexusAI {
+  /**
+   * Initialize a new Nexus AI Client instance
+   * @param {Object} [config]
+   * @param {string} [config.apiKey] - Your secret Nexus API key
+   * @param {string} [config.baseUrl] - Base URL of your Nexus AI Server
+   * @param {string} [config.persona] - Default AI Persona ('nexus-homie', 'crashout-bot', 'roast-master', 'chill-mod', 'code-architect', 'deep-researcher', 'gemini-core', 'raidshield-ai', 'discord-sentinel', 'socratic-mentor', 'creative-synthesizer')
+   * @param {string|string[]} [config.rules] - Global strict rules or custom directives
+   * @param {number} [config.temperature] - Default model temperature (0.0 to 2.0)
+   * @param {string} [config.authorId] - Default Discord author ID (e.g. VIP ID '1394001641899954368')
+   */
   constructor({ apiKey, baseUrl, persona, rules, temperature, authorId } = {}) {
     this.apiKey =
       apiKey ||
@@ -63,16 +68,18 @@ export class NexusAI {
           process.env.SERVER_URL ||
           (process.env.RAILWAY_STATIC_URL ? `https://${process.env.RAILWAY_STATIC_URL}/api/v1` : '') ||
           (process.env.APP_URL ? `${process.env.APP_URL}/api/v1` : ''))) ||
-      'https://ais-dev-ibvpx7fn3pnxtdxabola6x-240233116101.us-east1.run.app/api/v1';
+      '';
 
     let cleanUrl = (baseUrl || defaultUrl).trim().replace(/\/+$/, '');
-    if (!cleanUrl.startsWith('http://') && !cleanUrl.startsWith('https://')) {
-      cleanUrl = `https://${cleanUrl}`;
-    }
-    if (cleanUrl.endsWith('/api')) {
-      cleanUrl = `${cleanUrl}/v1`;
-    } else if (!cleanUrl.endsWith('/api/v1')) {
-      cleanUrl = `${cleanUrl}/api/v1`;
+    if (cleanUrl) {
+      if (!cleanUrl.startsWith('http://') && !cleanUrl.startsWith('https://')) {
+        cleanUrl = `https://${cleanUrl}`;
+      }
+      if (cleanUrl.endsWith('/api')) {
+        cleanUrl = `${cleanUrl}/v1`;
+      } else if (!cleanUrl.endsWith('/api/v1') && !cleanUrl.includes('/api/v1')) {
+        cleanUrl = `${cleanUrl}/api/v1`;
+      }
     }
 
     this.baseUrl = cleanUrl;
@@ -85,7 +92,7 @@ export class NexusAI {
   setPersona(personaId) { this.currentPersona = personaId; return this; }
   getPersona() { return this.currentPersona; }
   setRules(rules) { this.clientRules = Array.isArray(rules) ? rules : rules ? [rules] : []; return this; }
-  addRule(rule) { if (rule && typeof rule === 'string') this.clientRules.push(rule.trim()); return this; }
+  addRule(rule) { if (rule) this.clientRules.push(rule.trim()); return this; }
   clearRules() { this.clientRules = []; return this; }
   getClientRules() { return [...this.clientRules]; }
   setTemperature(temp) { this.defaultTemperature = Math.max(0, Math.min(2.0, temp)); return this; }
@@ -99,48 +106,42 @@ export class NexusAI {
     };
   }
 
-  createChatSession(options = {}) {
-    return new NexusChatSession(this, options);
-  }
-
   // --- SERVER SETTINGS & PERSONAS ---
   async getSettings() {
-    const res = await fetch(`${this.baseUrl}/settings`, { method: 'GET', headers: this._getHeaders() });
-    if (!res.ok) throw new Error(`Failed to fetch settings: HTTP ${res.status}`);
+    const res = await fetch(`${this.baseUrl}/settings`, { headers: this._getHeaders() });
     return await res.json();
   }
 
   async updateSettings(updates = {}) {
     const res = await fetch(`${this.baseUrl}/settings`, {
-      method: 'POST', headers: this._getHeaders(), body: JSON.stringify(updates),
+      method: 'POST',
+      headers: this._getHeaders(),
+      body: JSON.stringify(updates),
     });
-    if (!res.ok) throw new Error(`Failed to update settings: HTTP ${res.status}`);
     return await res.json();
   }
 
   async listPersonas() {
-    const res = await fetch(`${this.baseUrl}/personas`, { method: 'GET', headers: this._getHeaders() });
-    if (!res.ok) throw new Error(`Failed to list personas: HTTP ${res.status}`);
+    const res = await fetch(`${this.baseUrl}/personas`, { headers: this._getHeaders() });
     return await res.json();
   }
 
   async listModels() {
-    const res = await fetch(`${this.baseUrl}/models`, { method: 'GET', headers: this._getHeaders() });
-    if (!res.ok) throw new Error(`Failed to list models: HTTP ${res.status}`);
+    const res = await fetch(`${this.baseUrl}/models`, { headers: this._getHeaders() });
     return await res.json();
   }
 
   async getActivePersona() {
-    const res = await fetch(`${this.baseUrl}/persona`, { method: 'GET', headers: this._getHeaders() });
-    if (!res.ok) throw new Error(`Failed to get active persona: HTTP ${res.status}`);
+    const res = await fetch(`${this.baseUrl}/persona`, { headers: this._getHeaders() });
     return await res.json();
   }
 
   async switchServerPersona(persona) {
     const res = await fetch(`${this.baseUrl}/persona/set`, {
-      method: 'POST', headers: this._getHeaders(), body: JSON.stringify({ persona }),
+      method: 'POST',
+      headers: this._getHeaders(),
+      body: JSON.stringify({ persona }),
     });
-    if (!res.ok) throw new Error(`Failed to switch server persona: HTTP ${res.status}`);
     return await res.json();
   }
 
@@ -149,40 +150,31 @@ export class NexusAI {
     const opts = typeof options === 'string' ? { prompt: options } : options || {};
     const authorId = opts.authorId || opts.userId || this.defaultAuthorId || '';
     const isSuperChill = Boolean(opts.isSuperChillUser || opts.isSuperChill || authorId === '1394001641899954368');
-
     const requestRules = opts.rules || opts.customRules || opts.directives || '';
     const extraRules = Array.isArray(requestRules) ? requestRules : requestRules ? [requestRules] : [];
     const allRules = [...this.clientRules, ...extraRules];
 
     const activePersona = opts.persona || opts.model || this.currentPersona || 'nexus-homie';
 
-    const payload = {
-      prompt: opts.prompt || opts.content || opts.message || opts.text || '',
-      persona: activePersona,
-      model: activePersona,
-      authorId,
-      userId: authorId,
-      username: opts.username || 'DiscordUser',
-      isSuperChillUser: isSuperChill,
-      isSuperChill,
-      mode: opts.mode || (opts.deepThink ? 'deep-cot' : opts.crashout ? 'crashout' : undefined),
-      deepThink: Boolean(opts.deepThink || opts.mode === 'deep' || opts.mode === 'deep-cot'),
-      crashout: Boolean(opts.crashout || opts.mode === 'crashout' || activePersona === 'crashout-bot'),
-      history: opts.history || opts.messages || [],
-      rules: allRules.join('\n'),
-      customRules: allRules.join('\n'),
-      imageUrl: opts.imageUrl || opts.image || opts.attachmentUrl || '',
-      imageData: opts.imageData || '',
-      image: opts.imageUrl || opts.image || '',
-      temperature: typeof opts.temperature === 'number' ? opts.temperature : this.defaultTemperature,
-      webSearch: opts.webSearch,
-      search: opts.search,
-      searchEngine: opts.searchEngine || opts.provider,
-      provider: opts.provider || opts.searchEngine,
-    };
-
     const res = await fetch(`${this.baseUrl}/nexus`, {
-      method: 'POST', headers: this._getHeaders(), body: JSON.stringify(payload),
+      method: 'POST',
+      headers: this._getHeaders(),
+      body: JSON.stringify({
+        prompt: opts.prompt || opts.content || opts.message || opts.text || '',
+        persona: activePersona,
+        model: activePersona,
+        authorId,
+        username: opts.username || 'DiscordUser',
+        isSuperChillUser: isSuperChill,
+        mode: opts.mode || (opts.deepThink ? 'deep-cot' : opts.crashout ? 'crashout' : undefined),
+        deepThink: Boolean(opts.deepThink || opts.mode === 'deep' || opts.mode === 'deep-cot'),
+        crashout: Boolean(opts.crashout || opts.mode === 'crashout' || activePersona === 'crashout-bot'),
+        history: opts.history || opts.messages || [],
+        rules: allRules.join('\n'),
+        imageUrl: opts.imageUrl || opts.image || '',
+        imageData: opts.imageData || '',
+        temperature: typeof opts.temperature === 'number' ? opts.temperature : this.defaultTemperature,
+      }),
     });
 
     if (!res.ok) {
@@ -199,45 +191,36 @@ export class NexusAI {
 
   async deepThink(options) {
     const opts = typeof options === 'string' ? { prompt: options } : options || {};
-    const res = await this.askJSON({ ...opts, mode: 'deep-cot', deepThink: true });
-    return {
-      text: res.response || res.text || '',
-      thoughtSteps: res.thoughtSteps || [],
-      matchedDocuments: res.matchedDocuments || [],
-      followUpQuestions: res.followUpQuestions || [],
-      raw: res,
-    };
+    return this.askJSON({ ...opts, mode: 'deep-cot', deepThink: true });
   }
 
-  // --- MATH ---
-  async solveMath(input) {
-    const expression = typeof input === 'string' ? input : input?.expression || input?.query || input?.prompt || '';
+  async solveMath(expression) {
     const res = await fetch(`${this.baseUrl}/math`, {
-      method: 'POST', headers: this._getHeaders(), body: JSON.stringify({ expression }),
+      method: 'POST',
+      headers: this._getHeaders(),
+      body: JSON.stringify({ expression }),
     });
-    if (!res.ok) throw new Error(`Math API HTTP ${res.status}`);
     return await res.json();
   }
-  async evaluateMath(expression) { return this.solveMath(expression); }
-  async convertUnits(conversionQuery) { return this.solveMath(conversionQuery); }
+  async evaluateMath(expr) { return this.solveMath(expr); }
+  async convertUnits(query) { return this.solveMath(query); }
 
-  // --- ENTITIES ---
   async extractEntities(text) {
     const res = await fetch(`${this.baseUrl}/entities`, {
-      method: 'POST', headers: this._getHeaders(), body: JSON.stringify({ text }),
+      method: 'POST',
+      headers: this._getHeaders(),
+      body: JSON.stringify({ text }),
     });
-    if (!res.ok) throw new Error(`Entities API HTTP ${res.status}`);
     return await res.json();
   }
 
-  // --- WEB SEARCH ---
   async searchWeb(options) {
     const opts = typeof options === 'string' ? { query: options } : options || {};
     const res = await fetch(`${this.baseUrl}/web/search`, {
-      method: 'POST', headers: this._getHeaders(),
-      body: JSON.stringify({ query: opts.query || opts.q || '', provider: opts.provider || opts.engine || 'all', limit: opts.limit || 5 }),
+      method: 'POST',
+      headers: this._getHeaders(),
+      body: JSON.stringify({ query: opts.query || opts.q || '', provider: opts.provider || 'all', limit: opts.limit || 5 }),
     });
-    if (!res.ok) throw new Error(`Web Search API HTTP ${res.status}`);
     return await res.json();
   }
 
@@ -246,52 +229,49 @@ export class NexusAI {
     return this.ask({ ...opts, webSearch: true, search: true });
   }
 
-  // --- SWEAR ENGINE ---
   async infuseSwear(options) {
     const opts = typeof options === 'string' ? { text: options } : options || {};
     const res = await fetch(`${this.baseUrl}/swear`, {
-      method: 'POST', headers: this._getHeaders(),
+      method: 'POST',
+      headers: this._getHeaders(),
       body: JSON.stringify({
         text: opts.text || opts.prompt || '',
         intensity: opts.intensity || 'heavy',
         language: opts.language || 'english',
-        isSuperChill: opts.isSuperChill ?? Boolean(this.defaultAuthorId === '1394001641899954368'),
-        forceSwear: opts.forceSwear !== false,
-        neverSwear: Boolean(opts.neverSwear),
+        isSuperChill: Boolean(opts.isSuperChill),
       }),
     });
-    if (!res.ok) throw new Error(`Swear API HTTP ${res.status}`);
     return await res.json();
   }
 
-  // --- PERSONA SHORTCUTS ---
-  async askCrashout(options) { const opts = typeof options === 'string' ? { prompt: options } : options; return this.ask({ ...opts, persona: 'crashout-bot', crashout: true }); }
-  async crashout(options) { return this.askCrashout(options); }
-  async askRoast(options) { const opts = typeof options === 'string' ? { prompt: options } : options; return this.ask({ ...opts, persona: 'roast-master' }); }
-  async askChill(options) { const opts = typeof options === 'string' ? { prompt: options } : options; return this.ask({ ...opts, persona: 'chill-mod' }); }
-  async askCode(options) { const opts = typeof options === 'string' ? { prompt: options } : options; return this.ask({ ...opts, persona: 'code-architect' }); }
-  async askResearcher(options) { const opts = typeof options === 'string' ? { prompt: options } : options; return this.ask({ ...opts, persona: 'deep-researcher' }); }
-  async askHomie(options) { const opts = typeof options === 'string' ? { prompt: options } : options; return this.ask({ ...opts, persona: 'nexus-homie' }); }
-  async askSentinel(options) { const opts = typeof options === 'string' ? { prompt: options } : options; return this.ask({ ...opts, persona: 'discord-sentinel' }); }
+  createChatSession(options = {}) {
+    return new NexusChatSession(this, options);
+  }
 
-  // --- KNOWLEDGE CORPUS & BM25 SEARCH ---
+  async askCrashout(opts) { return this.ask({ ...(typeof opts === 'string' ? { prompt: opts } : opts), persona: 'crashout-bot', crashout: true }); }
+  async crashout(opts) { return this.askCrashout(opts); }
+  async askRoast(opts) { return this.ask({ ...(typeof opts === 'string' ? { prompt: opts } : opts), persona: 'roast-master' }); }
+  async askChill(opts) { return this.ask({ ...(typeof opts === 'string' ? { prompt: opts } : opts), persona: 'chill-mod' }); }
+  async askCode(opts) { return this.ask({ ...(typeof opts === 'string' ? { prompt: opts } : opts), persona: 'code-architect' }); }
+  async askResearcher(opts) { return this.ask({ ...(typeof opts === 'string' ? { prompt: opts } : opts), persona: 'deep-researcher' }); }
+  async askHomie(opts) { return this.ask({ ...(typeof opts === 'string' ? { prompt: opts } : opts), persona: 'nexus-homie' }); }
+  async askSentinel(opts) { return this.ask({ ...(typeof opts === 'string' ? { prompt: opts } : opts), persona: 'discord-sentinel' }); }
+
+  // --- MULTI-DOCUMENT KNOWLEDGE CORPUS & BM25 SEARCH ---
   async listDocuments({ category = '' } = {}) {
     const url = category ? `${this.baseUrl}/documents?category=${encodeURIComponent(category)}` : `${this.baseUrl}/documents`;
-    const res = await fetch(url, { method: 'GET', headers: this._getHeaders() });
-    if (!res.ok) throw new Error(`Failed to list documents: HTTP ${res.status}`);
+    const res = await fetch(url, { headers: this._getHeaders() });
     return await res.json();
   }
 
-  async searchDocuments(options) {
-    const opts = typeof options === 'string' ? { query: options } : options || {};
+  async searchDocuments({ query, limit = 5 } = {}) {
     const res = await fetch(`${this.baseUrl}/documents/search`, {
-      method: 'POST', headers: this._getHeaders(),
-      body: JSON.stringify({ query: opts.query || opts.q, limit: opts.limit || opts.topK || 5 }),
+      method: 'POST',
+      headers: this._getHeaders(),
+      body: JSON.stringify({ query, limit }),
     });
-    if (!res.ok) throw new Error(`Failed to search documents: HTTP ${res.status}`);
     return await res.json();
   }
-
   async searchCorpus(query, options = {}) {
     const opts = typeof options === 'number' ? { limit: options } : options;
     return this.searchDocuments({ query, ...opts });
@@ -299,35 +279,34 @@ export class NexusAI {
 
   async addDocument({ title, content, category = 'custom-api-doc', keywords = [] }) {
     const res = await fetch(`${this.baseUrl}/documents`, {
-      method: 'POST', headers: this._getHeaders(), body: JSON.stringify({ title, content, category, keywords }),
+      method: 'POST',
+      headers: this._getHeaders(),
+      body: JSON.stringify({ title, content, category, keywords }),
     });
-    if (!res.ok) throw new Error(`Failed to add document: HTTP ${res.status}`);
     return await res.json();
   }
 
   async deleteDocument(documentId) {
     const res = await fetch(`${this.baseUrl}/documents/${encodeURIComponent(documentId)}`, {
-      method: 'DELETE', headers: this._getHeaders(),
+      method: 'DELETE',
+      headers: this._getHeaders(),
     });
-    if (!res.ok) throw new Error(`Failed to delete document: HTTP ${res.status}`);
     return await res.json();
   }
 
   async getCorpusStats() {
-    const res = await fetch(`${this.baseUrl}/corpus`, { method: 'GET', headers: this._getHeaders() });
-    if (!res.ok) throw new Error(`Failed to get corpus stats: HTTP ${res.status}`);
+    const res = await fetch(`${this.baseUrl}/corpus`, { headers: this._getHeaders() });
     return await res.json();
   }
 
-  // --- RAIDSHIELD SECURITY ---
+  // --- RAIDSHIELD 21-RULE SECURITY & AUTOMOD ---
   async checkSecurity({ messageText = '', authorId = '', imageUrl = '', imageData = '' } = {}) {
     const res = await fetch(`${this.baseUrl}/raidshield`, {
-      method: 'POST', headers: this._getHeaders(), body: JSON.stringify({ messageText, authorId, imageUrl, imageData }),
+      method: 'POST',
+      headers: this._getHeaders(),
+      body: JSON.stringify({ messageText, authorId, imageUrl, imageData }),
     });
-    if (!res.ok) {
-      const errText = await res.text().catch(() => '');
-      throw new Error(`RaidShield API HTTP ${res.status}: ${errText || res.statusText}`);
-    }
+    if (!res.ok) throw new Error(`RaidShield API error: ${res.status}`);
     return await res.json();
   }
 
@@ -336,89 +315,86 @@ export class NexusAI {
     return sec.classification === 'safe';
   }
 
-  // --- VISION SCANNER ---
-  async analyzeImage({ imageUrl = '', imageData = '', prompt = '', mode = 'general' }) {
+  // --- VISION SCANNER & OCR ---
+  async analyzeImage({ imageUrl = '', imageData = '', prompt = '', mode = 'general' } = {}) {
     const res = await fetch(`${this.baseUrl}/vision/analyze`, {
-      method: 'POST', headers: this._getHeaders(), body: JSON.stringify({ imageUrl, imageData, prompt, mode }),
+      method: 'POST',
+      headers: this._getHeaders(),
+      body: JSON.stringify({ imageUrl, imageData, prompt, mode }),
     });
-    if (!res.ok) {
-      const errText = await res.text().catch(() => '');
-      throw new Error(`Vision API error HTTP ${res.status}: ${errText || res.statusText}`);
-    }
+    if (!res.ok) throw new Error(`Vision API error: ${res.status}`);
     return await res.json();
   }
+
   async analyzeVision(options) { return this.analyzeImage(options); }
 
-  // --- RULES ---
+  // --- STRICT RULES & DIRECTIVES ---
   async listSupportedRules() {
-    const res = await fetch(`${this.baseUrl}/sdk/rules`, { method: 'GET', headers: this._getHeaders() });
-    if (!res.ok) throw new Error(`Failed to fetch SDK rules: HTTP ${res.status}`);
+    const res = await fetch(`${this.baseUrl}/sdk/rules`, { headers: this._getHeaders() });
     return await res.json();
   }
 
   async enforceRules({ text, rules, isSuperChillUser = false }) {
     const res = await fetch(`${this.baseUrl}/sdk/rules/enforce`, {
-      method: 'POST', headers: this._getHeaders(), body: JSON.stringify({ text, rules, isSuperChillUser }),
+      method: 'POST',
+      headers: this._getHeaders(),
+      body: JSON.stringify({ text, rules, isSuperChillUser }),
     });
-    if (!res.ok) throw new Error(`Failed to enforce rules: HTTP ${res.status}`);
     return await res.json();
   }
 
-  // --- OPENAI-STYLE COMPATIBILITY SHIMS ---
+  // --- FORMAT COMPATIBILITY ---
   async generate(options = {}) {
     const res = await fetch(`${this.baseUrl}/generate`, {
-      method: 'POST', headers: this._getHeaders(), body: JSON.stringify(options),
+      method: 'POST',
+      headers: this._getHeaders(),
+      body: JSON.stringify(options),
     });
-    if (!res.ok) throw new Error(`Generate API HTTP ${res.status}`);
     return await res.json();
   }
 
   async chatCompletion(options = {}) {
     const res = await fetch(`${this.baseUrl}/chat/completions`, {
-      method: 'POST', headers: this._getHeaders(), body: JSON.stringify(options),
+      method: 'POST',
+      headers: this._getHeaders(),
+      body: JSON.stringify(options),
     });
-    if (!res.ok) throw new Error(`Chat Completions HTTP ${res.status}`);
     return await res.json();
   }
 
-  // --- DIAGNOSTICS ---
+  // --- AUTH & SYSTEM ---
   async verifyAuth() {
-    const res = await fetch(`${this.baseUrl}/auth/verify`, { method: 'GET', headers: this._getHeaders() });
-    if (!res.ok) throw new Error(`Auth verification failed with status ${res.status}`);
+    const res = await fetch(`${this.baseUrl}/auth/verify`, { headers: this._getHeaders() });
     return await res.json();
   }
 
   async listKeys() {
-    const res = await fetch(`${this.baseUrl}/keys`, { method: 'GET', headers: this._getHeaders() });
-    if (!res.ok) throw new Error(`Failed to list keys: HTTP ${res.status}`);
+    const res = await fetch(`${this.baseUrl}/keys`, { headers: this._getHeaders() });
     return await res.json();
   }
 
   async generateKey(label = 'discord_bot') {
     const res = await fetch(`${this.baseUrl}/keys/generate`, {
-      method: 'POST', headers: this._getHeaders(), body: JSON.stringify({ label }),
+      method: 'POST',
+      headers: this._getHeaders(),
+      body: JSON.stringify({ label }),
     });
-    if (!res.ok) throw new Error(`Failed to generate key: HTTP ${res.status}`);
     return await res.json();
   }
 
   async getQueueStatus() {
-    const res = await fetch(`${this.baseUrl}/queue/status`, { method: 'GET', headers: this._getHeaders() });
-    if (!res.ok) throw new Error(`Failed to get queue status: HTTP ${res.status}`);
+    const res = await fetch(`${this.baseUrl}/queue/status`, { headers: this._getHeaders() });
     return await res.json();
   }
 
   async getHealth() {
     const rootUrl = this.baseUrl.replace(/\/v1$/, '');
-    const res = await fetch(`${rootUrl}/health`, { method: 'GET', headers: this._getHeaders() });
-    if (!res.ok) throw new Error(`Failed to get health: HTTP ${res.status}`);
+    const res = await fetch(`${rootUrl}/health`, { headers: this._getHeaders() });
     return await res.json();
   }
 }
 
-// Universal export support for CommonJS & ESM
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { NexusAI, NexusChatSession, default: NexusAI };
 }
-
 export default NexusAI;

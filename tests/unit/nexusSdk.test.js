@@ -81,7 +81,7 @@ test('NexusAI checkSecurity forwards the RaidShield response and throws on failu
   assert.equal(await client.isSafe('Hello world'), true);
 
   t.mock.method(global, 'fetch', async () => ({ ok: false, status: 503, statusText: 'Unavailable', text: async () => '' }));
-  await assert.rejects(() => client.checkSecurity({ messageText: 'test' }), /RaidShield API HTTP 503/);
+  await assert.rejects(() => client.checkSecurity({ messageText: 'test' }), /RaidShield API error: 503/);
 });
 
 test('NexusAI stateful chat session creation and history', async (t) => {
