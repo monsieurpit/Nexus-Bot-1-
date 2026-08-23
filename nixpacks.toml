@@ -1,6 +1,14 @@
-# Ensures python3 is present in the build/runtime image. youtube-dl-exec (used
+# Ensures python is present in the build/runtime image. youtube-dl-exec (used
 # by /vc-event to play audio) downloads a yt-dlp release at install time and
-# requires python3 to run it; Railway's default Node build image does not
-# guarantee one is present otherwise.
+# needs a `python` binary on PATH; Nix's python3 package only provides
+# `python3`, so a symlink is added since youtube-dl-exec's install-time check
+# looks for the bare `python` name specifically.
 [phases.setup]
 nixPkgs = ["python3"]
+cmds = ["ln -sf $(command -v python3) /usr/local/bin/python"]
+
+# Belt-and-suspenders: if the symlink above doesn't take for any reason, this
+# stops youtube-dl-exec's install-time python check from failing the whole
+# build over one non-critical feature.
+[variables]
+YOUTUBE_DL_SKIP_PYTHON_CHECK = "1"
