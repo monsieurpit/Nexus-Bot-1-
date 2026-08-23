@@ -4,29 +4,26 @@ import {
   createAudioResource,
   entersState,
   AudioPlayerStatus,
-  VoiceConnectionStatus,
-  StreamType
+  VoiceConnectionStatus
 } from '@discordjs/voice';
-import youtubedl from 'youtube-dl-exec';
-import prism from 'prism-media';
+import { Innertube, UniversalCache } from 'youtubei.js';
+import { Readable } from 'node:stream';
 import { logger } from '../utils/logger.js';
 import { getPlaylistTracks } from './spotifyService.js';
 
 const TRACK_START_TIMEOUT_MS = 15_000;
 const TRACK_WAIT_TIMEOUT_MS = 10 * 60 * 1000;
 
-const YTDLP_FLAGS = {
-  noWarnings: true,
-  noCheckCertificates: true,
-  preferFreeFormats: true,
-  format: 'bestaudio/best',
-  noPlaylist: true,
-  quiet: true,
-  output: '-'
-};
-
-// guildId -> { stopRequested, player, connection, loop, totalLoops, ytdlpProcess, currentStream }
+// guildId -> { stopRequested, player, connection, loop, totalLoops, currentStream }
 const activeSessions = new Map();
+
+let innertubePromise = null;
+function getInnertube() {
+  if (!innertubePromise) {
+    innertubePromise = Innertube.create({ cache: new UniversalCache(false), generate_session_locally: true });
+  }
+  return innertubePromise;
+}
 
 export function isPlaybackActive(guildId) {
   return activeSessions.has(guildId);
@@ -46,40 +43,36 @@ export function stopPlaylistPlayback(guildId) {
   const session = activeSessions.get(guildId);
   if (!session) return false;
   session.stopRequested = true;
-  session.ytdlpProcess?.kill?.('SIGKILL');
   session.currentStream?.destroy?.();
   session.player.stop(true);
   return true;
 }
 
-function createTrackResource(query) {
-  const subprocess = youtubedl.exec(`ytsearch1:${query}`, YTDLP_FLAGS);
-  subprocess.catch(() => {}); // yt-dlp exits non-zero when we SIGKILL it early; don't crash on that
-  subprocess.stderr?.resume(); // drain yt-dlp's stderr so it never blocks on a full pipe buffer
-
-  const transcoder = new prism.FFmpeg({
-    args: ['-analyzeduration', '0', '-loglevel', '0', '-f', 's16le', '-ar', '48000', '-ac', '2']
-  });
-
-  const pcmStream = subprocess.stdout.pipe(transcoder);
-  const resource = createAudioResource(pcmStream, { inputType: StreamType.Raw });
-
-  return { resource, subprocess, pcmStream };
+async function findVideoId(yt, query) {
+  const search = await yt.search(query);
+  const videoResult = search.results?.find(r => r.type === 'Video');
+  return videoResult?.video_id || null;
 }
 
-async function playTrack(session, track) {
+async function playTrack(session, yt, track) {
   const query = `${track.name} ${track.artists.join(' ')}`.trim();
-  let subprocess = null;
-  let pcmStream = null;
+  let nodeStream = null;
 
   try {
-    const created = createTrackResource(query);
-    subprocess = created.subprocess;
-    pcmStream = created.pcmStream;
-    session.ytdlpProcess = subprocess;
-    session.currentStream = pcmStream;
+    const videoId = await findVideoId(yt, query);
+    if (!videoId) {
+      logger.debug(`[VC Music] No YouTube match for "${query}", skipping.`);
+      return;
+    }
 
-    session.player.play(created.resource);
+    // Opus is virtually always available for standard YouTube videos, and
+    // @discordjs/voice can play it directly with no transcoding step needed.
+    const webStream = await yt.download(videoId, { type: 'audio', quality: 'best', codec: 'opus' });
+    nodeStream = Readable.fromWeb(webStream);
+    session.currentStream = nodeStream;
+
+    const resource = createAudioResource(nodeStream);
+    session.player.play(resource);
 
     try {
       await entersState(session.player, AudioPlayerStatus.Playing, TRACK_START_TIMEOUT_MS);
@@ -92,16 +85,14 @@ async function playTrack(session, track) {
     logger.warn(`[VC Music] Skipping track "${query}": ${err.message}`);
   } finally {
     session.player.stop(true);
-    subprocess?.kill?.('SIGKILL');
-    pcmStream?.destroy?.();
-    session.ytdlpProcess = null;
+    nodeStream?.destroy?.();
     session.currentStream = null;
   }
 }
 
 /**
  * Joins a voice channel and plays a Spotify playlist (via matching YouTube audio,
- * extracted with yt-dlp and transcoded through ffmpeg) in order, looping it
+ * searched and streamed with the pure-JS youtubei.js client) in order, looping it
  * `loopCount` times before disconnecting cleanly.
  */
 export async function startPlaylistPlayback({ guild, voiceChannel, playlistUrl, loopCount = 3 }) {
@@ -124,6 +115,14 @@ export async function startPlaylistPlayback({ guild, voiceChannel, playlistUrl, 
     return;
   }
 
+  let yt;
+  try {
+    yt = await getInnertube();
+  } catch (err) {
+    logger.error(`[VC Music] Failed to initialize YouTube client for guild ${guildId}: ${err.message}`);
+    return;
+  }
+
   const connection = joinVoiceChannel({
     channelId: voiceChannel.id,
     guildId,
@@ -141,7 +140,6 @@ export async function startPlaylistPlayback({ guild, voiceChannel, playlistUrl, 
     connection,
     loop: 1,
     totalLoops: loopCount,
-    ytdlpProcess: null,
     currentStream: null
   };
   activeSessions.set(guildId, session);
@@ -155,14 +153,13 @@ export async function startPlaylistPlayback({ guild, voiceChannel, playlistUrl, 
       logger.info(`[VC Music] Guild ${guildId}: starting playlist loop ${loop}/${loopCount}`);
       for (const track of tracks) {
         if (session.stopRequested) break outer;
-        await playTrack(session, track);
+        await playTrack(session, yt, track);
         if (session.stopRequested) break outer;
       }
     }
   } catch (err) {
     logger.error(`[VC Music] Playback session error in guild ${guildId}: ${err.message}`);
   } finally {
-    session.ytdlpProcess?.kill?.('SIGKILL');
     session.currentStream?.destroy?.();
     player.stop(true);
     connection.destroy();
