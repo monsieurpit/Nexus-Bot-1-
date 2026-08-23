@@ -1,0 +1,6 @@
+# Ensures python3 is present in the build/runtime image. youtube-dl-exec (used
+# by /vc-event to play audio) downloads a yt-dlp release at install time and
+# requires python3 to run it; Railway's default Node build image does not
+# guarantee one is present otherwise.
+[phases.setup]
+nixPkgs = ["python3"]

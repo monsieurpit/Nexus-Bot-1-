@@ -55,7 +55,7 @@ function getUtcMinus4Parts(date = new Date()) {
   };
 }
 
-async function triggerVcEvent(client, guild, config) {
+export async function runVcEventNow(client, guild, config) {
   const announceChannel = guild.channels.cache.get(config.announceChannelId);
   const voiceChannel = guild.channels.cache.get(config.voiceChannelId);
 
@@ -111,7 +111,7 @@ export async function checkVcEvents(client) {
       await setVcEventConfig(client, guild.id, { lastTriggeredKey: dateKey });
 
       logger.info(`[VC Event] Triggering scheduled event for guild ${guild.id} (${guild.name})`);
-      triggerVcEvent(client, guild, config).catch(err => {
+      runVcEventNow(client, guild, config).catch(err => {
         logger.error(`[VC Event] Failed to run event for guild ${guild.id}: ${err.message}`);
       });
     } catch (err) {

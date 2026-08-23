@@ -12,6 +12,7 @@ import { getColor } from '../../config/bot.js';
 import {
     getVcEventConfig,
     setVcEventConfig,
+    runVcEventNow,
     isPlaybackActive,
     stopPlaylistPlayback,
     getPlaybackStatus,
@@ -106,6 +107,11 @@ export default {
             sub
                 .setName('stop')
                 .setDescription('Immediately stop any playlist currently playing in this server')
+        )
+        .addSubcommand(sub =>
+            sub
+                .setName('trigger-now')
+                .setDescription('Immediately run the configured VC event right now (for testing)')
         ),
 
     async execute(interaction, guildConfig, client) {
@@ -277,6 +283,39 @@ export default {
                     .setColor(getColor('success'))
                     .setTitle('⏹️ Playback Stopped')
                     .setDescription('The playlist has been stopped and the bot will leave the voice channel.')
+                ]
+            });
+        }
+
+        if (sub === 'trigger-now') {
+            const config = await getVcEventConfig(client, guild.id);
+
+            if (!config.announceChannelId || !config.voiceChannelId) {
+                return await InteractionHelper.safeEditReply(interaction, {
+                    embeds: [errorEmbed('Not Configured', 'Run `/vc-event setup` first before triggering it manually.')],
+                    flags: MessageFlags.Ephemeral
+                });
+            }
+
+            if (isPlaybackActive(guild.id)) {
+                return await InteractionHelper.safeEditReply(interaction, {
+                    embeds: [errorEmbed('Already Playing', 'A VC event playlist is already playing in this server. Use `/vc-event stop` first.')],
+                    flags: MessageFlags.Ephemeral
+                });
+            }
+
+            logger.info(`[VC Event] Manually triggered by ${interaction.user.id} in guild ${guild.id}`);
+            runVcEventNow(client, guild, config).catch(err => {
+                logger.error(`[VC Event] Manual trigger failed for guild ${guild.id}: ${err.message}`);
+            });
+
+            const voiceChannel = guild.channels.cache.get(config.voiceChannelId);
+
+            return await InteractionHelper.safeEditReply(interaction, {
+                embeds: [new EmbedBuilder()
+                    .setColor(getColor('success'))
+                    .setTitle('🎧 VC Event Triggered')
+                    .setDescription(`Starting now! Announcement posted and joining ${voiceChannel || 'the voice channel'}.`)
                 ]
             });
         }
