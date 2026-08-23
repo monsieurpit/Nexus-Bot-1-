@@ -2,8 +2,16 @@ import { logger } from '../utils/logger.js';
 import { checkRateLimit } from '../utils/rateLimiter.js';
 import { QuarantineService } from './quarantineService.js';
 import { createEmbed } from '../utils/embeds.js';
-import { evaluateRaidShieldDirect } from './nexusAiService.js';
+import { NexusAI } from '../../nexus-ai.js';
 import axios from 'axios';
+
+// Talks to the same real, deployed Nexus AI RaidShield engine as nexusAiService.js, through the
+// official SDK instead of a duplicated raw fetch + local heuristic classifier - the central
+// engine is the source of truth for threat classification, not a copy of its logic living here.
+const nexusClient = new NexusAI({
+  apiKey: process.env.NEXUS_API_KEY,
+  baseUrl: process.env.NEXUS_API_URL,
+});
 
 const AI_RATE_LIMIT_KEY = 'ai-mod-global';
 const AI_RATE_LIMIT_ATTEMPTS = 14;
@@ -16,24 +24,6 @@ const IMAGE_CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
 const imageCache = new Map();
 
 const CONTEXT_MESSAGES_LIMIT = 5;
-
-function getNormalizedNexusApiUrl() {
-  const raw = process.env.NEXUS_API_URL || process.env.SERVER_URL || process.env.APP_URL;
-  if (!raw || typeof raw !== 'string') return null;
-  const trimmed = raw.trim();
-  if (!trimmed) return null;
-  let base = trimmed.replace(/\/+$/, '');
-  if (!base.startsWith('http://') && !base.startsWith('https://')) {
-    base = `https://${base}`;
-  }
-  if (base.endsWith('/api/v1')) {
-    return base;
-  }
-  if (base.endsWith('/api')) {
-    return `${base}/v1`;
-  }
-  return `${base}/api/v1`;
-}
 
 function getCachedImage(url) {
   const cached = imageCache.get(url);
@@ -99,48 +89,24 @@ async function analyzeContent(text, imageUrls = [], recentMessages = [], current
     contextMessages: recentMessages.length
   });
 
-  // 1. Query central Nexus AI RaidShield endpoint if configured
-  const normalizedApiUrl = getNormalizedNexusApiUrl();
-  if (normalizedApiUrl) {
-    try {
-      const apiKey = process.env.NEXUS_API_KEY || process.env.API_KEY || 'nexus_sk_discord_bot_1394001641899954368';
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 12000);
-      const res = await fetch(`${normalizedApiUrl}/raidshield`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`
-        },
-        body: JSON.stringify({
-          messageText: text,
-          authorId: currentMessage?.authorId,
-          image: (imageUrls && imageUrls[0]) || null,
-          attachments: imageUrls || []
-        }),
-        signal: controller.signal
-      }).finally(() => clearTimeout(timeout));
-
-      if (res.ok) {
-        const data = await res.json();
-        if (data && data.classification) {
-          return {
-            classification: data.classification,
-            confidence: typeof data.confidence === 'number' ? data.confidence : 0.95,
-            reason: data.reason || 'Verified via central Nexus AI RaidShield engine'
-          };
-        }
-      }
-    } catch (err) {
-      logger.debug(`[AI Moderation] Central RaidShield call skipped/failed: ${err.message}`);
+  // Query the real, central Nexus AI RaidShield engine via the SDK. If it's unreachable,
+  // fail open to "safe" rather than duplicating its 21-rule classifier locally - a stale
+  // local copy would drift from the real engine's fixes and rules over time.
+  try {
+    const result = await nexusClient.checkSecurity({
+      messageText: text,
+      authorId: currentMessage?.authorId || '',
+      imageUrl: (imageUrls && imageUrls[0]) || ''
+    });
+    if (result && result.classification) {
+      return {
+        classification: result.classification,
+        confidence: typeof result.confidence === 'number' ? result.confidence : 0.95,
+        reason: result.reason || 'Verified via central Nexus AI RaidShield engine'
+      };
     }
-  }
-
-  // 2. High-precision 21-rule heuristic classifier
-  logger.debug('Nexus AI RaidShield: Executing local heuristic classifier');
-  const localResult = evaluateRaidShieldDirect(text, imageUrls);
-  if (localResult) {
-    return localResult;
+  } catch (err) {
+    logger.debug(`[AI Moderation] Central RaidShield call failed, defaulting to safe: ${err.message}`);
   }
 
   return {

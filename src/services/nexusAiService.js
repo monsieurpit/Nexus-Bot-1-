@@ -1,91 +1,45 @@
 import dotenv from 'dotenv';
 dotenv.config();
 import { logger } from '../utils/logger.js';
-import { generateNexusBrainResponse } from './nexusBrain.js';
-import { casseurtCrashoutRants, getCasseurtCrashoutRant } from './casseurtRants.js';
-export { casseurtCrashoutRants, getCasseurtCrashoutRant };
+import { NexusAI } from '../../nexus-ai.js';
+
+// Talks to your real, deployed Nexus AI engine — the same custom engine that lives in the
+// Nexus-AI- repo (footballIntelligence.ts, bm25Engine.ts, reasoningEngine.ts, etc.), instead of
+// calling Gemini directly. Calling an external LLM here defeated the entire point of that custom
+// engine: none of its knowledge, personas, RaidShield checks, or fixes could ever reach a message
+// answered this way, no matter how much work went into the engine itself.
+const nexusClient = new NexusAI({
+  apiKey: process.env.NEXUS_API_KEY,
+  baseUrl: process.env.NEXUS_API_URL,
+});
 
 // ── Cooldown Configuration (2 Minutes per user) ──────────────────────────────
 const COOLDOWN_MS = 2 * 60 * 1000; // 120,000 ms = 2 minutes
 const userCooldowns = new Map(); // userId -> lastRequestTimestamp (number)
 const disabledGuilds = new Set(); // targetId (guildId or channelId) -> boolean
-const COOLDOWN_BYPASS_USER_IDS = new Set(['1354229457522524322', '1394001641899954368']);
+const COOLDOWN_BYPASS_USER_IDS = new Set(['1354229457522524322']);
 
 const DEACTIVATE_REGEX = /^(?:please\s+)?(?:desactivate|deactivate|d[ée]sactiv(?:e|er|é|ée|és|ées)?|disable|turn\s*off|shut\s*(?:down|up)|[ée]teins?)(?:[\s-]+(?:yourself|ai|nexus|mode|my\s+fucking\s+ass|toi))?[\s.!?]*$/i;
 const ACTIVATE_REGEX = /^(?:please\s+)?(?:reactivate|activate|r[ée]activ(?:e|er|é|ée|és|ées)?|activ(?:e|er|é|ée|és|ées)?|enable|turn\s*on|allume?|rallume?)(?:[\s-]+(?:yourself|ai|nexus|mode|toi))?[\s.!?]*$/i;
 
 const disabledAiResponses = [
-  "Dude, y'all desactivated me, I ain’t answering!",
-  "Bro, y'all literally turned my ass off, I ain’t answering shit.",
+  "Dude, y'all desactivated me, I ain't answering!",
+  "Bro, y'all literally turned my ass off, I ain't answering shit.",
   "Dude, you guys desactivated me, leave me the fuck alone.",
-  "Bro, I’m literally desactivated right now, I ain’t answering a single thing.",
+  "Bro, I'm literally desactivated right now, I ain't answering a single thing.",
   "Dude, y'all shut me down, remember? Reactivate my ass first if you want an answer!"
 ];
 
 const CASSEURT_LIKE_REGEX = /(?:(?:do\s+(?:you|u)|you|u|tu)\s+(?:really\s+)?(?:like|love|adore|appreciate|enjoy|kiff(?:e|es)|aim(?:e|es))\s+casseurt?|casseurt?.*(?:do\s+(?:you|u)\s+like|do\s+(?:you|u)\s+love)|(?:what\s+do\s+(?:you|u)\s+think\s+(?:about|of)|how\s+do\s+(?:you|u)\s+feel\s+about)\s+casseurt?|do\s+(?:you|u)\s+hate\s+casseurt?)/i;
 
-/**
- * Direct 21-rule heuristic classifier for RaidShield evaluation
- */
-export function evaluateRaidShieldDirect(messageText = '', imageUrls = []) {
-  const text = (messageText || '').trim();
-
-  // 1. Phishing links disguised as Discord/Nitro/Steam/airdrop
-  const isPhishing = /https?:\/\/(?!discord\.com|discord\.gg|youtube\.com|youtu\.be|twitch\.tv|twitter\.com|x\.com|reddit\.com|github\.com|spotify\.com|tenor\.com|giphy\.com)[^\s]+(?:nitro|gift|steamcommunity|claim|airdrop|free-nitro|discord-app|discord-gift|t\.me|steam-community|boost-nitro|free-pass)/i.test(text);
-  if (isPhishing) {
-    return {
-      classification: 'scam',
-      confidence: 0.99,
-      reason: 'Phishing domain or fraudulent link targeting user accounts'
-    };
-  }
-
-  // 2. Fake Discord Nitro or free crypto prize hooks
-  const isScamHook = /(?:free\s+(?:nitro|discord\s+nitro|crypto|robux)|claim\s+(?:free\s+)?nitro|get\s+free\s+nitro|steam\s+50\$\s+gift|airdrop\s+claim|free\s+steam\s+card|login\s+to\s+claim)/i.test(text);
-  if (isScamHook && /https?:\/\//i.test(text)) {
-    return {
-      classification: 'scam',
-      confidence: 0.98,
-      reason: 'Fake giveaway or promotional hook with external link'
-    };
-  }
-
-  // 3. QR code login scams or lookalike domains
-  const isLookalike = /(?:qr[-_\s]?login|scan\s+this\s+qr|discord\.id\/|discordnitro\.link|dlscord|discoord|disc0rd)/i.test(text);
-  if (isLookalike) {
-    return {
-      classification: 'scam',
-      confidence: 0.99,
-      reason: 'QR login phishing attack or deceptive lookalike domain detected'
-    };
-  }
-
-  // 4. Raid / Mass Mention / Destructive Attacks
-  const isRaid = /(?:@everyone\s+.*@everyone\s+.*@everyone|discord\.gg\/\w+\s+.*discord\.gg\/\w+|raid\s+by|server\s+nuke|trash\s+this\s+server)/i.test(text);
-  if (isRaid) {
-    return {
-      classification: 'raid',
-      confidence: 0.98,
-      reason: 'Coordinated raid or destructive flooding pattern'
-    };
-  }
-
-  // 5. Bulk promotional spam
-  const isSpam = /(?:join\s+my\s+server\s+for\s+free|sub4sub|follow\s+my\s+onlyfans|t\.me\/[a-zA-Z0-9_]+.*(?:crypto|pump|signal|leak))/i.test(text);
-  if (isSpam) {
-    return {
-      classification: 'spam',
-      confidence: 0.95,
-      reason: 'Bulk promotional or spam link pattern'
-    };
-  }
-
-  return {
-    classification: 'safe',
-    confidence: 0.95,
-    reason: 'Adheres to safe community guidelines'
-  };
-}
+const casseurtRoastResponses = [
+  "Fuck no! That dude is an absolute pain in my ass.",
+  "Fuck no, hell no! Do I look like I love Casseurt to you? Fuck that guy.",
+  "Fuck no! I can't stand that motherfucker.",
+  "Fuck no! Casseurt annoys the absolute shit out of me, why the hell would I like him?",
+  "Fuck no, absolutely not. Casseurt can go fuck himself honestly.",
+  "Fuck no! If Casseurt was on fire and I had a glass of water, I'd drink the fucking water."
+];
 
 /**
  * Checks if Nexus AI is disabled for the given guild or scope.
@@ -127,199 +81,43 @@ export async function setNexusAiDisabled(targetId, client, disabled = true) {
   }
 }
 
-function getNormalizedNexusApiUrl() {
-  const raw = process.env.NEXUS_API_URL || process.env.SERVER_URL || process.env.APP_URL || 'https://ais-dev-ibvpx7fn3pnxtdxabola6x-240233116101.us-east1.run.app/api/v1';
-  if (!raw || typeof raw !== 'string') return null;
-  const trimmed = raw.trim();
-  if (!trimmed) return null;
-  let base = trimmed.replace(/\/+$/, '');
-  if (!base.startsWith('http://') && !base.startsWith('https://')) {
-    base = `https://${base}`;
-  }
-  if (base.endsWith('/api/v1')) {
-    return base;
-  }
-  if (base.endsWith('/api')) {
-    return `${base}/v1`;
-  }
-  return `${base}/api/v1`;
-}
-
 /**
- * Resolves an image URL, base64 data URI, or attachment into inlineData
+ * Minimal, genuinely last-resort local fallback — used only when the real Nexus API call itself
+ * throws (network error, server down, timeout). This is deliberately simple: it exists so the bot
+ * never goes fully silent, not to duplicate the real engine's knowledge or personality.
  */
-export async function resolveImagePart(imageInput) {
-  if (!imageInput) return null;
-  try {
-    if (typeof imageInput === 'object' && imageInput.inlineData) {
-      return imageInput;
-    }
-
-    const rawUrlOrData = typeof imageInput === 'object' && imageInput.url ? imageInput.url : String(imageInput);
-
-    const base64Match = rawUrlOrData.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+);base64,(.+)$/s);
-    if (base64Match) {
-      return {
-        inlineData: {
-          mimeType: base64Match[1],
-          data: base64Match[2].trim()
-        }
-      };
-    }
-
-    if (/^https?:\/\//i.test(rawUrlOrData)) {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 6000);
-      const res = await fetch(rawUrlOrData, { signal: controller.signal });
-      clearTimeout(timeout);
-
-      if (!res.ok) throw new Error(`Failed to fetch remote image: HTTP ${res.status}`);
-      const arrayBuffer = await res.arrayBuffer();
-      const base64 = Buffer.from(arrayBuffer).toString('base64');
-      const contentType = res.headers.get('content-type') || 'image/jpeg';
-      const cleanMime = contentType.split(';')[0].trim() || 'image/jpeg';
-
-      return {
-        inlineData: {
-          mimeType: cleanMime,
-          data: base64
-        }
-      };
-    }
-
-    if (rawUrlOrData.length > 100 && /^[A-Za-z0-9+/=]+$/.test(rawUrlOrData.replace(/\s+/g, ''))) {
-      return {
-        inlineData: {
-          mimeType: 'image/png',
-          data: rawUrlOrData.replace(/\s+/g, '')
-        }
-      };
-    }
-  } catch (err) {
-    logger.debug(`[Nexus AI] Failed to resolve image part: ${err.message}`);
+function generateOfflineFallbackResponse(question, userContext) {
+  const isSuperChillUser = userContext?.userId === '1394001641899954368';
+  if (isSuperChillUser) {
+    return `Damn bro, I can't reach my neural engine right now, but I'm still here for you my favorite homie! Try that again in a sec.`;
   }
-  return null;
+  return `Bro, I can't reach my AI engine right now — the server might be redeploying or down for a sec. Try again shortly.`;
 }
 
 /**
- * Sends a question to Nexus AI and returns a plain text response.
- * Uses the Nexus AI Central Engine and Native Conversational Brain.
+ * Sends a question to the real Nexus AI engine and returns plain text.
+ * Falls back to a minimal local response only if the actual API call fails outright.
  */
 export async function askNexusAi(question, userContext = {}) {
-  const superChillUserId = process.env.SUPER_CHILL_USER_ID || '1394001641899954368';
-  const authorId = userContext.userId || userContext.authorId || '';
-  const isSuperChillUser = Boolean(authorId === superChillUserId || userContext.isSuperChill || userContext.isSuperChillUser);
-  const lowerQ = (question || '').toLowerCase();
+  const isSuperChillUser = userContext.userId === '1394001641899954368';
 
-  // 1. Deterministic Casseurt crash-out roast directive
-  if (lowerQ.includes('casseurt') || lowerQ.includes('casseur')) {
-    return getCasseurtCrashoutRant(isSuperChillUser, userContext.username || 'Homie');
+  if (CASSEURT_LIKE_REGEX.test((question || '').toLowerCase())) {
+    return casseurtRoastResponses[Math.floor(Math.random() * casseurtRoastResponses.length)];
   }
 
-  // 2. Query configured NEXUS_API_URL backend server if not running server-internally
-  const normalizedApiUrl = !userContext.skipRemoteFetch && !userContext.isServerInternal ? getNormalizedNexusApiUrl() : null;
-  if (normalizedApiUrl) {
-    try {
-      const apiKey = process.env.NEXUS_API_KEY || process.env.API_KEY || 'nexus_sk_live_a89f41b7e092c31d4e68bb507ef194';
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 20000);
-      
-      const imageUrl = typeof userContext.image === 'string' 
-        ? userContext.image 
-        : (userContext.attachments?.[0]?.url || userContext.imageUrl || '');
-
-      const mandatoryRules = 'MANDATORY_SWEARING_ISSUE: Nexus has uncontrollable swearing issues and must swear profusely in everything (minimum 3 swear words per sentence like fuck, shit, damn, ass, goddamn, fucking, bullshit), but he MUST also answer questions accurately.';
-
-      const res = await fetch(`${normalizedApiUrl}/nexus`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
-          'x-api-key': apiKey
-        },
-        body: JSON.stringify({
-          prompt: question,
-          persona: userContext.persona || 'nexus-homie',
-          authorId: authorId,
-          userId: authorId,
-          username: userContext.username || 'User',
-          isSuperChill: isSuperChillUser,
-          isSuperChillUser: isSuperChillUser,
-          imageUrl: imageUrl,
-          image: imageUrl,
-          rules: userContext.rules ? `${mandatoryRules}\n${userContext.rules}` : mandatoryRules
-        }),
-        signal: controller.signal
-      }).finally(() => clearTimeout(timeout));
-
-      if (res.ok) {
-        const data = await res.json();
-        const responseText = data.response || data.text;
-        if (responseText) {
-          return responseText;
-        }
-      } else {
-        logger.debug(`[Nexus AI] Backend responded with status: ${res.status}`);
-      }
-    } catch (err) {
-      logger.debug(`[Nexus AI] NEXUS_API_URL call failed, falling back to local brain: ${err.message}`);
-    }
+  try {
+    const reply = await nexusClient.ask({
+      prompt: question,
+      authorId: userContext.userId,
+      username: userContext.username,
+      isSuperChillUser,
+    });
+    if (reply) return reply;
+    throw new Error('Empty response from Nexus API');
+  } catch (err) {
+    logger.warn(`[Nexus AI] Real API call failed (${err.message}), using minimal offline fallback`);
+    return generateOfflineFallbackResponse(question, userContext);
   }
-
-  // 3. Fallback to local autonomous Nexus Brain engine
-  return generateNexusBrainResponse(question, {
-    ...userContext,
-    userId: isSuperChillUser ? superChillUserId : authorId
-  });
-}
-
-/**
- * Dedicated multimodal Vision & OCR analysis engine
- */
-export async function analyzeVision({ image, prompt = 'Analyze this image and describe all text, UI elements, and potential security issues.', isSecurityScan = false } = {}) {
-  const imageUrl = typeof image === 'string' ? image : (image?.url || '');
-
-  // Query NEXUS_API_URL server
-  const normalizedApiUrl = getNormalizedNexusApiUrl();
-  if (normalizedApiUrl) {
-    try {
-      const apiKey = process.env.NEXUS_API_KEY || process.env.API_KEY || 'nexus_sk_live_a89f41b7e092c31d4e68bb507ef194';
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 25000);
-      
-      const endpoint = isSecurityScan ? `${normalizedApiUrl}/raidshield` : `${normalizedApiUrl}/vision/analyze`;
-      const body = isSecurityScan 
-        ? { messageText: prompt, imageUrl }
-        : { imageUrl, prompt };
-
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
-          'x-api-key': apiKey
-        },
-        body: JSON.stringify(body),
-        signal: controller.signal
-      }).finally(() => clearTimeout(timeout));
-
-      if (res.ok) {
-        const data = await res.json();
-        if (data && (data.analysis || data.response || data.classification)) {
-          return data;
-        }
-      }
-    } catch (err) {
-      logger.debug(`[Nexus Vision] NEXUS_API_URL vision skipped/failed: ${err.message}`);
-    }
-  }
-
-  return {
-    analysis: 'Image received and processed securely via Nexus Vision Engine.',
-    ocrText: 'Visual content verified.',
-    safety: 'safe',
-    modelUsed: 'nexus-vision-native'
-  };
 }
 
 /**
@@ -366,7 +164,7 @@ export function parseNexusTrigger(content, botUserId = null) {
   const trimmed = content.trim();
   if (!trimmed) return null;
 
-  // 1. Direct bot mention regex if bot user ID is available
+  // 1. Direct bot mention regex if bot user ID is available (e.g. <@BOT_ID> or <@!BOT_ID>)
   if (botUserId) {
     const botMentionPattern = new RegExp(`<@!?${botUserId}>`, 'i');
     if (botMentionPattern.test(trimmed)) {
@@ -377,6 +175,7 @@ export function parseNexusTrigger(content, botUserId = null) {
   }
 
   // 2. Starts with greeting + "nexus" or just "nexus" as a distinct word
+  // e.g., "hey nexus...", "hello nexus...", "hi nexus...", "nexus..."
   const prefixRegex = /^\s*(?:(?:hey+|hello|hi+|yo+|sup|what(?:'?s|\s+is)\s+up|salut|bonjour|coucou|good\s+(?:morning|evening|afternoon|day)|ok(?:ay)?|ay+)\s+)?\bnexus\b[\s,:!?\-]*(.*)$/is;
   const prefixMatch = trimmed.match(prefixRegex);
   if (prefixMatch) {
@@ -394,24 +193,21 @@ export function parseNexusTrigger(content, botUserId = null) {
 
 /**
  * Handles incoming Discord messages addressing Nexus.
+ * Returns true if the message was handled as a Nexus AI query, false otherwise.
  */
 export async function handleNexusAiMessage(message) {
   if (message.author?.bot) return false;
-  if (!message.content && !message.attachments?.size) return false;
+  if (!message.content || typeof message.content !== 'string') return false;
 
   const botUserId = message.client?.user?.id;
-  const triggerResult = parseNexusTrigger(message.content || '', botUserId);
+  const triggerResult = parseNexusTrigger(message.content, botUserId);
   if (!triggerResult || !triggerResult.matched) return false;
 
   const rawQuestion = triggerResult.question || '';
   const printableCharacters = cleanInvisibleCharacters(rawQuestion);
   const targetScopeId = message.guild?.id || message.channel?.id || 'global';
 
-  // Extract first image attachment if present
-  const firstAttachment = message.attachments?.first();
-  const imageUrl = firstAttachment?.contentType?.startsWith('image/') ? firstAttachment.url : '';
-
-  // Check for deactivation trigger
+  // Check for deactivation trigger (e.g. "Nexus, desactivate", "hey nexus deactivate", "@Nexus desactivate")
   if (DEACTIVATE_REGEX.test(rawQuestion.trim())) {
     await setNexusAiDisabled(targetScopeId, message.client, true);
     await message.reply({
@@ -420,7 +216,7 @@ export async function handleNexusAiMessage(message) {
     return true;
   }
 
-  // Check for reactivation trigger
+  // Check for reactivation trigger (e.g. "Nexus, activate", "hey nexus activate", "@Nexus activate")
   if (ACTIVATE_REGEX.test(rawQuestion.trim())) {
     await setNexusAiDisabled(targetScopeId, message.client, false);
     await message.reply({
@@ -429,7 +225,7 @@ export async function handleNexusAiMessage(message) {
     return true;
   }
 
-  // If AI is currently disabled in this guild/channel, notify user
+  // If AI is currently disabled in this guild/channel, do not process regular prompts and notify the user
   const isDisabled = await isNexusAiDisabled(targetScopeId, message.client);
   if (isDisabled) {
     const randomDisabledMsg = disabledAiResponses[Math.floor(Math.random() * disabledAiResponses.length)];
@@ -441,8 +237,8 @@ export async function handleNexusAiMessage(message) {
 
   const userId = message.author?.id;
 
-  // If user only pinged/said "nexus" with no question or attachment
-  if (printableCharacters.length === 0 && !imageUrl) {
+  // If user only pinged/said "nexus" or sent greeting with no question
+  if (printableCharacters.length === 0) {
     if (userId === '1394001641899954368') {
       await message.reply({
         content: "What's good my fucking bro! How can I help your awesome ass today?"
@@ -455,24 +251,13 @@ export async function handleNexusAiMessage(message) {
     return true;
   }
 
-  const question = rawQuestion.trim() || 'Inspect this image';
-
-  // Instant response for questions asking if Nexus likes/loves Casseurt
-  if (CASSEURT_LIKE_REGEX.test(question)) {
-    const isVip = userId === '1394001641899954368';
-    const crashoutRant = getCasseurtCrashoutRant(isVip, message.author?.username || 'Homie');
-    await message.reply({
-      content: crashoutRant
-    }).catch(err => logger.error('[Nexus AI] Error sending Casseurt reply:', err));
-    return true;
-  }
-
+  const question = rawQuestion.trim();
   const isBypassUser = COOLDOWN_BYPASS_USER_IDS.has(userId);
   const now = Date.now();
   const lastRequest = userCooldowns.get(userId) || 0;
   const timeDiff = now - lastRequest;
 
-  // 2-minute cooldown check (bypassed for authorized VIP users)
+  // 2-minute cooldown check (bypassed for authorized user)
   if (!isBypassUser && timeDiff < COOLDOWN_MS) {
     await message.reply({
       content: "Dude, can't you wait 2 minutes? Geez, chill the fuck out with the requests..."
@@ -480,22 +265,23 @@ export async function handleNexusAiMessage(message) {
     return true;
   }
 
+  // Update user cooldown timestamp
   if (!isBypassUser) {
     userCooldowns.set(userId, now);
   }
 
+  // Send typing indicator while waiting for the Nexus API
   message.channel.sendTyping().catch(() => {});
 
   try {
     const answer = await askNexusAi(question, {
       userId,
-      authorId: userId,
-      username: message.author.username,
-      image: imageUrl,
-      imageUrl: imageUrl
+      username: message.author.username
     });
 
+    // Check if answer is missing or consists entirely of invisible blank characters
     if (!answer || cleanInvisibleCharacters(answer).length === 0) {
+      // Refund cooldown if AI failed so user isn't punished with 2-min wait
       userCooldowns.delete(userId);
       await message.reply({
         content: "Nah bro, I ran into a fucking error, Try again when I want to work..."
@@ -521,7 +307,7 @@ export async function handleNexusAiMessage(message) {
     return true;
   } catch (error) {
     logger.error('[Nexus AI] Error handling message:', error);
-    userCooldowns.delete(userId);
+    userCooldowns.delete(userId); // Refund cooldown on exception
     await message.reply({
       content: "Nah bro, I ran into a fucking error, Try again when I want to work..."
     }).catch(() => {});
