@@ -950,6 +950,7 @@ export class NexusAI {
 
   /**
    * Check server health.
+   * @returns {Promise<{ status: string, service: string, version: string, llm: { configured: boolean, model: string, available: boolean }, queue: object }>}
    */
   async getHealth() {
     const rootUrl = this.baseUrl.replace(/\/v1$/, '');
