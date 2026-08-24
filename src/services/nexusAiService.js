@@ -22,8 +22,21 @@ const userCooldowns = new Map(); // userId -> lastRequestTimestamp (number)
 const disabledGuilds = new Set(); // targetId (guildId or channelId) -> boolean
 const COOLDOWN_BYPASS_USER_IDS = new Set(['1354229457522524322']);
 
-const DEACTIVATE_REGEX = /^(?:please\s+)?(?:desactivate|deactivate|d[ée]sactiv(?:e|er|é|ée|és|ées)?|disable|turn\s*off|shut\s*(?:down|up)|[ée]teins?)(?:[\s-]+(?:yourself|ai|nexus|mode|my\s+fucking\s+ass|toi))?[\s.!?]*$/i;
-const ACTIVATE_REGEX = /^(?:please\s+)?(?:reactivate|activate|r[ée]activ(?:e|er|é|ée|és|ées)?|activ(?:e|er|é|ée|és|ées)?|enable|turn\s*on|allume?|rallume?)(?:[\s-]+(?:yourself|ai|nexus|mode|toi))?[\s.!?]*$/i;
+// Only requires the command word to START the message (after "Nexus" is already stripped by
+// parseNexusTrigger) — it used to also require the message to END right after one specific
+// whitelisted trailing word (yourself/ai/nexus/mode/...) or nothing at all, so ANY unexpected
+// trailing word ("Nexus deactive <anything not on that list>") silently failed to match and fell
+// through to being answered as a normal question instead of actually deactivating. Since this
+// only ever runs on a message already directly addressing the bot by name, "deactivate" as the
+// lead word is unambiguous — nothing legitimate needs to say "deactivate ..." to the bot except
+// meaning the bot itself.
+// "deactiv(?:e|ate)" also covers the common informal/typo'd short form "deactive" (missing
+// "-ate") — the exact phrasing that originally triggered this whole investigation ("Nexus
+// deactive ...") went unmatched not just because of the old trailing-word restriction above, but
+// because "deactive" itself was never one of the recognized alternatives at all.
+const DEACTIVATE_REGEX = /^(?:please\s+)?(?:desactiv(?:e|ate)|deactiv(?:e|ate)|d[ée]sactiv(?:e|er|é|ée|és|ées)?|disable|turn\s*off|shut\s*(?:down|up)|[ée]teins?)\b/i;
+// Same fix as DEACTIVATE_REGEX above — only require the command word to lead the message.
+const ACTIVATE_REGEX = /^(?:please\s+)?(?:reactivate|activate|r[ée]activ(?:e|er|é|ée|és|ées)?|activ(?:e|er|é|ée|és|ées)?|enable|turn\s*on|allume?|rallume?)\b/i;
 
 const disabledAiResponses = [
   "Dude, y'all desactivated me, I ain't answering!",
