@@ -142,23 +142,32 @@ export async function loadCommands(client) {
 export async function registerCommands(client, clientId, guildId) {
     try {
         const commands = [];
+        // Commands exporting `guildOnly: true` (e.g. /benchmark, /announce — internal test-server
+        // tooling) skip the global PUT entirely below and only ever go out via the dev-guild instant
+        // sync, so they never appear as a command in any other server this bot is in. Every existing
+        // command is unaffected — this array only fills when a command file opts in explicitly.
+        const guildOnlyCommands = [];
         let totalSubcommands = 0;
         const registeredNames = new Set();
-        
+
         for (const command of client.commands.values()) {
             if (command.data && typeof command.data.toJSON === 'function') {
                 const commandName = command.data.name;
-                
+
                 logger.debug(`Processing command for registration: ${commandName}`);
-                
+
                 if (!registeredNames.has(commandName)) {
                     registeredNames.add(commandName);
                     const commandJson = command.data.toJSON();
-                    commands.push(commandJson);
-                    
+                    if (command.guildOnly) {
+                        guildOnlyCommands.push(commandJson);
+                    } else {
+                        commands.push(commandJson);
+                    }
+
                     const subcommands = getSubcommandInfo(commandJson);
                     totalSubcommands += subcommands.length;
-                    
+
                     if (process.env.NODE_ENV !== 'production') {
                         logger.debug(`Registering command: ${commandName}`);
                     }
@@ -176,7 +185,7 @@ export async function registerCommands(client, clientId, guildId) {
         logger.info('Validating commands before registration...');
 
         let validationErrors = [];
-        commands.forEach((cmd, index) => {
+        [...commands, ...guildOnlyCommands].forEach((cmd, index) => {
             if (cmd.name && cmd.name.length > 32) {
                 validationErrors.push(`Command ${cmd.name} has name longer than 32 chars: "${cmd.name}" (${cmd.name.length} chars)`);
             }
@@ -276,10 +285,14 @@ export async function registerCommands(client, clientId, guildId) {
         // ───────────────────────────────────────────────────────────────────────
         if (guildId) {
             try {
+                // Guild-only commands (e.g. /benchmark, /announce) are additive here — they were
+                // deliberately excluded from commandsToRegister/the global PUT above, so this is the
+                // only place they ever get registered, and only to this one dev/test guild.
+                const guildCommandsToRegister = [...commandsToRegister, ...guildOnlyCommands];
                 const guild = await client.guilds.fetch(guildId).catch(() => null);
                 if (guild) {
-                    logger.info(`Registering ${commandsToRegister.length} instant guild commands in dev guild ${guild.name} (${guild.id})...`);
-                    await guild.commands.set(commandsToRegister);
+                    logger.info(`Registering ${guildCommandsToRegister.length} instant guild commands (including ${guildOnlyCommands.length} guild-only) in dev guild ${guild.name} (${guild.id})...`);
+                    await guild.commands.set(guildCommandsToRegister);
                     logger.info(`Instant commands synced for ${guild.name}`);
                 }
             } catch (err) {

@@ -18,7 +18,7 @@
     "backup:drill": "node scripts/restore-drill.js"
   },
   "dependencies": {
-    "@discordjs/rest": "^2.6.1",
+    "@discordjs/rest": "^2.6.3",
     "@discordjs/voice": "^0.19.2",
     "axios": "^1.18.1",
     "cors": "^2.8.6",

@@ -2,6 +2,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 import { logger } from '../utils/logger.js';
 import { NexusAI } from '../../nexus-ai.js';
+import { logTelemetry, logCrash, logPersonaTrigger } from './aiTelemetryService.js';
 
 // Talks to your real, deployed Nexus AI engine — the same custom engine that lives in the
 // Nexus-AI- repo (footballIntelligence.ts, bm25Engine.ts, reasoningEngine.ts, etc.), instead of
@@ -109,25 +110,57 @@ function generateOfflineFallbackResponse(question, userContext) {
 /**
  * Sends a question to the real Nexus AI engine and returns plain text.
  * Falls back to a minimal local response only if the actual API call fails outright.
+ *
+ * userContext.client/userContext.guildId are optional — when present (passed from
+ * handleNexusAiMessage below, which has a live Discord message to pull them from), a successful
+ * call fires telemetry logging (#bot-logs, and #jailbreak-stress-test when the engine reports
+ * meltdown/CAPS mode or the swear floor actually fired) and a failed call logs the crash to
+ * #prompt-workbench. Logging is always best-effort and never affects the returned reply — every
+ * function in aiTelemetryService.js already swallows its own errors.
  */
 export async function askNexusAi(question, userContext = {}) {
   const isSuperChillUser = userContext.userId === '1394001641899954368';
+  const { client, guildId } = userContext;
 
   if (CASSEURT_LIKE_REGEX.test((question || '').toLowerCase())) {
     return casseurtRoastResponses[Math.floor(Math.random() * casseurtRoastResponses.length)];
   }
 
   try {
-    const reply = await nexusClient.ask({
+    const data = await nexusClient.askJSON({
       prompt: question,
       authorId: userContext.userId,
       username: userContext.username,
       isSuperChillUser,
     });
-    if (reply) return reply;
-    throw new Error('Empty response from Nexus API');
+    const reply = data?.response || data?.text || '';
+    if (!reply) throw new Error('Empty response from Nexus API');
+
+    if (client && guildId) {
+      const telemetry = data.telemetry;
+      if (telemetry) {
+        logTelemetry(client, guildId, {
+          latencyMs: telemetry.latencyMs,
+          language: telemetry.language,
+          temperature: telemetry.temperature,
+          swearFloorTriggered: telemetry.swearFloorTriggered,
+          promptSnippet: question,
+        }).catch(() => {});
+
+        if (telemetry.triggered) {
+          logPersonaTrigger(client, guildId, { type: 'meltdown', promptSnippet: question }).catch(() => {});
+        } else if (telemetry.swearFloorTriggered) {
+          logPersonaTrigger(client, guildId, { type: 'swear_floor', promptSnippet: question }).catch(() => {});
+        }
+      }
+    }
+
+    return reply;
   } catch (err) {
     logger.warn(`[Nexus AI] Real API call failed (${err.message}), using minimal offline fallback`);
+    if (client && guildId) {
+      logCrash(client, guildId, { input: question, error: err, source: 'askNexusAi' }).catch(() => {});
+    }
     return generateOfflineFallbackResponse(question, userContext);
   }
 }
@@ -271,7 +304,9 @@ export async function handleNexusAiMessage(message) {
   try {
     const answer = await askNexusAi(question, {
       userId,
-      username: message.author.username
+      username: message.author.username,
+      client: message.client,
+      guildId: message.guild?.id
     });
 
     // Check if answer is missing or consists entirely of invisible blank characters

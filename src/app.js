@@ -16,6 +16,7 @@ import { checkWeeklySummaries } from './services/weeklySummaryService.js';
 import { checkVcEvents } from './services/vcEventService.js';
 import { checkLaligaStandingsUpdates } from './services/laligaStandingsService.js';
 import { loadCommands, registerCommands as registerSlashCommands } from './handlers/commandLoader.js';
+import { logCrash } from './services/aiTelemetryService.js';
 
 class TitanBot extends Client {
   constructor() {
@@ -487,10 +488,23 @@ try {
     
     process.on('uncaughtException', (error, origin) => {
       logger.error(`[Railway Shield] Uncaught Exception at ${origin}:`, error?.stack || error?.message || error);
+      // Best-effort only — wrapped so a broken Discord connection during a genuine crash can never
+      // itself throw a second unhandled error. logCrash already never throws on its own, this is
+      // belt-and-suspenders since we're inside the crash handler itself.
+      if (process.env.GUILD_ID) {
+        try {
+          logCrash(bot, process.env.GUILD_ID, { input: null, error, source: `uncaughtException (${origin})` }).catch(() => {});
+        } catch {}
+      }
     });
-    
+
     process.on('unhandledRejection', (reason, promise) => {
       logger.warn('[Railway Shield] Unhandled Rejection:', reason?.message || reason);
+      if (process.env.GUILD_ID) {
+        try {
+          logCrash(bot, process.env.GUILD_ID, { input: null, error: reason, source: 'unhandledRejection' }).catch(() => {});
+        } catch {}
+      }
     });
   };
   

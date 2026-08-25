@@ -9,6 +9,7 @@ import { InteractionHelper } from '../utils/interactionHelper.js';
 import { createInteractionTraceContext, runWithTraceContext } from '../utils/traceContext.js';
 import { validateChatInputPayloadOrThrow } from '../utils/commandInputValidation.js';
 import { enforceAbuseProtection, formatCooldownDuration } from '../utils/abuseProtection.js';
+import { logCrash } from '../services/aiTelemetryService.js';
 
 function withTraceContext(context = {}, traceContext = {}) {
   return {
@@ -90,6 +91,13 @@ export default {
 
             await command.execute(interaction, guildConfig, client);
           } catch (error) {
+            if (interaction.guild?.id) {
+              logCrash(client, interaction.guild.id, {
+                input: `/${interaction.commandName}`,
+                error,
+                source: `slash-command:${interaction.commandName}`
+              }).catch(() => {});
+            }
             await handleInteractionError(interaction, error, withTraceContext({
               type: 'command',
               commandName: interaction.commandName
