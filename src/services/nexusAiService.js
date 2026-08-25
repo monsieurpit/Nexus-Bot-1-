@@ -3,6 +3,7 @@ dotenv.config();
 import { logger } from '../utils/logger.js';
 import { NexusAI } from '../../nexus-ai.js';
 import { logTelemetry, logCrash, logPersonaTrigger } from './aiTelemetryService.js';
+import { getUserMemories, saveUserMemory } from './memoryBrainService.js';
 
 // Talks to your real, deployed Nexus AI engine — the same custom engine that lives in the
 // Nexus-AI- repo (footballIntelligence.ts, bm25Engine.ts, reasoningEngine.ts, etc.), instead of
@@ -111,15 +112,28 @@ export async function askNexusAi(question, userContext = {}) {
   const isSuperChillUser = userContext.userId === '1394001641899954368';
   const { client, guildId } = userContext;
 
+  // Cross-conversation memory — load whatever's stored about this user (favorite team, which
+  // football game they play, etc. from past conversations) and send it along so the engine can
+  // actually use it. See memoryBrainService.js for why this used to be a permanently-dead no-op.
+  const memories = await getUserMemories(client, userContext.userId);
+
   try {
     const data = await nexusClient.askJSON({
       prompt: question,
       authorId: userContext.userId,
       username: userContext.username,
       isSuperChillUser,
+      memories,
     });
     const reply = data?.response || data?.text || '';
     if (!reply) throw new Error('Empty response from Nexus API');
+
+    // The engine extracts at most one new fact per message and tells us via `newMemory` — persist
+    // it now that we know the call succeeded. Best-effort: memoryBrainService already swallows its
+    // own errors, so this never risks delaying or breaking the reply the user is waiting on.
+    if (data.newMemory && client) {
+      saveUserMemory(client, userContext.userId, data.newMemory).catch(() => {});
+    }
 
     if (client && guildId) {
       const telemetry = data.telemetry;

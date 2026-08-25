@@ -373,6 +373,7 @@ export class NexusAI {
       deepThink: Boolean(opts.deepThink || opts.mode === 'deep' || opts.mode === 'deep-cot'),
       crashout: Boolean(opts.crashout || opts.mode === 'crashout' || activePersona === 'crashout-bot'),
       history: opts.history || opts.messages || [],
+      memories: Array.isArray(opts.memories) ? opts.memories : [],
       rules: allRules.join('\n'),
       customRules: allRules.join('\n'),
       imageUrl: opts.imageUrl || opts.image || opts.attachmentUrl || '',
