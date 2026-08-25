@@ -277,26 +277,27 @@ export async function registerCommands(client, clientId, guildId) {
         }
 
         // ─── GUILD-LEVEL REGISTRATION FOR INSTANT VISIBILITY (dev guild only) ──
-        // Global commands take up to an hour to propagate to Discord desktop/mobile clients.
-        // Registering the same commands to a guild ALSO shows up there, as a SEPARATE
-        // command from the global one - so this must only ever target the single
-        // configured dev/test guild (GUILD_ID), never every connected guild, or every
-        // server ends up seeing each command twice.
+        // Discord's guild-scoped command limit is ALSO 100 — a completely separate quota from the
+        // global one, not shared with it. This used to send every global-eligible command PLUS the
+        // guild-only ones to the guild endpoint (103 total once guildOnly commands existed),
+        // silently exceeding that separate 100-command guild cap: the bulk PUT is all-or-nothing,
+        // so the whole call failed and NONE of the guild-only commands (/benchmark, /announce,
+        // /set-ai-telemetry) ever reached Discord — while looking like it succeeded, since the
+        // failure was only ever logged at `debug` level. Global commands don't need to be
+        // re-sent here at all: Discord already shows them in every guild (including this one) once
+        // they propagate, so this only ever needs to carry the guild-only commands — comfortably
+        // under the 100 cap on their own, and no longer competing with the global set for it.
         // ───────────────────────────────────────────────────────────────────────
         if (guildId) {
             try {
-                // Guild-only commands (e.g. /benchmark, /announce) are additive here — they were
-                // deliberately excluded from commandsToRegister/the global PUT above, so this is the
-                // only place they ever get registered, and only to this one dev/test guild.
-                const guildCommandsToRegister = [...commandsToRegister, ...guildOnlyCommands];
                 const guild = await client.guilds.fetch(guildId).catch(() => null);
                 if (guild) {
-                    logger.info(`Registering ${guildCommandsToRegister.length} instant guild commands (including ${guildOnlyCommands.length} guild-only) in dev guild ${guild.name} (${guild.id})...`);
-                    await guild.commands.set(guildCommandsToRegister);
-                    logger.info(`Instant commands synced for ${guild.name}`);
+                    logger.info(`Registering ${guildOnlyCommands.length} guild-only commands in dev guild ${guild.name} (${guild.id})...`);
+                    await guild.commands.set(guildOnlyCommands);
+                    logger.info(`Guild-only commands synced for ${guild.name}`);
                 }
             } catch (err) {
-                logger.debug(`Could not sync guild commands for dev guild ${guildId}: ${err.message}`);
+                logger.error(`Could not sync guild-only commands for dev guild ${guildId}: ${err.message}`);
             }
         }
 
