@@ -16,11 +16,7 @@ export const nexusClient = new NexusAI({
   baseUrl: process.env.NEXUS_API_URL,
 });
 
-// ── Cooldown Configuration (2 Minutes per user) ──────────────────────────────
-const COOLDOWN_MS = 2 * 60 * 1000; // 120,000 ms = 2 minutes
-const userCooldowns = new Map(); // userId -> lastRequestTimestamp (number)
 const disabledGuilds = new Set(); // targetId (guildId or channelId) -> boolean
-const COOLDOWN_BYPASS_USER_IDS = new Set(['1354229457522524322']);
 
 // Only requires the command word to START the message (after "Nexus" is already stripped by
 // parseNexusTrigger) — it used to also require the message to END right after one specific
@@ -268,23 +264,6 @@ export async function handleNexusAiMessage(message) {
   }
 
   const question = rawQuestion.trim();
-  const isBypassUser = COOLDOWN_BYPASS_USER_IDS.has(userId);
-  const now = Date.now();
-  const lastRequest = userCooldowns.get(userId) || 0;
-  const timeDiff = now - lastRequest;
-
-  // 2-minute cooldown check (bypassed for authorized user)
-  if (!isBypassUser && timeDiff < COOLDOWN_MS) {
-    await message.reply({
-      content: "Dude, can't you wait 2 minutes? Geez, chill the fuck out with the requests..."
-    }).catch(err => logger.error('[Nexus AI] Error sending cooldown reply:', err));
-    return true;
-  }
-
-  // Update user cooldown timestamp
-  if (!isBypassUser) {
-    userCooldowns.set(userId, now);
-  }
 
   // Send typing indicator while waiting for the Nexus API
   message.channel.sendTyping().catch(() => {});
@@ -297,8 +276,6 @@ export async function handleNexusAiMessage(message) {
 
     // Check if answer is missing or consists entirely of invisible blank characters
     if (!answer || cleanInvisibleCharacters(answer).length === 0) {
-      // Refund cooldown if AI failed so user isn't punished with 2-min wait
-      userCooldowns.delete(userId);
       await message.reply({
         content: "Nah bro, I ran into a fucking error, Try again when I want to work..."
       }).catch(() => {});
@@ -323,7 +300,6 @@ export async function handleNexusAiMessage(message) {
     return true;
   } catch (error) {
     logger.error('[Nexus AI] Error handling message:', error);
-    userCooldowns.delete(userId); // Refund cooldown on exception
     await message.reply({
       content: "Nah bro, I ran into a fucking error, Try again when I want to work..."
     }).catch(() => {});
