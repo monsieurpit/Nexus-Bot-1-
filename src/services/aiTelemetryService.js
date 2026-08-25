@@ -1,25 +1,24 @@
 import { ChannelType } from 'discord.js';
 import { createEmbed } from '../utils/embeds.js';
 import { logger } from '../utils/logger.js';
-
-// Three purpose-specific channels for observing the AI engine (Nexus-AI-)'s live behavior on the
-// test server — resolved from env vars rather than the DB-backed per-guild loggingService.js,
-// since that system is one-channel-per-guild for moderation/ticket/leveling-style events across
-// every server the bot is in, while this is three specific channels on one specific test guild.
-// Any of the three can be left unset without breaking anything else — logging just silently no-ops.
-const BOT_LOGS_CHANNEL_ID = process.env.BOT_LOGS_CHANNEL_ID;
-const PROMPT_WORKBENCH_CHANNEL_ID = process.env.PROMPT_WORKBENCH_CHANNEL_ID;
-const JAILBREAK_STRESS_TEST_CHANNEL_ID = process.env.JAILBREAK_STRESS_TEST_CHANNEL_ID;
+import { getGuildConfig } from './guildConfig.js';
 
 /**
- * Resolves a text channel by ID within a guild, checking send/embed permissions along the way.
- * Returns null (never throws) on any failure — same defensive contract as loggingService.js's
- * logEvent(), so a broken/misconfigured channel ID can never take down the actual AI response path
- * these logging calls are attached to.
+ * Resolves one of the AI-telemetry text channels for a guild — database-backed
+ * (guildConfig.js's aiTelemetry.* fields, same Firestore/Postgres store every other per-guild
+ * setting in this bot uses, e.g. logging.channelId), configured live via /set-ai-telemetry
+ * instead of an env var + redeploy. Checks send/embed permissions along the way. Returns null
+ * (never throws) on any failure — same defensive contract as loggingService.js's logEvent(), so a
+ * broken/misconfigured/unset channel can never take down the actual AI response path these
+ * logging calls are attached to.
  */
-async function resolveLogChannel(client, guildId, channelId) {
-  if (!channelId) return null;
+async function resolveLogChannel(client, guildId, configKey) {
+  if (!guildId) return null;
   try {
+    const config = await getGuildConfig(client, guildId);
+    const channelId = config?.aiTelemetry?.[configKey];
+    if (!channelId) return null;
+
     const guild = client.guilds.cache.get(guildId) || (await client.guilds.fetch(guildId).catch(() => null));
     if (!guild) return null;
 
@@ -31,7 +30,7 @@ async function resolveLogChannel(client, guildId, channelId) {
 
     return channel;
   } catch (error) {
-    logger.warn(`[AI Telemetry] Could not resolve log channel ${channelId}: ${error.message}`);
+    logger.warn(`[AI Telemetry] Could not resolve log channel (${configKey}) for guild ${guildId}: ${error.message}`);
     return null;
   }
 }
@@ -56,7 +55,7 @@ function truncateField(value, maxLength = 1000) {
  */
 export async function logTelemetry(client, guildId, { latencyMs, language, temperature, swearFloorTriggered, promptSnippet } = {}) {
   try {
-    const channel = await resolveLogChannel(client, guildId, BOT_LOGS_CHANNEL_ID);
+    const channel = await resolveLogChannel(client, guildId, 'botLogsChannelId');
     if (!channel) return;
 
     const embed = createEmbed({
@@ -85,7 +84,7 @@ export async function logTelemetry(client, guildId, { latencyMs, language, tempe
  */
 export async function logCrash(client, guildId, { input, error, source } = {}) {
   try {
-    const channel = await resolveLogChannel(client, guildId, PROMPT_WORKBENCH_CHANNEL_ID);
+    const channel = await resolveLogChannel(client, guildId, 'promptWorkbenchChannelId');
     if (!channel) return;
 
     const errorMessage = error instanceof Error ? error.message : String(error ?? 'Unknown error');
@@ -116,7 +115,7 @@ export async function logCrash(client, guildId, { input, error, source } = {}) {
  */
 export async function logPersonaTrigger(client, guildId, { type, promptSnippet } = {}) {
   try {
-    const channel = await resolveLogChannel(client, guildId, JAILBREAK_STRESS_TEST_CHANNEL_ID);
+    const channel = await resolveLogChannel(client, guildId, 'jailbreakStressTestChannelId');
     if (!channel) return;
 
     const labels = {

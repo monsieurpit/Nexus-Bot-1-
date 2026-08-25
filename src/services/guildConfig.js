@@ -17,6 +17,13 @@ const GUILD_CONFIG_DEFAULTS = {
         enabled: false,
         channelId: null,
         enabledEvents: {}
+    },
+    aiTelemetry: {
+        botLogsChannelId: null,
+        promptWorkbenchChannelId: null,
+        jailbreakStressTestChannelId: null,
+        announcementsChannelId: null,
+        benchmarkSuiteChannelId: null
     }
 };
 

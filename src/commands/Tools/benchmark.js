@@ -3,6 +3,7 @@ import { createEmbed } from '../../utils/embeds.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { logger } from '../../utils/logger.js';
 import { nexusClient } from '../../services/nexusAiService.js';
+import { getGuildConfig } from '../../services/guildConfig.js';
 
 // Guild-only test-server tooling — never registered globally, see announce.js's comment /
 // commandLoader.js's registerCommands() for how guildOnly commands are scoped.
@@ -102,11 +103,14 @@ export default {
 
         // Also cross-post to #benchmark-suite when configured, so a run from any admin lands in
         // one shared channel history, not just the invoker's ephemeral-adjacent reply thread.
-        const benchmarkChannelId = process.env.BENCHMARK_SUITE_CHANNEL_ID;
-        if (benchmarkChannelId && interaction.guild) {
-            const channel = await interaction.guild.channels.fetch(benchmarkChannelId).catch(() => null);
-            if (channel) {
-                await channel.send({ embeds: [embed] }).catch((err) => logger.warn(`Could not cross-post benchmark results: ${err.message}`));
+        if (interaction.guild) {
+            const config = await getGuildConfig(interaction.client, interaction.guild.id).catch(() => null);
+            const benchmarkChannelId = config?.aiTelemetry?.benchmarkSuiteChannelId;
+            if (benchmarkChannelId) {
+                const channel = await interaction.guild.channels.fetch(benchmarkChannelId).catch(() => null);
+                if (channel) {
+                    await channel.send({ embeds: [embed] }).catch((err) => logger.warn(`Could not cross-post benchmark results: ${err.message}`));
+                }
             }
         }
     },

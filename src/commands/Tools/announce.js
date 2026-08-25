@@ -2,6 +2,7 @@ import { SlashCommandBuilder, PermissionFlagsBits, MessageFlags } from 'discord.
 import { createEmbed } from '../../utils/embeds.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { logger } from '../../utils/logger.js';
+import { getGuildConfig } from '../../services/guildConfig.js';
 
 // Guild-only test-server tooling — never registered globally. See commandLoader.js's
 // registerCommands(): commands exporting guildOnly: true only ever sync to the dev/test guild
@@ -42,13 +43,14 @@ export default {
         }
 
         const message = interaction.options.getString('message', true);
-        const channelId = process.env.ANNOUNCEMENTS_CHANNEL_ID;
+        const config = await getGuildConfig(interaction.client, interaction.guild.id);
+        const channelId = config?.aiTelemetry?.announcementsChannelId;
 
         if (!channelId) {
             return InteractionHelper.safeEditReply(interaction, {
                 embeds: [createEmbed({
                     title: 'Not Configured',
-                    description: 'ANNOUNCEMENTS_CHANNEL_ID is not set — nowhere to post this announcement.',
+                    description: 'No announcements channel is set for this server. Configure one with `/set-ai-telemetry`.',
                     color: 'error'
                 })],
             });

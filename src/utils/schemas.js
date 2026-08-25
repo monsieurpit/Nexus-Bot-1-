@@ -44,6 +44,21 @@ const VerificationConfigSchema = z
   })
   .optional();
 
+// Channel IDs for the AI engine's observability logging (#bot-logs, #prompt-workbench,
+// #jailbreak-stress-test) and the /announce, /benchmark test-server commands — per-guild and
+// database-backed (Firestore/Postgres via database.js), same pattern as `logging`/`football`
+// above, so these are configurable live via a slash command instead of requiring an env var and a
+// redeploy every time a channel changes.
+const AiTelemetryConfigSchema = z
+  .object({
+    botLogsChannelId: z.string().nullable().optional(),
+    promptWorkbenchChannelId: z.string().nullable().optional(),
+    jailbreakStressTestChannelId: z.string().nullable().optional(),
+    announcementsChannelId: z.string().nullable().optional(),
+    benchmarkSuiteChannelId: z.string().nullable().optional()
+  })
+  .optional();
+
 const FootballConfigSchema = z
   .object({
     enabled: z.boolean().default(false),
@@ -77,7 +92,8 @@ export const GuildConfigSchema = z
     ticketLogging: TicketLoggingSchema.optional().nullable(),
     enableLogging: z.boolean().optional().nullable(),
     verification: VerificationConfigSchema.optional().nullable(),
-    football: FootballConfigSchema.optional().nullable()
+    football: FootballConfigSchema.optional().nullable(),
+    aiTelemetry: AiTelemetryConfigSchema.optional().nullable()
   })
   .passthrough();
 
