@@ -43,17 +43,6 @@ const disabledAiResponses = [
   "Dude, y'all shut me down, remember? Reactivate my ass first if you want an answer!"
 ];
 
-const CASSEURT_LIKE_REGEX = /(?:(?:do\s+(?:you|u)|you|u|tu)\s+(?:really\s+)?(?:like|love|adore|appreciate|enjoy|kiff(?:e|es)|aim(?:e|es))\s+casseurt?|casseurt?.*(?:do\s+(?:you|u)\s+like|do\s+(?:you|u)\s+love)|(?:what\s+do\s+(?:you|u)\s+think\s+(?:about|of)|how\s+do\s+(?:you|u)\s+feel\s+about)\s+casseurt?|do\s+(?:you|u)\s+hate\s+casseurt?)/i;
-
-const casseurtRoastResponses = [
-  "Fuck no! That dude is an absolute pain in my ass.",
-  "Fuck no, hell no! Do I look like I love Casseurt to you? Fuck that guy.",
-  "Fuck no! I can't stand that motherfucker.",
-  "Fuck no! Casseurt annoys the absolute shit out of me, why the hell would I like him?",
-  "Fuck no, absolutely not. Casseurt can go fuck himself honestly.",
-  "Fuck no! If Casseurt was on fire and I had a glass of water, I'd drink the fucking water."
-];
-
 /**
  * Checks if Nexus AI is disabled for the given guild or scope.
  */
@@ -121,10 +110,6 @@ function generateOfflineFallbackResponse(question, userContext) {
 export async function askNexusAi(question, userContext = {}) {
   const isSuperChillUser = userContext.userId === '1394001641899954368';
   const { client, guildId } = userContext;
-
-  if (CASSEURT_LIKE_REGEX.test((question || '').toLowerCase())) {
-    return casseurtRoastResponses[Math.floor(Math.random() * casseurtRoastResponses.length)];
-  }
 
   try {
     const data = await nexusClient.askJSON({

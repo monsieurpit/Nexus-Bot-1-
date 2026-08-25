@@ -50,17 +50,6 @@ A complete technical specification and architectural blueprint for the **Nexus A
   * Tracks queued requests, active workers, average wait time, and execution latencies.
   * Ensures orderly processing without server starvation or connection exhaustion.
 
-### Subsystem B: Native Nexus Brain (`/src/services/nexusBrain.js`)
-* **Role**: High-voltage conversational NLP and intent dispatching.
-* **Solvers & Modules**:
-  * **Math Solver (`mathSolver.js`)**: Evaluates arithmetic, percentages, powers, scientific notation, and protects against division by zero.
-  * **Logic Solver (`logicSolver.js`)**: Solves deductive reasoning, truth tables, riddle analysis, and conditional deductions.
-  * **Code Solver (`codeSolver.js`)**: Provides senior software engineering solutions across JavaScript, TypeScript, Python, React, and Discord.js.
-  * **Physical Engine (`physicalEngine.js`)**: Solves real-world kinetic physics, velocity, collisions, and everyday interaction scenarios.
-  * **Knowledge Base (`knowledgeBase.js`)**: Comprehensive encyclopedic coverage (Football/UCL lore, Barcelona, Real Madrid, Stadiums/Ultras, Electronic Music Venues, Science, Technology).
-  * **Sarcasm Detector (`sarcasmDetector.js`)**: Detects irony, banter, and returns witty responses.
-  * **Casseurt Rant Engine (`casseurtRants.js`)**: Explosive deterministic crash-out roast whenever Casseurt is referenced.
-
 ### Subsystem C: Swearing Issues Engine (`boostSentenceSwears` / `enforceMandatorySwearingIssues`)
 * **Role**: Post-processing filter guaranteeing the unhinged personality signature of Nexus AI.
 * **Specification**:

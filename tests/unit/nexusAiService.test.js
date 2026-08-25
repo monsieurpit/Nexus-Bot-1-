@@ -20,12 +20,21 @@ test('parseNexusTrigger detects bot mention and prefixes', () => {
   assert.equal(t3, null);
 });
 
-test('askNexusAi short-circuits Casseurt roast triggers without calling the API', async () => {
+test('askNexusAi routes Casseurt questions through the real engine, no local short-circuit', async () => {
+  // There used to be a hardcoded CASSEURT_LIKE_REGEX intercept here that returned one of a fixed
+  // set of pre-written "Fuck no!" strings without ever calling the real Nexus AI engine — the
+  // same class of bug fixed in ruleEngine.ts (Nexus-AI- repo): a language-agnostic keyword
+  // short-circuit that pre-empted the real, freshly-generated LLM roast and left the engine's own
+  // swear-floor telemetry meaningless for these messages. It's gone now, so a Casseurt question
+  // takes the exact same path as any other question: attempt the real API, and only fall back to
+  // the minimal offline message (never a Casseurt-specific line) if that call itself fails.
   const casseurtResp = await askNexusAi('do you like casseurt', { userId: '1394001641899954368' });
-  assert.ok(/fuck no/i.test(casseurtResp));
+  assert.ok(!/fuck no/i.test(casseurtResp));
+  assert.ok(/can't reach my (neural|AI) engine/i.test(casseurtResp));
 
   const casseurtResp2 = await askNexusAi('what do you think about casseurt', { userId: '111' });
-  assert.ok(/fuck no/i.test(casseurtResp2));
+  assert.ok(!/fuck no/i.test(casseurtResp2));
+  assert.ok(/can't reach my (neural|AI) engine/i.test(casseurtResp2));
 });
 
 test('setNexusAiDisabled and isNexusAiDisabled manage toggle states', async () => {

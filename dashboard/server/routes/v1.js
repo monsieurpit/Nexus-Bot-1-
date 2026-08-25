@@ -1,6 +1,5 @@
 import express from 'express';
 import { askNexusAi, nexusClient } from '../../../src/services/nexusAiService.js';
-import { getCasseurtCrashoutRant } from '../../../src/services/casseurtRants.js';
 import { globalAiQueue } from '../../../src/utils/requestQueue.js';
 
 const router = express.Router();
@@ -275,13 +274,6 @@ router.post('/nexus', authenticateApiKey, async (req, res) => {
 
     // Enqueue through FIFO request queue
     const queuedExecution = await globalAiQueue.enqueue(async () => {
-      const lowerPrompt = (prompt || '').toLowerCase();
-
-      // Direct Casseurt crash-out rant intercept
-      if (lowerPrompt.includes('casseurt') || lowerPrompt.includes('casseur')) {
-        return getCasseurtCrashoutRant(isVip, username || 'Homie');
-      }
-
       return await askNexusAi(prompt || 'Analyze attached visual image', {
         userId: isVip ? superChillUserId : authorId,
         authorId: isVip ? superChillUserId : authorId,
