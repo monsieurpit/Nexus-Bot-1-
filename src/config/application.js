@@ -27,7 +27,12 @@ const appConfig = {
     ...botConfig,
     token: process.env.DISCORD_BOT_TOKEN || process.env.DISCORD_TOKEN || process.env.TOKEN || process.env.BOT_TOKEN,
     clientId: process.env.CLIENT_ID,
-    guildId: process.env.GUILD_ID,
+    // Falls back to the actual test/dev guild ID if GUILD_ID isn't set in the deployment
+    // environment — without this, registerCommands()'s dev-guild instant sync silently never
+    // runs, which specifically breaks any `guildOnly: true` command (e.g. /benchmark, /announce,
+    // /set-ai-telemetry): they're deliberately excluded from the global registration, so with no
+    // guild sync either they end up registered nowhere at all.
+    guildId: process.env.GUILD_ID || '1541854522127814786',
 
   },
 
