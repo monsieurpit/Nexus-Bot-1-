@@ -250,9 +250,20 @@ export async function registerCommands(client, clientId, guildId) {
         let commandsToRegister = commands;
 
         if (commands.length > MAX_COMMANDS) {
-            logger.warn(`Command count (${commands.length}) exceeds Discord limit (${MAX_COMMANDS}), truncating...`);
+            // Previously logged a single warn() line and silently dropped whatever fell past
+            // index 100 — invisible unless someone was watching logs closely, and gave no way to
+            // tell WHICH command(s) got cut. This is exactly what happened when /nexus-persona
+            // became the 101st global command: it registered locally, loaded fine, deployed
+            // successfully, and still never appeared in Discord, with no error anywhere pointing
+            // at why. Now names every dropped command explicitly at error level.
+            const dropped = commands.slice(MAX_COMMANDS);
             commandsToRegister = commands.slice(0, MAX_COMMANDS);
-            logger.info(`Truncated to ${commandsToRegister.length} commands for registration`);
+            logger.error(
+                `Command count (${commands.length}) exceeds Discord's global command limit (${MAX_COMMANDS}). ` +
+                `The following ${dropped.length} command(s) will NOT be registered and will not appear in Discord: ` +
+                `${dropped.map((c) => `/${c.name}`).join(', ')}. ` +
+                `Remove a command, merge some into subcommands of one parent command, or mark one guildOnly to free a slot.`
+            );
         }
 
         const targetClientId = clientId || client.user?.id || client.application?.id;
