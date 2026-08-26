@@ -20,6 +20,43 @@ export const nexusClient = new NexusAI({
 
 const disabledGuilds = new Set(); // targetId (guildId or channelId) -> boolean
 
+// Per-channel short-term conversation history — in-memory only (not persisted, unlike the
+// cross-session fact memory in memoryBrainService.js, since this is meant to work like a chat
+// UI's session history, naturally reset when the bot process restarts, not a durable fact store).
+// Existed as dead capability before this: nexus-ai.js's SDK already supports a `history` field end
+// to end (NexusSession tracks it, askJSON forwards it, the engine's generateReasoningPath reads it
+// for conversational continuity — e.g. falling back to the last assistant message's language when
+// a short reply like "ok ciekawe" has no language signal of its own), but askNexusAi below never
+// populated it, so every real Discord message hit the engine with an empty history regardless of
+// how much actual conversation had happened. Observed live: a Polish conversation's short "Nexus
+// ok ciekawe" follow-up got answered in English — the exact case the engine's own context-fallback
+// exists to catch, silently defeated because there was no history for it to fall back to.
+// Keyed by channel (not user) since that's the natural "conversation" unit for a bot mentioned in
+// a shared channel; bounded per-channel (last 6 turns, matching the engine's own history.slice(-6)
+// usage) and bounded in total channel count (simple insertion-order eviction) so a long-running
+// bot across many servers doesn't grow this unboundedly over weeks of uptime.
+const CHANNEL_HISTORY = new Map(); // channelId -> {id, role, content, timestamp}[]
+const CHANNEL_HISTORY_MAX_CHANNELS = 500;
+const CHANNEL_HISTORY_MAX_TURNS = 6; // user+assistant pairs
+
+function getChannelHistory(channelId) {
+  if (!channelId) return [];
+  return CHANNEL_HISTORY.get(channelId) || [];
+}
+
+function appendChannelHistory(channelId, role, content) {
+  if (!channelId || !content) return;
+  if (!CHANNEL_HISTORY.has(channelId) && CHANNEL_HISTORY.size >= CHANNEL_HISTORY_MAX_CHANNELS) {
+    const oldestKey = CHANNEL_HISTORY.keys().next().value;
+    if (oldestKey !== undefined) CHANNEL_HISTORY.delete(oldestKey);
+  }
+  const existing = CHANNEL_HISTORY.get(channelId) || [];
+  existing.push({ id: `h-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, role, content, timestamp: Date.now() });
+  // Keep the last N turns (2 messages per turn: user + assistant)
+  const trimmed = existing.slice(-CHANNEL_HISTORY_MAX_TURNS * 2);
+  CHANNEL_HISTORY.set(channelId, trimmed);
+}
+
 // Only requires the command word to START the message (after "Nexus" is already stripped by
 // parseNexusTrigger) — it used to also require the message to END right after one specific
 // whitelisted trailing word (yourself/ai/nexus/mode/...) or nothing at all, so ANY unexpected
@@ -110,12 +147,13 @@ function generateOfflineFallbackResponse(question, userContext) {
  */
 export async function askNexusAi(question, userContext = {}) {
   const isSuperChillUser = userContext.userId === '1394001641899954368';
-  const { client, guildId } = userContext;
+  const { client, guildId, channelId } = userContext;
 
   // Cross-conversation memory — load whatever's stored about this user (favorite team, which
   // football game they play, etc. from past conversations) and send it along so the engine can
   // actually use it. See memoryBrainService.js for why this used to be a permanently-dead no-op.
   const memories = await getUserMemories(client, userContext.userId);
+  const history = getChannelHistory(channelId);
 
   try {
     const data = await nexusClient.askJSON({
@@ -124,9 +162,13 @@ export async function askNexusAi(question, userContext = {}) {
       username: userContext.username,
       isSuperChillUser,
       memories,
+      history,
     });
     const reply = data?.response || data?.text || '';
     if (!reply) throw new Error('Empty response from Nexus API');
+
+    appendChannelHistory(channelId, 'user', question);
+    appendChannelHistory(channelId, 'assistant', reply);
 
     // The engine extracts at most one new fact per message and tells us via `newMemory` — persist
     // it now that we know the call succeeded. Best-effort: memoryBrainService already swallows its
@@ -305,7 +347,8 @@ export async function handleNexusAiMessage(message) {
       userId,
       username: message.author.username,
       client: message.client,
-      guildId: message.guild?.id
+      guildId: message.guild?.id,
+      channelId: message.channel?.id
     });
 
     // Check if answer is missing or consists entirely of invisible blank characters
