@@ -209,6 +209,21 @@ export class NexusAI {
     };
   }
 
+  // Every fetch() in this SDK previously had no timeout at all — a stalled backend (e.g. the
+  // shared Ollama queue backing up) left the underlying socket open indefinitely, bounded only by
+  // Node's own default (which can be minutes), so a Discord user's message could hang far longer
+  // than any reasonable wait. The server's own request queue already gives up on a stuck task
+  // after 45s, so 50s here gives it a moment to actually respond with that failure first.
+  async _fetchWithTimeout(url, options = {}, timeoutMs = 50000) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await fetch(url, { ...options, signal: controller.signal });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   /**
    * Create a stateful multi-turn chat session with automatic conversation memory.
    * @param {Object} [options]
@@ -386,7 +401,7 @@ export class NexusAI {
       provider: opts.provider || opts.searchEngine,
     };
 
-    const res = await fetch(`${this.baseUrl}/nexus`, {
+    const res = await this._fetchWithTimeout(`${this.baseUrl}/nexus`, {
       method: 'POST',
       headers: this._getHeaders(),
       body: JSON.stringify(payload),

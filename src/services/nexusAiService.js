@@ -4,6 +4,7 @@ import { logger } from '../utils/logger.js';
 import { NexusAI } from '../../nexus-ai.js';
 import { logTelemetry, logCrash, logPersonaTrigger } from './aiTelemetryService.js';
 import { getUserMemories, saveUserMemory } from './memoryBrainService.js';
+import { checkRateLimit } from '../utils/rateLimiter.js';
 
 // Talks to your real, deployed Nexus AI engine — the same custom engine that lives in the
 // Nexus-AI- repo (footballIntelligence.ts, bm25Engine.ts, reasoningEngine.ts, etc.), instead of
@@ -338,6 +339,23 @@ export async function handleNexusAiMessage(message) {
   }
 
   const question = rawQuestion.trim();
+
+  // Per-user cooldown, applied right before the backend call and BEFORE the typing indicator so a
+  // rate-limited message never touches the AI backend at all. This never existed before — every
+  // Discord message reaching this point went straight to askNexusAi() unconditionally. On a
+  // 12.2k-member server, all of the bot's traffic funnels through one Railway process into a
+  // single local Ollama instance (only 2 real concurrent generations possible on the host
+  // hardware) — without a per-user floor, one person spamming the bot could starve everyone else
+  // waiting in the shared queue. 1 request per 6 seconds is generous for genuine back-and-forth
+  // conversation but blocks rapid-fire spam.
+  const rateLimitKey = `nexus-ai:${userId}`;
+  const allowed = await checkRateLimit(rateLimitKey, 1, 6000);
+  if (!allowed) {
+    await message.reply({
+      content: "Whoa, slow down — give me a few seconds between messages so everyone else gets a turn too."
+    }).catch(() => {});
+    return true;
+  }
 
   // Send typing indicator while waiting for the Nexus API
   message.channel.sendTyping().catch(() => {});
