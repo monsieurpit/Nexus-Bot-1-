@@ -40,6 +40,63 @@ const CHANNEL_HISTORY = new Map(); // channelId -> {id, role, content, timestamp
 const CHANNEL_HISTORY_MAX_CHANNELS = 500;
 const CHANNEL_HISTORY_MAX_TURNS = 6; // user+assistant pairs
 
+// Per-user persona customization — every one of the 12.2k members previously got the identical
+// hardcoded 'nexus-homie' persona with zero say in the matter (the only special case in the whole
+// codebase was one hardcoded VIP Discord ID). Backed by the bot's existing generic client.db
+// key-value store (Firestore/Postgres/memory, whichever is actually connected) rather than a new
+// schema — one key per user, no migration needed. Restricted to personas that make sense as a
+// standing user preference for casual chat; RaidShield/moderation personas are operator-only and
+// deliberately excluded here.
+export const USER_SELECTABLE_PERSONAS = [
+  'nexus-homie',
+  'crashout-bot',
+  'roast-master',
+  'chill-mod',
+  'code-architect',
+  'deep-researcher',
+  'gemini-core',
+  'socratic-mentor',
+  'creative-synthesizer',
+];
+
+function getUserPersonaKey(userId) {
+  return `nexus:persona:${userId}`;
+}
+
+export async function getUserPersona(client, userId) {
+  if (!client?.db || typeof client.db.get !== 'function' || !userId) return null;
+  try {
+    const persona = await client.db.get(getUserPersonaKey(userId), null);
+    return USER_SELECTABLE_PERSONAS.includes(persona) ? persona : null;
+  } catch (error) {
+    logger.error(`[Nexus AI] Error reading persona preference for ${userId}:`, error);
+    return null;
+  }
+}
+
+export async function setUserPersona(client, userId, persona) {
+  if (!client?.db || typeof client.db.set !== 'function' || !userId) return false;
+  if (!USER_SELECTABLE_PERSONAS.includes(persona)) return false;
+  try {
+    await client.db.set(getUserPersonaKey(userId), persona);
+    return true;
+  } catch (error) {
+    logger.error(`[Nexus AI] Error saving persona preference for ${userId}:`, error);
+    return false;
+  }
+}
+
+export async function clearUserPersona(client, userId) {
+  if (!client?.db || typeof client.db.delete !== 'function' || !userId) return false;
+  try {
+    await client.db.delete(getUserPersonaKey(userId));
+    return true;
+  } catch (error) {
+    logger.error(`[Nexus AI] Error clearing persona preference for ${userId}:`, error);
+    return false;
+  }
+}
+
 function getChannelHistory(channelId) {
   if (!channelId) return [];
   return CHANNEL_HISTORY.get(channelId) || [];
@@ -155,6 +212,7 @@ export async function askNexusAi(question, userContext = {}) {
   // actually use it. See memoryBrainService.js for why this used to be a permanently-dead no-op.
   const memories = await getUserMemories(client, userContext.userId);
   const history = getChannelHistory(channelId);
+  const savedPersona = await getUserPersona(client, userContext.userId);
 
   try {
     const data = await nexusClient.askJSON({
@@ -164,6 +222,10 @@ export async function askNexusAi(question, userContext = {}) {
       isSuperChillUser,
       memories,
       history,
+      // Explicit per-request override (userContext.persona) wins if ever passed; otherwise fall
+      // back to whatever the user picked via /nexus-persona, otherwise let the SDK's own default
+      // ('nexus-homie') apply exactly as before for anyone who never set a preference.
+      persona: userContext.persona || savedPersona || undefined,
     });
     const reply = data?.response || data?.text || '';
     if (!reply) throw new Error('Empty response from Nexus API');
