@@ -304,6 +304,24 @@ function splitIntoChunks(text, maxLength = 1900) {
   return chunks;
 }
 
+// Stripping the trigger word/mention always assumed "Nexus" was purely a vocative address ("hey
+// Nexus, tell me X" -> "tell me X", grammatically fine with the name gone) — but when it's
+// actually the sentence's SUBJECT ("Nexus is crazy" -> stripped to bare "is crazy"), deleting it
+// leaves a dangling fragment with no subject at all. That fragment then reads to the AI backend's
+// own intent classifier as if "is" were a real question's leading word ("is the sky blue"-shaped),
+// not the statement "[Nexus] is crazy" it actually was — reported live, "Nexus is crazy" went out
+// as just "is crazy" and got misrouted into a corpus/web lookup. If what's left after stripping
+// starts with a linking verb, the name was standing in subject position, so it's put back rather
+// than left implicit.
+const LEADING_LINKING_VERB = /^(?:is|are|was|were|seems?|looks?|sounds?|appears?)\b/i;
+function restoreSubjectIfStripped(question) {
+  const trimmedQuestion = (question || '').trim();
+  if (LEADING_LINKING_VERB.test(trimmedQuestion)) {
+    return `Nexus ${trimmedQuestion}`;
+  }
+  return question;
+}
+
 /**
  * Parses a message to check if it's addressing Nexus via name, greeting prefixes, or pings.
  */
@@ -319,7 +337,7 @@ export function parseNexusTrigger(content, botUserId = null) {
     if (botMentionPattern.test(trimmed)) {
       const cleanContent = trimmed.replace(new RegExp(`<@!?${botUserId}>`, 'gi'), '').trim();
       const strippedGreetings = cleanContent.replace(/^(?:hey+|hello|hi+|yo+|sup|what(?:'?s|\s+is)\s+up|salut|bonjour|coucou|good\s+(?:morning|evening|afternoon|day)|ok(?:ay)?|ay+)[\s,:!?-]*/is, '').trim();
-      return { matched: true, question: strippedGreetings };
+      return { matched: true, question: restoreSubjectIfStripped(strippedGreetings) };
     }
   }
 
@@ -328,7 +346,7 @@ export function parseNexusTrigger(content, botUserId = null) {
   const prefixRegex = /^\s*(?:(?:hey+|hello|hi+|yo+|sup|what(?:'?s|\s+is)\s+up|salut|bonjour|coucou|good\s+(?:morning|evening|afternoon|day)|ok(?:ay)?|ay+)\s+)?\bnexus\b[\s,:!?\-]*(.*)$/is;
   const prefixMatch = trimmed.match(prefixRegex);
   if (prefixMatch) {
-    return { matched: true, question: prefixMatch[1] || '' };
+    return { matched: true, question: restoreSubjectIfStripped(prefixMatch[1] || '') };
   }
 
   // 3. Ends with "nexus" as a distinct word (e.g. "what is 2+2 nexus?")
