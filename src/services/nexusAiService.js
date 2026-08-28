@@ -2,7 +2,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 import { logger } from '../utils/logger.js';
 import { NexusAI } from '../../nexus-ai.js';
-import { logTelemetry, logCrash, logPersonaTrigger } from './aiTelemetryService.js';
+import { logTelemetry, logCrash, logPersonaTrigger, logNegativeFeedback } from './aiTelemetryService.js';
 import { getUserMemories, saveUserMemory } from './memoryBrainService.js';
 import { checkRateLimit } from '../utils/rateLimiter.js';
 
@@ -39,6 +39,29 @@ const disabledGuilds = new Set(); // targetId (guildId or channelId) -> boolean
 const CHANNEL_HISTORY = new Map(); // channelId -> {id, role, content, timestamp}[]
 const CHANNEL_HISTORY_MAX_CHANNELS = 500;
 const CHANNEL_HISTORY_MAX_TURNS = 6; // user+assistant pairs
+
+// 👎-reaction feedback — the only way a bad AI answer ever got noticed before this was someone
+// remembering to screenshot it and complain manually. Every real AI reply gets tracked here
+// (question + answer) for a bounded window, keyed by the bot's own reply message id, so
+// messageReactionAdd.js can look up what was actually said when a member downvotes it and post
+// the full pair to a dedicated log channel instead of the reaction just vanishing into nothing.
+// Same bounded insertion-order eviction as CHANNEL_HISTORY above — this never needs to remember a
+// reply forever, only long enough for someone to plausibly react to it.
+const RECENT_AI_REPLIES = new Map(); // messageId -> { question, answer, guildId }
+const RECENT_AI_REPLIES_MAX = 1000;
+
+export function trackAiReply(messageId, question, answer, guildId) {
+  if (!messageId) return;
+  if (!RECENT_AI_REPLIES.has(messageId) && RECENT_AI_REPLIES.size >= RECENT_AI_REPLIES_MAX) {
+    const oldestKey = RECENT_AI_REPLIES.keys().next().value;
+    if (oldestKey !== undefined) RECENT_AI_REPLIES.delete(oldestKey);
+  }
+  RECENT_AI_REPLIES.set(messageId, { question, answer, guildId });
+}
+
+export function getTrackedAiReply(messageId) {
+  return RECENT_AI_REPLIES.get(messageId) || null;
+}
 
 // Per-user persona customization — every one of the 12.2k members previously got the identical
 // hardcoded 'nexus-homie' persona with zero say in the matter (the only special case in the whole
@@ -472,12 +495,13 @@ export async function handleNexusAiMessage(message) {
     }
 
     const chunks = splitIntoChunks(answer);
+    let firstReplyMsg;
     if (chunks.length === 1) {
-      await message.reply({
+      firstReplyMsg = await message.reply({
         content: chunks[0]
       });
     } else {
-      await message.reply({
+      firstReplyMsg = await message.reply({
         content: chunks[0]
       });
       for (let i = 1; i < chunks.length; i++) {
@@ -486,6 +510,16 @@ export async function handleNexusAiMessage(message) {
         });
       }
     }
+
+    // Track this reply for 👎-reaction feedback and add the reaction options — best-effort, a
+    // missing REACT_EXTERNAL_EMOJIS permission or any other failure here should never affect the
+    // reply the user already received.
+    if (firstReplyMsg) {
+      trackAiReply(firstReplyMsg.id, question, answer, message.guild?.id);
+      firstReplyMsg.react('👍').catch(() => {});
+      firstReplyMsg.react('👎').catch(() => {});
+    }
+
     return true;
   } catch (error) {
     logger.error('[Nexus AI] Error handling message:', error);

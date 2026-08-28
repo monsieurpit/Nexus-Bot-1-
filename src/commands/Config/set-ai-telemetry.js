@@ -10,6 +10,7 @@ const CHANNEL_OPTIONS = [
     { name: 'jailbreak-stress-test', configKey: 'jailbreakStressTestChannelId', description: 'Channel for #jailbreak-stress-test (meltdown/swear-floor triggers)' },
     { name: 'announcements', configKey: 'announcementsChannelId', description: 'Channel for /announce' },
     { name: 'benchmark-suite', configKey: 'benchmarkSuiteChannelId', description: 'Channel for /benchmark cross-posting' },
+    { name: 'negative-feedback', configKey: 'negativeFeedbackChannelId', description: 'Channel for 👎-reacted AI replies (question + answer, for corpus fixes)' },
 ];
 
 // Guild-only test-server tooling — never registered globally, same as announce.js/benchmark.js.
@@ -31,6 +32,7 @@ export default {
                 .addChannelOption(o => o.setName('jailbreak-stress-test').setDescription(CHANNEL_OPTIONS[2].description).addChannelTypes(ChannelType.GuildText).setRequired(false))
                 .addChannelOption(o => o.setName('announcements').setDescription(CHANNEL_OPTIONS[3].description).addChannelTypes(ChannelType.GuildText).setRequired(false))
                 .addChannelOption(o => o.setName('benchmark-suite').setDescription(CHANNEL_OPTIONS[4].description).addChannelTypes(ChannelType.GuildText).setRequired(false))
+                .addChannelOption(o => o.setName('negative-feedback').setDescription(CHANNEL_OPTIONS[5].description).addChannelTypes(ChannelType.GuildText).setRequired(false))
         )
         .addSubcommand(subcommand =>
             subcommand

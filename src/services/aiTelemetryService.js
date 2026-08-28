@@ -108,6 +108,35 @@ export async function logCrash(client, guildId, { input, error, source } = {}) {
 }
 
 /**
+ * #negative-feedback — fired when a member 👎-reacts to a Nexus AI reply. This is the only signal
+ * this bot had for "the AI got something wrong" was scrolling raw chat logs looking for
+ * complaints — a 👎 reaction is a direct, low-friction way for any member to flag a bad answer,
+ * and posting the full question+answer pair here gives whoever maintains the corpus a ready-made
+ * list of real gaps to go fix, instead of relying on someone remembering to report it.
+ */
+export async function logNegativeFeedback(client, guildId, { question, answer, reactedBy, messageUrl } = {}) {
+  try {
+    const channel = await resolveLogChannel(client, guildId, 'negativeFeedbackChannelId');
+    if (!channel) return;
+
+    const embed = createEmbed({
+      title: '👎 AI Reply Flagged',
+      color: 'warning',
+      fields: [
+        { name: 'Flagged by', value: reactedBy ? `<@${reactedBy}>` : 'n/a', inline: true },
+        ...(messageUrl ? [{ name: 'Message', value: messageUrl, inline: true }] : []),
+        { name: 'Question', value: truncateField(question, 500) },
+        { name: 'Answer', value: truncateField(answer, 900) },
+      ],
+    });
+
+    await channel.send({ embeds: [embed] });
+  } catch (error) {
+    logger.warn(`[AI Telemetry] logNegativeFeedback failed: ${error.message}`);
+  }
+}
+
+/**
  * #jailbreak-stress-test — persona state triggers only: fired specifically when Meltdown/CAPS
  * mode activates or the swear floor override actually had to step in. Deliberately NOT a full
  * stream of every response (that's #bot-logs) — callers should only invoke this when the relevant
