@@ -358,23 +358,7 @@ router.post('/raidshield', authenticateApiKey, async (req, res) => {
     const text = (messageText || '').trim();
 
     const queuedExecution = await globalAiQueue.enqueue(async () => {
-      try {
-        const result = await nexusClient.checkSecurity({
-          messageText: text,
-          authorId,
-          imageUrl: typeof finalImage === 'string' && finalImage.startsWith('http') ? finalImage : undefined,
-          imageData: typeof finalImage === 'string' && !finalImage.startsWith('http') ? finalImage : undefined,
-        });
-        return {
-          classification: result.classification,
-          confidence: result.confidence,
-          reason: result.reason,
-          actionRecommended: result.actionRecommended || (result.classification === 'safe' ? 'NONE' : 'FLAG_FOR_REVIEW'),
-        };
-      } catch (err) {
-        console.warn('[RaidShield] Real engine call failed, using local heuristic fallback:', err.message);
-        return localHeuristicClassify(text, Boolean(finalImage));
-      }
+      return localHeuristicClassify(text, Boolean(finalImage));
     });
 
     return res.json({

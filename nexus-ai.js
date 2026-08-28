@@ -209,19 +209,85 @@ export class NexusAI {
     };
   }
 
-  // Every fetch() in this SDK previously had no timeout at all — a stalled backend (e.g. the
-  // shared Ollama queue backing up) left the underlying socket open indefinitely, bounded only by
-  // Node's own default (which can be minutes), so a Discord user's message could hang far longer
-  // than any reasonable wait. The server's own request queue already gives up on a stuck task
-  // after 45s, so 50s here gives it a moment to actually respond with that failure first.
-  async _fetchWithTimeout(url, options = {}, timeoutMs = 50000) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      return await fetch(url, { ...options, signal: controller.signal });
-    } finally {
-      clearTimeout(timer);
+  // Resilient HTTP fetcher with per-request timeout and automatic retries for transient
+  // gateway/network errors (HTTP 502/503/504/520-524/429 and network disconnects) common on
+  // cloud platforms like Railway.
+  async _fetchWithTimeout(url, options = {}, timeoutMs = 50000, maxRetries = 2) {
+    const isRetryableStatus = (status) =>
+      status === 429 ||
+      status === 500 ||
+      status === 502 ||
+      status === 503 ||
+      status === 504 ||
+      (status >= 520 && status <= 524);
+
+    let lastRes = null;
+    let lastError = null;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const res = await fetch(url, { ...options, signal: controller.signal });
+        clearTimeout(timer);
+
+        if (res.ok) {
+          return res;
+        }
+
+        if (!isRetryableStatus(res.status) || attempt === maxRetries) {
+          return res;
+        }
+
+        lastRes = res;
+        const delayMs = Math.min(2000, Math.pow(2, attempt) * 200 + Math.floor(Math.random() * 100));
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      } catch (err) {
+        clearTimeout(timer);
+        lastError = err;
+        if (attempt === maxRetries) {
+          throw err;
+        }
+        const delayMs = Math.min(2000, Math.pow(2, attempt) * 200 + Math.floor(Math.random() * 100));
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
     }
+
+    if (lastRes) return lastRes;
+    throw lastError || new Error(`Request failed after ${maxRetries} retries`);
+  }
+
+  /**
+   * Safely parses an HTTP fetch response, cleanly handling HTML or non-JSON payloads.
+   * @private
+   */
+  async _parseResponse(res, contextName = 'Nexus API') {
+    if (!res.ok) {
+      let errText = '';
+      if (typeof res.text === 'function') {
+        errText = await res.text().catch(() => '');
+      }
+      throw new Error(`${contextName} HTTP ${res.status}: ${errText.slice(0, 100) || res.statusText || 'Request failed'}`);
+    }
+
+    if (typeof res.text === 'function') {
+      const contentType = res.headers?.get?.('content-type') || '';
+      const text = await res.text();
+      if (typeof text === 'string' && text.trim().startsWith('<') && !contentType.includes('application/json')) {
+        throw new Error(`${contextName} returned HTML instead of JSON (HTTP ${res.status}): ${text.slice(0, 80)}...`);
+      }
+      try {
+        return JSON.parse(text);
+      } catch (parseErr) {
+        throw new Error(`${contextName} invalid JSON response: ${parseErr.message}`);
+      }
+    }
+
+    if (typeof res.json === 'function') {
+      return await res.json();
+    }
+
+    return res;
   }
 
   /**
@@ -245,8 +311,7 @@ export class NexusAI {
       method: 'GET',
       headers: this._getHeaders(),
     });
-    if (!res.ok) throw new Error(`Failed to fetch settings: HTTP ${res.status}`);
-    return await res.json();
+    return await this._parseResponse(res, 'Settings API');
   }
 
   /**
@@ -266,8 +331,7 @@ export class NexusAI {
       headers: this._getHeaders(),
       body: JSON.stringify(updates),
     });
-    if (!res.ok) throw new Error(`Failed to update settings: HTTP ${res.status}`);
-    return await res.json();
+    return await this._parseResponse(res, 'Settings API');
   }
 
   /**
@@ -278,8 +342,7 @@ export class NexusAI {
       method: 'GET',
       headers: this._getHeaders(),
     });
-    if (!res.ok) throw new Error(`Failed to list personas: HTTP ${res.status}`);
-    return await res.json();
+    return await this._parseResponse(res, 'Personas API');
   }
 
   /**
@@ -290,8 +353,7 @@ export class NexusAI {
       method: 'GET',
       headers: this._getHeaders(),
     });
-    if (!res.ok) throw new Error(`Failed to list models: HTTP ${res.status}`);
-    return await res.json();
+    return await this._parseResponse(res, 'Models API');
   }
 
   /**
@@ -302,8 +364,7 @@ export class NexusAI {
       method: 'GET',
       headers: this._getHeaders(),
     });
-    if (!res.ok) throw new Error(`Failed to get active persona: HTTP ${res.status}`);
-    return await res.json();
+    return await this._parseResponse(res, 'Persona API');
   }
 
   /**
@@ -316,8 +377,7 @@ export class NexusAI {
       headers: this._getHeaders(),
       body: JSON.stringify({ persona }),
     });
-    if (!res.ok) throw new Error(`Failed to switch server persona: HTTP ${res.status}`);
-    return await res.json();
+    return await this._parseResponse(res, 'Persona API');
   }
 
   // ----------------------------------------------------
@@ -407,12 +467,7 @@ export class NexusAI {
       body: JSON.stringify(payload),
     });
 
-    if (!res.ok) {
-      const errText = await res.text().catch(() => '');
-      throw new Error(`Nexus API HTTP ${res.status}: ${errText || res.statusText}`);
-    }
-
-    return await res.json();
+    return await this._parseResponse(res, 'Nexus API');
   }
 
   /**
@@ -460,8 +515,7 @@ export class NexusAI {
       headers: this._getHeaders(),
       body: JSON.stringify({ expression }),
     });
-    if (!res.ok) throw new Error(`Math API HTTP ${res.status}`);
-    return await res.json();
+    return await this._parseResponse(res, 'Math API');
   }
 
   /**
@@ -494,8 +548,7 @@ export class NexusAI {
       headers: this._getHeaders(),
       body: JSON.stringify({ text }),
     });
-    if (!res.ok) throw new Error(`Entities API HTTP ${res.status}`);
-    return await res.json();
+    return await this._parseResponse(res, 'Entities API');
   }
 
   // ----------------------------------------------------
@@ -521,8 +574,7 @@ export class NexusAI {
         limit: opts.limit || 5,
       }),
     });
-    if (!res.ok) throw new Error(`Web Search API HTTP ${res.status}`);
-    return await res.json();
+    return await this._parseResponse(res, 'Web Search API');
   }
 
   /**
@@ -565,8 +617,7 @@ export class NexusAI {
         neverSwear: Boolean(opts.neverSwear),
       }),
     });
-    if (!res.ok) throw new Error(`Swear API HTTP ${res.status}`);
-    return await res.json();
+    return await this._parseResponse(res, 'Swear API');
   }
 
   // ----------------------------------------------------
@@ -660,8 +711,7 @@ export class NexusAI {
       method: 'GET',
       headers: this._getHeaders(),
     });
-    if (!res.ok) throw new Error(`Failed to list documents: HTTP ${res.status}`);
-    return await res.json();
+    return await this._parseResponse(res, 'Documents API');
   }
 
   /**
@@ -694,8 +744,7 @@ export class NexusAI {
       headers: this._getHeaders(),
       body: JSON.stringify({ query: opts.query || opts.q, limit: opts.limit || opts.topK || 5 }),
     });
-    if (!res.ok) throw new Error(`Failed to search documents: HTTP ${res.status}`);
-    return await res.json();
+    return await this._parseResponse(res, 'Documents Search API');
   }
 
   /**
@@ -720,8 +769,7 @@ export class NexusAI {
       headers: this._getHeaders(),
       body: JSON.stringify({ title, content, category, keywords }),
     });
-    if (!res.ok) throw new Error(`Failed to add document: HTTP ${res.status}`);
-    return await res.json();
+    return await this._parseResponse(res, 'Documents API');
   }
 
   /**
@@ -733,8 +781,7 @@ export class NexusAI {
       method: 'DELETE',
       headers: this._getHeaders(),
     });
-    if (!res.ok) throw new Error(`Failed to delete document: HTTP ${res.status}`);
-    return await res.json();
+    return await this._parseResponse(res, 'Documents API');
   }
 
   /**
@@ -745,8 +792,7 @@ export class NexusAI {
       method: 'GET',
       headers: this._getHeaders(),
     });
-    if (!res.ok) throw new Error(`Failed to get corpus stats: HTTP ${res.status}`);
-    return await res.json();
+    return await this._parseResponse(res, 'Corpus API');
   }
 
   // ----------------------------------------------------
@@ -778,11 +824,7 @@ export class NexusAI {
       headers: this._getHeaders(),
       body: JSON.stringify({ messageText, authorId, imageUrl, imageData }),
     });
-    if (!res.ok) {
-      const errText = await res.text().catch(() => '');
-      throw new Error(`RaidShield API HTTP ${res.status}: ${errText || res.statusText}`);
-    }
-    return await res.json();
+    return await this._parseResponse(res, 'RaidShield API');
   }
 
   /**
@@ -814,11 +856,7 @@ export class NexusAI {
       headers: this._getHeaders(),
       body: JSON.stringify({ imageUrl, imageData, prompt, mode }),
     });
-    if (!res.ok) {
-      const errText = await res.text().catch(() => '');
-      throw new Error(`Vision API error HTTP ${res.status}: ${errText || res.statusText}`);
-    }
-    return await res.json();
+    return await this._parseResponse(res, 'Vision API');
   }
 
   /**
@@ -840,8 +878,7 @@ export class NexusAI {
       method: 'GET',
       headers: this._getHeaders(),
     });
-    if (!res.ok) throw new Error(`Failed to fetch SDK rules: HTTP ${res.status}`);
-    return await res.json();
+    return await this._parseResponse(res, 'SDK Rules API');
   }
 
   /**
@@ -857,8 +894,7 @@ export class NexusAI {
       headers: this._getHeaders(),
       body: JSON.stringify({ text, rules, isSuperChillUser }),
     });
-    if (!res.ok) throw new Error(`Failed to enforce rules: HTTP ${res.status}`);
-    return await res.json();
+    return await this._parseResponse(res, 'SDK Rules API');
   }
 
   // ----------------------------------------------------
@@ -875,8 +911,7 @@ export class NexusAI {
       headers: this._getHeaders(),
       body: JSON.stringify(options),
     });
-    if (!res.ok) throw new Error(`Generate API HTTP ${res.status}`);
-    return await res.json();
+    return await this._parseResponse(res, 'Generate API');
   }
 
   /**
@@ -889,8 +924,7 @@ export class NexusAI {
       headers: this._getHeaders(),
       body: JSON.stringify(options),
     });
-    if (!res.ok) throw new Error(`Chat Completions HTTP ${res.status}`);
-    return await res.json();
+    return await this._parseResponse(res, 'Chat Completions API');
   }
 
   // ----------------------------------------------------
@@ -905,8 +939,7 @@ export class NexusAI {
       method: 'GET',
       headers: this._getHeaders(),
     });
-    if (!res.ok) throw new Error(`Auth verification failed with status ${res.status}`);
-    return await res.json();
+    return await this._parseResponse(res, 'Auth Verify API');
   }
 
   /**
@@ -917,8 +950,7 @@ export class NexusAI {
       method: 'GET',
       headers: this._getHeaders(),
     });
-    if (!res.ok) throw new Error(`Failed to list keys: HTTP ${res.status}`);
-    return await res.json();
+    return await this._parseResponse(res, 'Keys API');
   }
 
   /**
@@ -931,8 +963,7 @@ export class NexusAI {
       headers: this._getHeaders(),
       body: JSON.stringify({ label }),
     });
-    if (!res.ok) throw new Error(`Failed to generate key: HTTP ${res.status}`);
-    return await res.json();
+    return await this._parseResponse(res, 'Keys API');
   }
 
   /**
@@ -948,8 +979,7 @@ export class NexusAI {
       headers: this._getHeaders(),
       body: JSON.stringify(updates),
     });
-    if (!res.ok) throw new Error(`Failed to update key: HTTP ${res.status}`);
-    return await res.json();
+    return await this._parseResponse(res, 'Keys API');
   }
 
   /**
@@ -960,8 +990,7 @@ export class NexusAI {
       method: 'GET',
       headers: this._getHeaders(),
     });
-    if (!res.ok) throw new Error(`Failed to get queue status: HTTP ${res.status}`);
-    return await res.json();
+    return await this._parseResponse(res, 'Queue Status API');
   }
 
   /**
@@ -974,8 +1003,7 @@ export class NexusAI {
       method: 'GET',
       headers: this._getHeaders(),
     });
-    if (!res.ok) throw new Error(`Failed to get health: HTTP ${res.status}`);
-    return await res.json();
+    return await this._parseResponse(res, 'Health API');
   }
 }
 

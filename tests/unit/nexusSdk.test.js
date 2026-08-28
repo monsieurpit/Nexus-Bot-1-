@@ -100,3 +100,29 @@ test('NexusAI stateful chat session creation and history', async (t) => {
   session.clearHistory();
   assert.deepEqual(session.getHistory(), []);
 });
+
+test('NexusAI retries and recovers from transient HTTP 502 error', async (t) => {
+  const client = new NexusAI();
+  let callCount = 0;
+
+  t.mock.method(global, 'fetch', async () => {
+    callCount++;
+    if (callCount === 1) {
+      return {
+        ok: false,
+        status: 502,
+        statusText: 'Bad Gateway',
+        text: async () => JSON.stringify({ status: 'error', code: 502, message: 'Application failed to respond' }),
+      };
+    }
+    return {
+      ok: true,
+      json: async () => ({ response: 'recovered after retry!' }),
+    };
+  });
+
+  const res = await client.askJSON({ prompt: 'test 502 recovery' });
+  assert.equal(callCount, 2);
+  assert.equal(res.response, 'recovered after retry!');
+});
+

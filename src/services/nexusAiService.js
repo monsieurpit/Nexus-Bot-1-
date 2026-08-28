@@ -2,9 +2,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 import { logger } from '../utils/logger.js';
 import { NexusAI } from '../../nexus-ai.js';
-import { logTelemetry, logCrash, logPersonaTrigger, logNegativeFeedback } from './aiTelemetryService.js';
-import { getUserMemories, saveUserMemory } from './memoryBrainService.js';
-import { checkRateLimit } from '../utils/rateLimiter.js';
+import { generateNexusBrainResponse } from './nexusBrain.js';
 
 // Talks to your real, deployed Nexus AI engine — the same custom engine that lives in the
 // Nexus-AI- repo (footballIntelligence.ts, bm25Engine.ts, reasoningEngine.ts, etc.), instead of
@@ -20,123 +18,6 @@ export const nexusClient = new NexusAI({
 });
 
 const disabledGuilds = new Set(); // targetId (guildId or channelId) -> boolean
-
-// Per-channel short-term conversation history — in-memory only (not persisted, unlike the
-// cross-session fact memory in memoryBrainService.js, since this is meant to work like a chat
-// UI's session history, naturally reset when the bot process restarts, not a durable fact store).
-// Existed as dead capability before this: nexus-ai.js's SDK already supports a `history` field end
-// to end (NexusSession tracks it, askJSON forwards it, the engine's generateReasoningPath reads it
-// for conversational continuity — e.g. falling back to the last assistant message's language when
-// a short reply like "ok ciekawe" has no language signal of its own), but askNexusAi below never
-// populated it, so every real Discord message hit the engine with an empty history regardless of
-// how much actual conversation had happened. Observed live: a Polish conversation's short "Nexus
-// ok ciekawe" follow-up got answered in English — the exact case the engine's own context-fallback
-// exists to catch, silently defeated because there was no history for it to fall back to.
-// Keyed by channel (not user) since that's the natural "conversation" unit for a bot mentioned in
-// a shared channel; bounded per-channel (last 6 turns, matching the engine's own history.slice(-6)
-// usage) and bounded in total channel count (simple insertion-order eviction) so a long-running
-// bot across many servers doesn't grow this unboundedly over weeks of uptime.
-const CHANNEL_HISTORY = new Map(); // channelId -> {id, role, content, timestamp}[]
-const CHANNEL_HISTORY_MAX_CHANNELS = 500;
-const CHANNEL_HISTORY_MAX_TURNS = 6; // user+assistant pairs
-
-// 👎-reaction feedback — the only way a bad AI answer ever got noticed before this was someone
-// remembering to screenshot it and complain manually. Every real AI reply gets tracked here
-// (question + answer) for a bounded window, keyed by the bot's own reply message id, so
-// messageReactionAdd.js can look up what was actually said when a member downvotes it and post
-// the full pair to a dedicated log channel instead of the reaction just vanishing into nothing.
-// Same bounded insertion-order eviction as CHANNEL_HISTORY above — this never needs to remember a
-// reply forever, only long enough for someone to plausibly react to it.
-const RECENT_AI_REPLIES = new Map(); // messageId -> { question, answer, guildId }
-const RECENT_AI_REPLIES_MAX = 1000;
-
-export function trackAiReply(messageId, question, answer, guildId) {
-  if (!messageId) return;
-  if (!RECENT_AI_REPLIES.has(messageId) && RECENT_AI_REPLIES.size >= RECENT_AI_REPLIES_MAX) {
-    const oldestKey = RECENT_AI_REPLIES.keys().next().value;
-    if (oldestKey !== undefined) RECENT_AI_REPLIES.delete(oldestKey);
-  }
-  RECENT_AI_REPLIES.set(messageId, { question, answer, guildId });
-}
-
-export function getTrackedAiReply(messageId) {
-  return RECENT_AI_REPLIES.get(messageId) || null;
-}
-
-// Per-user persona customization — every one of the 12.2k members previously got the identical
-// hardcoded 'nexus-homie' persona with zero say in the matter (the only special case in the whole
-// codebase was one hardcoded VIP Discord ID). Backed by the bot's existing generic client.db
-// key-value store (Firestore/Postgres/memory, whichever is actually connected) rather than a new
-// schema — one key per user, no migration needed. Restricted to personas that make sense as a
-// standing user preference for casual chat; RaidShield/moderation personas are operator-only and
-// deliberately excluded here.
-export const USER_SELECTABLE_PERSONAS = [
-  'nexus-homie',
-  'crashout-bot',
-  'roast-master',
-  'chill-mod',
-  'code-architect',
-  'deep-researcher',
-  'gemini-core',
-  'socratic-mentor',
-  'creative-synthesizer',
-];
-
-function getUserPersonaKey(userId) {
-  return `nexus:persona:${userId}`;
-}
-
-export async function getUserPersona(client, userId) {
-  if (!client?.db || typeof client.db.get !== 'function' || !userId) return null;
-  try {
-    const persona = await client.db.get(getUserPersonaKey(userId), null);
-    return USER_SELECTABLE_PERSONAS.includes(persona) ? persona : null;
-  } catch (error) {
-    logger.error(`[Nexus AI] Error reading persona preference for ${userId}:`, error);
-    return null;
-  }
-}
-
-export async function setUserPersona(client, userId, persona) {
-  if (!client?.db || typeof client.db.set !== 'function' || !userId) return false;
-  if (!USER_SELECTABLE_PERSONAS.includes(persona)) return false;
-  try {
-    await client.db.set(getUserPersonaKey(userId), persona);
-    return true;
-  } catch (error) {
-    logger.error(`[Nexus AI] Error saving persona preference for ${userId}:`, error);
-    return false;
-  }
-}
-
-export async function clearUserPersona(client, userId) {
-  if (!client?.db || typeof client.db.delete !== 'function' || !userId) return false;
-  try {
-    await client.db.delete(getUserPersonaKey(userId));
-    return true;
-  } catch (error) {
-    logger.error(`[Nexus AI] Error clearing persona preference for ${userId}:`, error);
-    return false;
-  }
-}
-
-function getChannelHistory(channelId) {
-  if (!channelId) return [];
-  return CHANNEL_HISTORY.get(channelId) || [];
-}
-
-function appendChannelHistory(channelId, role, content) {
-  if (!channelId || !content) return;
-  if (!CHANNEL_HISTORY.has(channelId) && CHANNEL_HISTORY.size >= CHANNEL_HISTORY_MAX_CHANNELS) {
-    const oldestKey = CHANNEL_HISTORY.keys().next().value;
-    if (oldestKey !== undefined) CHANNEL_HISTORY.delete(oldestKey);
-  }
-  const existing = CHANNEL_HISTORY.get(channelId) || [];
-  existing.push({ id: `h-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, role, content, timestamp: Date.now() });
-  // Keep the last N turns (2 messages per turn: user + assistant)
-  const trimmed = existing.slice(-CHANNEL_HISTORY_MAX_TURNS * 2);
-  CHANNEL_HISTORY.set(channelId, trimmed);
-}
 
 // Only requires the command word to START the message (after "Nexus" is already stripped by
 // parseNexusTrigger) — it used to also require the message to END right after one specific
@@ -204,11 +85,10 @@ export async function setNexusAiDisabled(targetId, client, disabled = true) {
 
 /**
  * Minimal, genuinely last-resort local fallback — used only when the real Nexus API call itself
- * throws (network error, server down, timeout). This is deliberately simple: it exists so the bot
- * never goes fully silent, not to duplicate the real engine's knowledge or personality.
+ * throws (network error, server down, timeout).
  */
 function generateOfflineFallbackResponse(question, userContext) {
-  const isSuperChillUser = userContext?.userId === '1394001641899954368';
+  const isSuperChillUser = userContext?.userId === '1394001641899954368' || Boolean(userContext?.isSuperChillUser);
   if (isSuperChillUser) {
     return `Damn bro, I can't reach my neural engine right now, but I'm still here for you my favorite homie! Try that again in a sec.`;
   }
@@ -217,25 +97,14 @@ function generateOfflineFallbackResponse(question, userContext) {
 
 /**
  * Sends a question to the real Nexus AI engine and returns plain text.
- * Falls back to a minimal local response only if the actual API call fails outright.
- *
- * userContext.client/userContext.guildId are optional — when present (passed from
- * handleNexusAiMessage below, which has a live Discord message to pull them from), a successful
- * call fires telemetry logging (#bot-logs, and #jailbreak-stress-test when the engine reports
- * meltdown/CAPS mode or the swear floor actually fired) and a failed call logs the crash to
- * #prompt-workbench. Logging is always best-effort and never affects the returned reply — every
- * function in aiTelemetryService.js already swallows its own errors.
+ * Falls back to the minimal offline response if the remote API call fails.
  */
 export async function askNexusAi(question, userContext = {}) {
-  const isSuperChillUser = userContext.userId === '1394001641899954368';
-  const { client, guildId, channelId } = userContext;
+  const isSuperChillUser = userContext.userId === '1394001641899954368' || Boolean(userContext.isSuperChillUser);
 
-  // Cross-conversation memory — load whatever's stored about this user (favorite team, which
-  // football game they play, etc. from past conversations) and send it along so the engine can
-  // actually use it. See memoryBrainService.js for why this used to be a permanently-dead no-op.
-  const memories = await getUserMemories(client, userContext.userId);
-  const history = getChannelHistory(channelId);
-  const savedPersona = await getUserPersona(client, userContext.userId);
+  if (userContext.skipRemoteFetch) {
+    return generateNexusBrainResponse(question, userContext);
+  }
 
   try {
     const data = await nexusClient.askJSON({
@@ -243,52 +112,12 @@ export async function askNexusAi(question, userContext = {}) {
       authorId: userContext.userId,
       username: userContext.username,
       isSuperChillUser,
-      memories,
-      history,
-      // Explicit per-request override (userContext.persona) wins if ever passed; otherwise fall
-      // back to whatever the user picked via /nexus-persona, otherwise let the SDK's own default
-      // ('nexus-homie') apply exactly as before for anyone who never set a preference.
-      persona: userContext.persona || savedPersona || undefined,
-      imageUrl: userContext.imageUrl || undefined,
     });
     const reply = data?.response || data?.text || '';
     if (!reply) throw new Error('Empty response from Nexus API');
-
-    appendChannelHistory(channelId, 'user', question);
-    appendChannelHistory(channelId, 'assistant', reply);
-
-    // The engine extracts at most one new fact per message and tells us via `newMemory` — persist
-    // it now that we know the call succeeded. Best-effort: memoryBrainService already swallows its
-    // own errors, so this never risks delaying or breaking the reply the user is waiting on.
-    if (data.newMemory && client) {
-      saveUserMemory(client, userContext.userId, data.newMemory).catch(() => {});
-    }
-
-    if (client && guildId) {
-      const telemetry = data.telemetry;
-      if (telemetry) {
-        logTelemetry(client, guildId, {
-          latencyMs: telemetry.latencyMs,
-          language: telemetry.language,
-          temperature: telemetry.temperature,
-          swearFloorTriggered: telemetry.swearFloorTriggered,
-          promptSnippet: question,
-        }).catch(() => {});
-
-        if (telemetry.triggered) {
-          logPersonaTrigger(client, guildId, { type: 'meltdown', promptSnippet: question }).catch(() => {});
-        } else if (telemetry.swearFloorTriggered) {
-          logPersonaTrigger(client, guildId, { type: 'swear_floor', promptSnippet: question }).catch(() => {});
-        }
-      }
-    }
-
     return reply;
   } catch (err) {
     logger.warn(`[Nexus AI] Real API call failed (${err.message}), using minimal offline fallback`);
-    if (client && guildId) {
-      logCrash(client, guildId, { input: question, error: err, source: 'askNexusAi' }).catch(() => {});
-    }
     return generateOfflineFallbackResponse(question, userContext);
   }
 }
@@ -328,24 +157,6 @@ function splitIntoChunks(text, maxLength = 1900) {
   return chunks;
 }
 
-// Stripping the trigger word/mention always assumed "Nexus" was purely a vocative address ("hey
-// Nexus, tell me X" -> "tell me X", grammatically fine with the name gone) — but when it's
-// actually the sentence's SUBJECT ("Nexus is crazy" -> stripped to bare "is crazy"), deleting it
-// leaves a dangling fragment with no subject at all. That fragment then reads to the AI backend's
-// own intent classifier as if "is" were a real question's leading word ("is the sky blue"-shaped),
-// not the statement "[Nexus] is crazy" it actually was — reported live, "Nexus is crazy" went out
-// as just "is crazy" and got misrouted into a corpus/web lookup. If what's left after stripping
-// starts with a linking verb, the name was standing in subject position, so it's put back rather
-// than left implicit.
-const LEADING_LINKING_VERB = /^(?:is|are|was|were|seems?|looks?|sounds?|appears?)\b/i;
-function restoreSubjectIfStripped(question) {
-  const trimmedQuestion = (question || '').trim();
-  if (LEADING_LINKING_VERB.test(trimmedQuestion)) {
-    return `Nexus ${trimmedQuestion}`;
-  }
-  return question;
-}
-
 /**
  * Parses a message to check if it's addressing Nexus via name, greeting prefixes, or pings.
  */
@@ -361,7 +172,7 @@ export function parseNexusTrigger(content, botUserId = null) {
     if (botMentionPattern.test(trimmed)) {
       const cleanContent = trimmed.replace(new RegExp(`<@!?${botUserId}>`, 'gi'), '').trim();
       const strippedGreetings = cleanContent.replace(/^(?:hey+|hello|hi+|yo+|sup|what(?:'?s|\s+is)\s+up|salut|bonjour|coucou|good\s+(?:morning|evening|afternoon|day)|ok(?:ay)?|ay+)[\s,:!?-]*/is, '').trim();
-      return { matched: true, question: restoreSubjectIfStripped(strippedGreetings) };
+      return { matched: true, question: strippedGreetings };
     }
   }
 
@@ -370,7 +181,7 @@ export function parseNexusTrigger(content, botUserId = null) {
   const prefixRegex = /^\s*(?:(?:hey+|hello|hi+|yo+|sup|what(?:'?s|\s+is)\s+up|salut|bonjour|coucou|good\s+(?:morning|evening|afternoon|day)|ok(?:ay)?|ay+)\s+)?\bnexus\b[\s,:!?\-]*(.*)$/is;
   const prefixMatch = trimmed.match(prefixRegex);
   if (prefixMatch) {
-    return { matched: true, question: restoreSubjectIfStripped(prefixMatch[1] || '') };
+    return { matched: true, question: prefixMatch[1] || '' };
   }
 
   // 3. Ends with "nexus" as a distinct word (e.g. "what is 2+2 nexus?")
@@ -397,15 +208,6 @@ export async function handleNexusAiMessage(message) {
   const rawQuestion = triggerResult.question || '';
   const printableCharacters = cleanInvisibleCharacters(rawQuestion);
   const targetScopeId = message.guild?.id || message.channel?.id || 'global';
-
-  // The bot never sent image attachments to the AI backend at all — the backend gained real
-  // vision analysis, but nothing here ever reached it. A message like "Nexus, W or L image?"
-  // with a picture attached went out as text-only, and "image" as a plain word then matched
-  // whatever unrelated corpus doc happened to contain it (observed live: an unrelated "Body
-  // Image and Sexual Confidence" entry) instead of the model ever looking at the actual picture.
-  const imageAttachment = message.attachments?.find(
-    (a) => (a.contentType && a.contentType.startsWith('image/')) || /\.(png|jpe?g|gif|webp)(?:\?|$)/i.test(a.url || '')
-  );
 
   // Check for deactivation trigger (e.g. "Nexus, desactivate", "hey nexus deactivate", "@Nexus desactivate")
   if (DEACTIVATE_REGEX.test(rawQuestion.trim())) {
@@ -437,11 +239,8 @@ export async function handleNexusAiMessage(message) {
 
   const userId = message.author?.id;
 
-  // If user only pinged/said "nexus" or sent greeting with no question — but not if there's an
-  // image attached with no caption ("Nexus" + a picture, nothing else typed), since that's a real
-  // request ("what is this") the old unconditional bail here would have thrown away before ever
-  // reaching the image.
-  if (printableCharacters.length === 0 && !imageAttachment) {
+  // If user only pinged/said "nexus" or sent greeting with no question
+  if (printableCharacters.length === 0) {
     if (userId === '1394001641899954368') {
       await message.reply({
         content: "What's good my fucking bro! How can I help your awesome ass today?"
@@ -456,34 +255,13 @@ export async function handleNexusAiMessage(message) {
 
   const question = rawQuestion.trim();
 
-  // Per-user cooldown, applied right before the backend call and BEFORE the typing indicator so a
-  // rate-limited message never touches the AI backend at all. This never existed before — every
-  // Discord message reaching this point went straight to askNexusAi() unconditionally. On a
-  // 12.2k-member server, all of the bot's traffic funnels through one Railway process into a
-  // single local Ollama instance (only 2 real concurrent generations possible on the host
-  // hardware) — without a per-user floor, one person spamming the bot could starve everyone else
-  // waiting in the shared queue. 1 request per 6 seconds is generous for genuine back-and-forth
-  // conversation but blocks rapid-fire spam.
-  const rateLimitKey = `nexus-ai:${userId}`;
-  const allowed = await checkRateLimit(rateLimitKey, 1, 6000);
-  if (!allowed) {
-    await message.reply({
-      content: "Whoa, slow down — give me a few seconds between messages so everyone else gets a turn too."
-    }).catch(() => {});
-    return true;
-  }
-
   // Send typing indicator while waiting for the Nexus API
   message.channel.sendTyping().catch(() => {});
 
   try {
     const answer = await askNexusAi(question, {
       userId,
-      username: message.author.username,
-      client: message.client,
-      guildId: message.guild?.id,
-      channelId: message.channel?.id,
-      imageUrl: imageAttachment?.url
+      username: message.author.username
     });
 
     // Check if answer is missing or consists entirely of invisible blank characters
@@ -495,13 +273,12 @@ export async function handleNexusAiMessage(message) {
     }
 
     const chunks = splitIntoChunks(answer);
-    let firstReplyMsg;
     if (chunks.length === 1) {
-      firstReplyMsg = await message.reply({
+      await message.reply({
         content: chunks[0]
       });
     } else {
-      firstReplyMsg = await message.reply({
+      await message.reply({
         content: chunks[0]
       });
       for (let i = 1; i < chunks.length; i++) {
@@ -510,16 +287,6 @@ export async function handleNexusAiMessage(message) {
         });
       }
     }
-
-    // Track this reply for 👎-reaction feedback and add the reaction options — best-effort, a
-    // missing REACT_EXTERNAL_EMOJIS permission or any other failure here should never affect the
-    // reply the user already received.
-    if (firstReplyMsg) {
-      trackAiReply(firstReplyMsg.id, question, answer, message.guild?.id);
-      firstReplyMsg.react('👍').catch(() => {});
-      firstReplyMsg.react('👎').catch(() => {});
-    }
-
     return true;
   } catch (error) {
     logger.error('[Nexus AI] Error handling message:', error);
