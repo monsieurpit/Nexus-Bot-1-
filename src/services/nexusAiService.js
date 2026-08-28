@@ -226,6 +226,7 @@ export async function askNexusAi(question, userContext = {}) {
       // back to whatever the user picked via /nexus-persona, otherwise let the SDK's own default
       // ('nexus-homie') apply exactly as before for anyone who never set a preference.
       persona: userContext.persona || savedPersona || undefined,
+      imageUrl: userContext.imageUrl || undefined,
     });
     const reply = data?.response || data?.text || '';
     if (!reply) throw new Error('Empty response from Nexus API');
@@ -374,6 +375,15 @@ export async function handleNexusAiMessage(message) {
   const printableCharacters = cleanInvisibleCharacters(rawQuestion);
   const targetScopeId = message.guild?.id || message.channel?.id || 'global';
 
+  // The bot never sent image attachments to the AI backend at all — the backend gained real
+  // vision analysis, but nothing here ever reached it. A message like "Nexus, W or L image?"
+  // with a picture attached went out as text-only, and "image" as a plain word then matched
+  // whatever unrelated corpus doc happened to contain it (observed live: an unrelated "Body
+  // Image and Sexual Confidence" entry) instead of the model ever looking at the actual picture.
+  const imageAttachment = message.attachments?.find(
+    (a) => (a.contentType && a.contentType.startsWith('image/')) || /\.(png|jpe?g|gif|webp)(?:\?|$)/i.test(a.url || '')
+  );
+
   // Check for deactivation trigger (e.g. "Nexus, desactivate", "hey nexus deactivate", "@Nexus desactivate")
   if (DEACTIVATE_REGEX.test(rawQuestion.trim())) {
     await setNexusAiDisabled(targetScopeId, message.client, true);
@@ -404,8 +414,11 @@ export async function handleNexusAiMessage(message) {
 
   const userId = message.author?.id;
 
-  // If user only pinged/said "nexus" or sent greeting with no question
-  if (printableCharacters.length === 0) {
+  // If user only pinged/said "nexus" or sent greeting with no question — but not if there's an
+  // image attached with no caption ("Nexus" + a picture, nothing else typed), since that's a real
+  // request ("what is this") the old unconditional bail here would have thrown away before ever
+  // reaching the image.
+  if (printableCharacters.length === 0 && !imageAttachment) {
     if (userId === '1394001641899954368') {
       await message.reply({
         content: "What's good my fucking bro! How can I help your awesome ass today?"
@@ -446,7 +459,8 @@ export async function handleNexusAiMessage(message) {
       username: message.author.username,
       client: message.client,
       guildId: message.guild?.id,
-      channelId: message.channel?.id
+      channelId: message.channel?.id,
+      imageUrl: imageAttachment?.url
     });
 
     // Check if answer is missing or consists entirely of invisible blank characters
