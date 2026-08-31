@@ -324,9 +324,15 @@ export class AiModerationService {
       };
     } catch (error) {
       logger.error('Error getting AI moderation config:', error);
+      // Matches the happy-path default (0.90) instead of the looser 0.80 this used to fall back
+      // to - a transient DB error is exactly the wrong moment to make AI moderation MORE
+      // trigger-happy than normal. Note: since `enabled: false` below already short-circuits
+      // processMessage() before confidenceThreshold is ever read, this specific mismatch had no
+      // actual behavioral impact today - fixed anyway so the two branches don't silently drift
+      // further apart, and so this doesn't become a real bug if `enabled` here ever changes.
       return {
         enabled: false,
-        confidenceThreshold: 0.80,
+        confidenceThreshold: 0.90,
         scanImages: true,
         alertChannelId: null,
         trustedRoles: [],

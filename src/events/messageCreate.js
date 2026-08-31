@@ -22,6 +22,10 @@ const MESSAGE_XP_RATE_LIMIT_WINDOW_MS = 10000;
 export default {
   name: Events.MessageCreate,
   async execute(message, client) {
+    // Declared here, outside the try block, so the finally clause below can see it regardless
+    // of which of the try body's early returns (bot author, DM) fires before the patch below is
+    // even reached — a `const` declared inside try{} isn't visible from a sibling finally{}.
+    let originalReply;
     try {
       if (message.author.bot) return;
 
@@ -38,8 +42,17 @@ export default {
       // Monkey-patch message.reply so the first call wins and subsequent ones are no-ops.
       // The flag is set synchronously before the async Discord API call so that any
       // concurrent callers see hasReplied = true immediately, eliminating race conditions.
+      //
+      // Found by a code review: this used to never be undone, permanently overwriting .reply on
+      // the actual, Discord.js-cached Message object (not a local copy) - after this handler ran
+      // once, ANY future code that fetched this exact message from `channel.messages.cache` by
+      // id and called .reply() on it would get a silent no-op forever, since the closure's own
+      // repliedMessages WeakMap already had this message flagged. Restored in the finally clause
+      // below instead, so the patch only lives for the duration of this one invocation - real
+      // dedup while this handler's async work is in flight, no permanent mutation of a shared
+      // object afterward.
       const repliedMessages = new WeakMap();
-      const originalReply = message.reply.bind(message);
+      originalReply = message.reply.bind(message);
       message.reply = (...args) => {
         if (repliedMessages.has(message)) return Promise.resolve(null);
         repliedMessages.set(message, true);
@@ -96,6 +109,12 @@ export default {
       }
     } catch (error) {
       logger.error('Error in messageCreate event:', error);
+    } finally {
+      // Only restore if the patch actually ran (an early return above the patch point, e.g. a
+      // bot author or a DM, never touched message.reply at all, so there's nothing to undo).
+      if (originalReply) {
+        message.reply = originalReply;
+      }
     }
   }
 };
