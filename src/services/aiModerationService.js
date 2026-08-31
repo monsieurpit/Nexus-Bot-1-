@@ -13,8 +13,31 @@ const nexusClient = new NexusAI({
   baseUrl: process.env.NEXUS_API_URL,
 });
 
-const AI_RATE_LIMIT_KEY = 'ai-mod-global';
-const AI_RATE_LIMIT_ATTEMPTS = 14;
+// Split into two separate limits after checking the actual server-side cost of each: RaidShield's
+// TEXT classification (Nexus-AI-'s server.ts, /api/v1/raidshield) is pure synchronous rule
+// matching (evaluateRaidShieldRules in ruleEngine.ts) - no LLM call at all, sub-millisecond
+// server-side compute. Only messages with an IMAGE attachment trigger a real Ollama vision-model
+// call, which is genuinely slow and constrained by the server's Ollama concurrency limit.
+//
+// A single shared 'ai-mod-global' limit of 14/60s (found live: a genuine gap - during exactly the
+// kind of message burst RaidShield exists to catch, e.g. a raid, this ceiling gets exhausted and
+// every message past it is skipped with ZERO analysis, no fallback, no alert) was almost
+// certainly calibrated assuming every check costs a slow LLM round-trip, which is only true for
+// the image case. Text-only checks (the overwhelming majority of traffic) can sustain a much
+// higher rate without risking the server at all. Image checks stay conservative since they're
+// genuinely LLM-backed and the server's own Ollama concurrency cap (OLLAMA_MAX_CONCURRENT,
+// separately confirmed to now gate vision calls too) is the real constraint there.
+//
+// This does not eliminate the possibility of hitting a ceiling entirely (a truly enormous burst
+// still could), but it moves the ceiling to reflect the ACTUAL cost of each check instead of a
+// blanket conservative guess, closing the gap for the realistic case. RaidDetectionService (join
+// bursts, cross-channel spam, name/invite similarity) runs as a fully separate, always-on,
+// non-AI-dependent check regardless of this limit - this is specifically about the AI CONTENT
+// classifier's own coverage, not raid protection as a whole.
+const AI_RATE_LIMIT_KEY_TEXT = 'ai-mod-global-text';
+const AI_RATE_LIMIT_ATTEMPTS_TEXT = 90;
+const AI_RATE_LIMIT_KEY_IMAGE = 'ai-mod-global-image';
+const AI_RATE_LIMIT_ATTEMPTS_IMAGE = 20;
 const AI_RATE_LIMIT_WINDOW_MS = 60000;
 
 const MIN_CONTENT_LENGTH = 4;
@@ -379,12 +402,9 @@ export class AiModerationService {
         }
       }
 
-      const canProcess = await checkRateLimit(AI_RATE_LIMIT_KEY, AI_RATE_LIMIT_ATTEMPTS, AI_RATE_LIMIT_WINDOW_MS);
-      if (!canProcess) {
-        logger.info('⏱️ Global rate limit exceeded, skipping message');
-        return;
-      }
-
+      // Image detection moved ahead of the rate-limit gate below (it used to run after) so the
+      // gate can apply the correct limit for what this specific message actually costs the
+      // server, instead of one shared ceiling calibrated for the more expensive case.
       const text = message.content || '';
       const imageUrls = [];
 
@@ -396,6 +416,21 @@ export class AiModerationService {
             imageUrls.push(attachment.url);
           }
         }
+      }
+
+      const hasImage = imageUrls.length > 0;
+      const canProcess = hasImage
+        ? await checkRateLimit(AI_RATE_LIMIT_KEY_IMAGE, AI_RATE_LIMIT_ATTEMPTS_IMAGE, AI_RATE_LIMIT_WINDOW_MS)
+        : await checkRateLimit(AI_RATE_LIMIT_KEY_TEXT, AI_RATE_LIMIT_ATTEMPTS_TEXT, AI_RATE_LIMIT_WINDOW_MS);
+      if (!canProcess) {
+        // Warn rather than info-log: every message skipped here gets zero AI content analysis at
+        // all, which matters for visibility even though RaidDetectionService's separate,
+        // non-AI-dependent burst/spam/join checks are unaffected and keep running regardless.
+        logger.warn(`⏱️ AI moderation rate limit exceeded (${hasImage ? 'image' : 'text'} queue), skipping message with no analysis`, {
+          guildId: message.guild.id,
+          userId: message.author.id,
+        });
+        return;
       }
 
       if (text.length < MIN_CONTENT_LENGTH && imageUrls.length === 0) {
