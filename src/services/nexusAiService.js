@@ -2,7 +2,6 @@ import dotenv from 'dotenv';
 dotenv.config();
 import { logger } from '../utils/logger.js';
 import { NexusAI } from '../../nexus-ai.js';
-import { generateNexusBrainResponse } from './nexusBrain.js';
 
 // Talks to your real, deployed Nexus AI engine — the same custom engine that lives in the
 // Nexus-AI- repo (footballIntelligence.ts, bm25Engine.ts, reasoningEngine.ts, etc.), instead of
@@ -101,10 +100,6 @@ function generateOfflineFallbackResponse(question, userContext) {
  */
 export async function askNexusAi(question, userContext = {}) {
   const isSuperChillUser = userContext.userId === '1394001641899954368' || Boolean(userContext.isSuperChillUser);
-
-  if (userContext.skipRemoteFetch) {
-    return generateNexusBrainResponse(question, userContext);
-  }
 
   try {
     const data = await nexusClient.askJSON({
