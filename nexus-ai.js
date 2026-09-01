@@ -71,6 +71,9 @@ export class NexusChatSession {
       followUpQuestions: res.followUpQuestions || [],
       thoughtSteps: res.thoughtSteps || [],
       tokens: res.tokens || 0,
+      // Nexus's current artificial mood (moodEngine.ts server-side) — { label, emoji, name,
+      // namePl, valence, arousal }, or null on an older server that doesn't send it yet.
+      mood: res.mood || null,
     };
   }
 
@@ -368,6 +371,23 @@ export class NexusAI {
   }
 
   /**
+   * Get Nexus's current artificial "mood" — a lightweight affective state (angry, sad, happy,
+   * super happy, depressed, bored, or neutral) that colors every reply's tone server-side. Cheap
+   * to poll — no auth required, no LLM call involved, just reads the server's current in-memory
+   * mood — so this is safe to call on a timer (e.g. to drive the bot's Discord presence status)
+   * without sending an actual message first.
+   * @returns {Promise<{ label: string, emoji: string, name: string, namePl: string, valence: number, arousal: number }>}
+   */
+  async getMood() {
+    const res = await fetch(`${this.baseUrl}/mood`, {
+      method: 'GET',
+      headers: this._getHeaders(),
+    });
+    const data = await this._parseResponse(res, 'Mood API');
+    return data.mood;
+  }
+
+  /**
    * Switch the server's global default persona.
    * @param {string} persona
    */
@@ -416,6 +436,7 @@ export class NexusAI {
    *   matchedDocuments?: Array<{ title: string, category: string, score: number, snippet?: string, relevantSentences?: string[] }>,
    *   followUpQuestions?: string[],
    *   thoughtSteps?: Array<{ type: string, title: string, description: string }>,
+   *   mood?: { label: string, emoji: string, name: string, namePl: string, valence: number, arousal: number },
    *   totalDocumentsLoaded?: number,
    *   rulesRespected: boolean,
    *   tokens: number,
