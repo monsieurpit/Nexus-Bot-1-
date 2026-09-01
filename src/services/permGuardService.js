@@ -2,6 +2,7 @@ import { AuditLogEvent, PermissionsBitField } from 'discord.js';
 import { logger } from '../utils/logger.js';
 import { getColor } from '../config/bot.js';
 import { logEvent } from '../utils/moderation.js';
+import { Mutex } from '../utils/mutex.js';
 
 // ─── DB ──────────────────────────────────────────────────────────────────────
 const DB_KEY = (guildId) => `guild:${guildId}:permguard:users`;
@@ -21,31 +22,42 @@ export async function isUserAllowed(client, guildId, userId) {
     return data[userId] === true;
 }
 
+// Both mutators below share the same lock key per guild (same Mutex utility already used by
+// xpSystem.js/stickyNoteService.js for this exact shape of problem) — getData/set was an
+// unguarded read-modify-write, so two admins adding/removing different users around the same
+// time could race: both read the same map, both mutate their own local copy, and whichever
+// client.db.set() lands last silently discards the other admin's change with no error to either
+// of them. Same key as the whole allow-list map since both add and remove touch the same record.
+
 /** Add a user to the allowed list. Returns true on success. */
 export async function addPermUser(client, guildId, userId) {
-    try {
-        const data = await getData(client, guildId);
-        data[userId] = true;
-        await client.db.set(DB_KEY(guildId), data);
-        return true;
-    } catch (err) {
-        logger.error(`[PermGuard] addPermUser error for ${userId} in ${guildId}:`, err);
-        return false;
-    }
+    return await Mutex.runExclusive(DB_KEY(guildId), async () => {
+        try {
+            const data = await getData(client, guildId);
+            data[userId] = true;
+            await client.db.set(DB_KEY(guildId), data);
+            return true;
+        } catch (err) {
+            logger.error(`[PermGuard] addPermUser error for ${userId} in ${guildId}:`, err);
+            return false;
+        }
+    });
 }
 
 /** Remove a user from the allowed list. Returns true on success. */
 export async function removePermUser(client, guildId, userId) {
-    try {
-        const data = await getData(client, guildId);
-        if (!data[userId]) return true; // already gone
-        delete data[userId];
-        await client.db.set(DB_KEY(guildId), data);
-        return true;
-    } catch (err) {
-        logger.error(`[PermGuard] removePermUser error for ${userId} in ${guildId}:`, err);
-        return false;
-    }
+    return await Mutex.runExclusive(DB_KEY(guildId), async () => {
+        try {
+            const data = await getData(client, guildId);
+            if (!data[userId]) return true; // already gone
+            delete data[userId];
+            await client.db.set(DB_KEY(guildId), data);
+            return true;
+        } catch (err) {
+            logger.error(`[PermGuard] removePermUser error for ${userId} in ${guildId}:`, err);
+            return false;
+        }
+    });
 }
 
 /** Return an array of user IDs in the allowed list */

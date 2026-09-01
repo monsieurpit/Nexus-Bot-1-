@@ -1,5 +1,6 @@
 import { getFromDb, setInDb } from '../utils/database.js';
 import { logger } from '../utils/logger.js';
+import { Mutex } from '../utils/mutex.js';
 
 
 
@@ -20,41 +21,47 @@ export class WarningService {
   }) {
     try {
       const key = `moderation:warnings:${guildId}:${userId}`;
-      
-      
-      const warnings = await getFromDb(key, []);
-      
-      
-      if (!Array.isArray(warnings)) {
-        logger.warn(`Warnings for ${userId} in ${guildId} corrupted, resetting`);
-        await setInDb(key, []);
-        return { success: false, error: 'Corrupted data' };
-      }
 
-      
-      const warning = {
-        id: Date.now(),
-        guildId,
-        userId,
-        moderatorId,
-        reason,
-        timestamp,
-        status: 'active'
-      };
+      // Wrapped in Mutex.runExclusive (same pattern already used by xpSystem.js/stickyNoteService.js
+      // for this exact shape of problem) — this is a read-modify-write on the same DB key with no
+      // atomicity otherwise. Two moderators warning the same user within the same DB round-trip
+      // window both used to read the same array, both append locally, and whichever write lands
+      // last silently overwrote the other's warning with no error to either moderator. Verified live
+      // via a throwaway repro simulating concurrent addWarning calls: only 1 of 2 warnings survived
+      // despite both calls reporting success — the mutex serializes the whole read-modify-write per
+      // guildId:userId key, so a second concurrent call now waits for the first to finish instead of
+      // racing it.
+      return await Mutex.runExclusive(key, async () => {
+        const warnings = await getFromDb(key, []);
 
-      
-      warnings.push(warning);
+        if (!Array.isArray(warnings)) {
+          logger.warn(`Warnings for ${userId} in ${guildId} corrupted, resetting`);
+          await setInDb(key, []);
+          return { success: false, error: 'Corrupted data' };
+        }
 
-      
-      await setInDb(key, warnings);
+        const warning = {
+          id: Date.now(),
+          guildId,
+          userId,
+          moderatorId,
+          reason,
+          timestamp,
+          status: 'active'
+        };
 
-      logger.info(`Warning added: ${userId} in ${guildId} by ${moderatorId}`);
-      
-      return {
-        success: true,
-        id: warning.id,
-        totalCount: warnings.length
-      };
+        warnings.push(warning);
+
+        await setInDb(key, warnings);
+
+        logger.info(`Warning added: ${userId} in ${guildId} by ${moderatorId}`);
+
+        return {
+          success: true,
+          id: warning.id,
+          totalCount: warnings.length
+        };
+      });
     } catch (error) {
       logger.error('Error adding warning:', error);
       return { success: false, error: error.message };

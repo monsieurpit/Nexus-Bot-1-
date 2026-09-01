@@ -5,6 +5,7 @@ import { logger } from '../utils/logger.js';
 import { getFromDb, setInDb } from '../utils/database.js';
 import { getColor } from '../config/bot.js';
 import { sanitizeMarkdown } from '../utils/sanitization.js';
+import { Mutex } from '../utils/mutex.js';
 
 const QUARANTINE_DB_PREFIX = 'quarantine';
 
@@ -349,62 +350,75 @@ export class QuarantineService {
    * Ban all quarantined users
    */
   static async banAll({ quarantineId, guild, moderator, client, deleteDays = 1 }) {
-    try {
-      const dbKey = `${QUARANTINE_DB_PREFIX}:${quarantineId}`;
-      const quarantineData = await getFromDb(dbKey, null);
-      if (!quarantineData) {
-        throw new Error('Quarantine record not found');
-      }
-      if (quarantineData.status !== 'quarantined') {
-        throw new Error('Quarantine already resolved');
-      }
-
-      const bannedUsers = [];
-      const failedUsers = [];
-
-      for (const suspect of quarantineData.suspects) {
-        try {
-          const member = await guild.members.fetch(suspect.userId).catch(() => null);
-          const user = member?.user || await client.users.fetch(suspect.userId).catch(() => null);
-          if (!user) continue;
-
-          await guild.members.ban(user.id, {
-            reason: `Raid shield quarantine - banned by ${moderator.user.tag} (${quarantineId})`,
-            deleteMessageDays: deleteDays
-          });
-          bannedUsers.push(suspect);
-        } catch (error) {
-          logger.warn(`Failed to ban ${suspect.userId}:`, error.message);
-          failedUsers.push(suspect);
+    const dbKey = `${QUARANTINE_DB_PREFIX}:${quarantineId}`;
+    // Wrapped in Mutex.runExclusive, same key as resolveFalseAlarm below — both read-check-act-write
+    // this exact record with real Discord side effects (bans vs. role restores) in between the read
+    // and the write, and neither was previously serialized against the other. Two staff clicking
+    // "Ban All" and "False Alarm" close together could both pass the `status !== 'quarantined'`
+    // check before either write landed, so both sets of real actions executed and the DB record
+    // (and audit log) ended up reflecting only whichever write finished last — traced and confirmed
+    // via a simulated concurrent-call repro against this exact read-modify-write shape. Serializing
+    // both handlers on the same key means the second one to actually start now sees the first one's
+    // already-written status and correctly throws 'Quarantine already resolved' instead of racing it.
+    return await Mutex.runExclusive(dbKey, async () => {
+      try {
+        const quarantineData = await getFromDb(dbKey, null);
+        if (!quarantineData) {
+          throw new Error('Quarantine record not found');
         }
+        if (quarantineData.status !== 'quarantined') {
+          throw new Error('Quarantine already resolved');
+        }
+
+        const bannedUsers = [];
+        const failedUsers = [];
+
+        for (const suspect of quarantineData.suspects) {
+          try {
+            const member = await guild.members.fetch(suspect.userId).catch(() => null);
+            const user = member?.user || await client.users.fetch(suspect.userId).catch(() => null);
+            if (!user) continue;
+
+            await guild.members.ban(user.id, {
+              reason: `Raid shield quarantine - banned by ${moderator.user.tag} (${quarantineId})`,
+              deleteMessageDays: deleteDays
+            });
+            bannedUsers.push(suspect);
+          } catch (error) {
+            logger.warn(`Failed to ban ${suspect.userId}:`, error.message);
+            failedUsers.push(suspect);
+          }
+        }
+
+        quarantineData.status = 'banned';
+        quarantineData.resolvedAt = new Date().toISOString();
+        quarantineData.resolvedBy = moderator.id;
+        quarantineData.resolution = 'ban_all';
+        quarantineData.bannedUsers = bannedUsers;
+        quarantineData.failedUsers = failedUsers;
+        await setInDb(dbKey, quarantineData);
+        await this.logQuarantineToDb(client, guild.id, quarantineData);
+
+        // Clear raid windows
+        const { RaidDetectionService: RDS1 } = await import('./raidDetectionService.js');
+        RDS1.clearWindows(guild.id);
+
+        return { success: true, bannedCount: bannedUsers.length, failedCount: failedUsers.length };
+      } catch (error) {
+        logger.error('Error banning all quarantined users:', error);
+        throw error;
       }
-
-      quarantineData.status = 'banned';
-      quarantineData.resolvedAt = new Date().toISOString();
-      quarantineData.resolvedBy = moderator.id;
-      quarantineData.resolution = 'ban_all';
-      quarantineData.bannedUsers = bannedUsers;
-      quarantineData.failedUsers = failedUsers;
-      await setInDb(dbKey, quarantineData);
-      await this.logQuarantineToDb(client, guild.id, quarantineData);
-
-      // Clear raid windows
-      const { RaidDetectionService: RDS1 } = await import('./raidDetectionService.js');
-      RDS1.clearWindows(guild.id);
-
-      return { success: true, bannedCount: bannedUsers.length, failedCount: failedUsers.length };
-    } catch (error) {
-      logger.error('Error banning all quarantined users:', error);
-      throw error;
-    }
+    });
   }
 
   /**
    * Resolve false alarm - restore roles and release
    */
   static async resolveFalseAlarm({ quarantineId, guild, moderator, client }) {
+    const dbKey = `${QUARANTINE_DB_PREFIX}:${quarantineId}`;
+    // Same Mutex, same key, same reasoning as banAll above — see its comment.
+    return await Mutex.runExclusive(dbKey, async () => {
     try {
-      const dbKey = `${QUARANTINE_DB_PREFIX}:${quarantineId}`;
       const quarantineData = await getFromDb(dbKey, null);
       if (!quarantineData) {
         throw new Error('Quarantine record not found');
@@ -476,6 +490,7 @@ export class QuarantineService {
       logger.error('Error resolving false alarm:', error);
       throw error;
     }
+    });
   }
 
   /**
