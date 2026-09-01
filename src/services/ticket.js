@@ -15,6 +15,7 @@ import { logTicketEvent } from '../utils/ticketLogging.js';
 import { BotConfig } from '../config/bot.js';
 import { ensureTypedServiceError } from '../utils/serviceErrorBoundary.js';
 import { recordWeeklyStat } from './weeklySummaryService.js';
+import { Mutex } from '../utils/mutex.js';
 
 
 const LOCALES = {
@@ -632,6 +633,7 @@ components: []
 }
 
 export async function claimTicket(channel, claimer) {
+  return await Mutex.runExclusive(`ticket:${channel.guild.id}:${channel.id}`, async () => {
   try {
     const ticketData = await getTicketData(channel.guild.id, channel.id);
     if (!ticketData) {
@@ -770,6 +772,7 @@ export async function claimTicket(channel, claimer) {
       errorCode: typedError.context?.errorCode
     };
   }
+  });
 }
 
 export async function reopenTicket(channel, reopener) {
@@ -1370,6 +1373,7 @@ export async function deleteTicket(channel, deleter) {
 }
 
 export async function unclaimTicket(channel, unclaimer) {
+  return await Mutex.runExclusive(`ticket:${channel.guild.id}:${channel.id}`, async () => {
   try {
     const ticketData = await getTicketData(channel.guild.id, channel.id);
     if (!ticketData) {
@@ -1508,6 +1512,7 @@ export async function unclaimTicket(channel, unclaimer) {
       errorCode: typedError.context?.errorCode
     };
   }
+  });
 }
 
 async function getNextTicketNumber(guildId) {
@@ -1515,6 +1520,7 @@ async function getNextTicketNumber(guildId) {
 }
 
 export async function updateTicketPriority(channel, priority, updater) {
+  return await Mutex.runExclusive(`ticket:${channel.guild.id}:${channel.id}`, async () => {
   try {
     const ticketData = await getTicketData(channel.guild.id, channel.id);
     if (!ticketData) {
@@ -1627,9 +1633,11 @@ export async function updateTicketPriority(channel, priority, updater) {
       errorCode: typedError.context?.errorCode
     };
   }
+  });
 }
 
 export async function addTicketNote(channel, author, noteContent, isInternal = true) {
+  return await Mutex.runExclusive(`ticket:${channel.guild.id}:${channel.id}`, async () => {
   try {
     const ticketData = await getTicketData(channel.guild.id, channel.id);
     if (!ticketData) {
@@ -1707,6 +1715,7 @@ export async function addTicketNote(channel, author, noteContent, isInternal = t
       error: typedError.userMessage || typedError.message,
     };
   }
+  });
 }
 
 export async function getTicketNotes(guildId, channelId, includeInternal = true) {
@@ -1731,6 +1740,7 @@ export async function getTicketNotes(guildId, channelId, includeInternal = true)
 }
 
 export async function removeTicketNote(channel, noteId, remover) {
+  return await Mutex.runExclusive(`ticket:${channel.guild.id}:${channel.id}`, async () => {
   try {
     const ticketData = await getTicketData(channel.guild.id, channel.id);
     if (!ticketData || !ticketData.notes) {
@@ -1766,9 +1776,11 @@ export async function removeTicketNote(channel, noteId, remover) {
     });
     return { success: false, error: 'Failed to remove note' };
   }
+  });
 }
 
 export async function watchTicket(channel, userId, notifyOnActivity = true) {
+  return await Mutex.runExclusive(`ticket:${channel.guild.id}:${channel.id}`, async () => {
   try {
     const ticketData = await getTicketData(channel.guild.id, channel.id);
     if (!ticketData) {
@@ -1813,9 +1825,11 @@ export async function watchTicket(channel, userId, notifyOnActivity = true) {
     });
     return { success: false, error: 'Failed to watch ticket' };
   }
+  });
 }
 
 export async function unwatchTicket(channel, userId) {
+  return await Mutex.runExclusive(`ticket:${channel.guild.id}:${channel.id}`, async () => {
   try {
     const ticketData = await getTicketData(channel.guild.id, channel.id);
     if (!ticketData || !ticketData.watchers) {
@@ -1851,6 +1865,7 @@ export async function unwatchTicket(channel, userId) {
     });
     return { success: false, error: 'Failed to unwatch ticket' };
   }
+  });
 }
 
 export async function getTicketWatchers(guildId, channelId) {
@@ -1901,6 +1916,7 @@ async function notifyWatchers(channel, ticketData, eventType, executor) {
 }
 
 export async function addTicketTag(channel, tag, addedBy) {
+  return await Mutex.runExclusive(`ticket:${channel.guild.id}:${channel.id}`, async () => {
   try {
     const ticketData = await getTicketData(channel.guild.id, channel.id);
     if (!ticketData) {
@@ -1944,9 +1960,11 @@ export async function addTicketTag(channel, tag, addedBy) {
     });
     return { success: false, error: 'Failed to add tag' };
   }
+  });
 }
 
 export async function removeTicketTag(channel, tag, removedBy) {
+  return await Mutex.runExclusive(`ticket:${channel.guild.id}:${channel.id}`, async () => {
   try {
     const ticketData = await getTicketData(channel.guild.id, channel.id);
     if (!ticketData || !ticketData.tags) {
@@ -1986,6 +2004,7 @@ export async function removeTicketTag(channel, tag, removedBy) {
     });
     return { success: false, error: 'Failed to remove tag' };
   }
+  });
 }
 
 export async function getTicketTags(guildId, channelId) {

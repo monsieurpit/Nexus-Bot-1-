@@ -8,6 +8,7 @@ import { logger } from '../utils/logger.js';
 import { getGuildConfig, setGuildConfig } from '../services/guildConfig.js';
 import { TitanBotError, ErrorTypes } from '../utils/errorHandler.js';
 import { addXp } from './xpSystem.js';
+import { Mutex } from '../utils/mutex.js';
 
 
 const BASE_XP = 100;
@@ -382,7 +383,18 @@ export async function saveLevelingConfig(client, guildId, config) {
 
 
 
+// Wrapped in Mutex.runExclusive using the SAME lock key xpSystem.js's addXp already uses for
+// this exact record (`leveling:${guildId}:${userId}`) — this function did a completely unlocked
+// read-modify-write on the same DB key addXp protects, so a moderator granting/removing levels at
+// the same moment a user's message triggers addXp could race: both read the same record, both
+// compute their own update from that stale snapshot, and whichever write lands last silently
+// discards the other — the admin's level grant (or the user's XP gain) vanishes with no error to
+// either side. Verified live with a disposable repro (concurrent addXp + addLevels against a
+// seeded record): before this fix, addLevels reported success but its effect was completely lost
+// in the final persisted state. Sharing xpSystem.js's exact lock key — not a new one — is what
+// actually closes the race, since a mutex only serializes callers that lock the same key.
 export async function addLevels(client, guildId, userId, levels) {
+  return await Mutex.runExclusive(`leveling:${guildId}:${userId}`, async () => {
   try {
     const levelingConfig = await getLevelingConfig(client, guildId);
     if (!levelingConfig?.enabled) {
@@ -393,7 +405,7 @@ export async function addLevels(client, guildId, userId, levels) {
       );
     }
 
-    
+
     if (!Number.isInteger(levels) || levels <= 0) {
       throw new TitanBotError(
         `Invalid level amount: ${levels}`,
@@ -421,7 +433,7 @@ export async function addLevels(client, guildId, userId, levels) {
     userData.totalXp = newTotalXp;
 
     await saveUserLevelData(client, guildId, userId, userData);
-    
+
     logger.info(`Added ${levels} levels to user ${userId} in guild ${guildId}`);
     return userData;
   } catch (error) {
@@ -433,6 +445,7 @@ export async function addLevels(client, guildId, userId, levels) {
       'Could not add levels at this time.'
     );
   }
+  });
 }
 
 
@@ -443,7 +456,9 @@ export async function addLevels(client, guildId, userId, levels) {
 
 
 
+// Same lock (and same reasoning) as addLevels above.
 export async function removeLevels(client, guildId, userId, levels) {
+  return await Mutex.runExclusive(`leveling:${guildId}:${userId}`, async () => {
   try {
     const levelingConfig = await getLevelingConfig(client, guildId);
     if (!levelingConfig?.enabled) {
@@ -454,7 +469,7 @@ export async function removeLevels(client, guildId, userId, levels) {
       );
     }
 
-    
+
     if (!Number.isInteger(levels) || levels <= 0) {
       throw new TitanBotError(
         `Invalid level amount: ${levels}`,
@@ -474,7 +489,7 @@ export async function removeLevels(client, guildId, userId, levels) {
     userData.totalXp = newTotalXp;
 
     await saveUserLevelData(client, guildId, userId, userData);
-    
+
     logger.info(`Removed ${levels} levels from user ${userId} in guild ${guildId}`);
     return userData;
   } catch (error) {
@@ -486,6 +501,7 @@ export async function removeLevels(client, guildId, userId, levels) {
       'Could not remove levels at this time.'
     );
   }
+  });
 }
 
 
@@ -496,7 +512,9 @@ export async function removeLevels(client, guildId, userId, levels) {
 
 
 
+// Same lock (and same reasoning) as addLevels above.
 export async function setUserLevel(client, guildId, userId, level) {
+  return await Mutex.runExclusive(`leveling:${guildId}:${userId}`, async () => {
   try {
     const levelingConfig = await getLevelingConfig(client, guildId);
     if (!levelingConfig?.enabled) {
@@ -507,7 +525,7 @@ export async function setUserLevel(client, guildId, userId, level) {
       );
     }
 
-    
+
     if (!Number.isInteger(level) || level < MIN_LEVEL || level > MAX_LEVEL) {
       throw new TitanBotError(
         `Invalid level: ${level}`,
@@ -517,7 +535,7 @@ export async function setUserLevel(client, guildId, userId, level) {
     }
 
     const userData = await getUserLevelData(client, guildId, userId);
-    
+
     const newXp = 0;
     const newTotalXp = calculateTotalXp(level, newXp);
 
@@ -526,7 +544,7 @@ export async function setUserLevel(client, guildId, userId, level) {
     userData.totalXp = newTotalXp;
 
     await saveUserLevelData(client, guildId, userId, userData);
-    
+
     logger.info(`Set level for user ${userId} to ${level} in guild ${guildId}`);
     return userData;
   } catch (error) {
@@ -538,12 +556,17 @@ export async function setUserLevel(client, guildId, userId, level) {
       'Could not set level at this time.'
     );
   }
+  });
 }
 
 
 
 
+// Same lock (and same reasoning) as addLevels above — a delete racing a concurrent addXp/addLevels
+// write on the same record could otherwise resurrect stale data or drop the delete entirely
+// depending on which write actually lands last.
 export async function deleteUserLevelData(client, guildId, userId) {
+  return await Mutex.runExclusive(`leveling:${guildId}:${userId}`, async () => {
   try {
     if (!guildId || !userId) {
       throw new TitanBotError(
@@ -562,6 +585,7 @@ export async function deleteUserLevelData(client, guildId, userId) {
     if (error instanceof TitanBotError) throw error;
     logger.warn(`Could not delete level data for user ${userId} in guild ${guildId}`);
   }
+  });
 }
 
 
