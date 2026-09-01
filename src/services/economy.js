@@ -255,7 +255,13 @@ export async function claimWork(guildId, userId) {
 // ─── Transfer / Pay (atomic, two-user lock) ──────────────────────────────────
 export async function transferCoins(guildId, fromId, toId, amount) {
   if (fromId === toId) return { success: false, reason: 'self' };
-  if (amount < 1)      return { success: false, reason: 'amount' };
+  // Number.isFinite rejects NaN/Infinity too, unlike a bare `amount < 1` — NaN < 1 is false in
+  // JS, so that check alone let a NaN amount straight through and permanently corrupted both
+  // balances to NaN (verified live: transferCoins(..., NaN) returned success:true and persisted
+  // coins: NaN on both sides). Not reachable through the known slash-command paths today (Discord's
+  // own getInteger() already validates before it gets here), but the service layer itself should
+  // never trust its input, since any future/other caller (dashboard, API route) could pass one.
+  if (!Number.isFinite(amount) || amount < 1) return { success: false, reason: 'amount' };
 
   return withTwoLocks(lockKey(guildId, fromId), lockKey(guildId, toId), async () => {
     const from = await _readBalance(guildId, fromId);
@@ -501,7 +507,14 @@ export async function purchaseShopItem(guildId, userId, itemId) {
 }
 
 // ─── addCoins / removeCoins — kept for dashboard/admin use ───────────────────
+// These three had no numeric validation at all (unlike transferCoins/depositCoins/withdrawCoins
+// above, which at least had an `amount < 1` check, itself fixed alongside this to also reject
+// NaN). Verified live: addCoins(guildId, userId, NaN) returned success and permanently wrote
+// coins: NaN. Not reachable through the known slash-command paths today (Discord's getInteger()
+// already validates before it gets here), but this is the dashboard/admin-use entry point per its
+// own comment below, so it's exactly the kind of function a future non-Discord caller would use.
 export async function addCoins(guildId, userId, amount) {
+  if (!Number.isFinite(amount)) return null;
   return withLock(lockKey(guildId, userId), async () => {
     const current = await _readBalance(guildId, userId);
     return _writeBalance(guildId, userId, { ...current, coins: (current.coins || 0) + amount });
@@ -509,6 +522,7 @@ export async function addCoins(guildId, userId, amount) {
 }
 
 export async function removeCoins(guildId, userId, amount) {
+  if (!Number.isFinite(amount)) return null;
   return withLock(lockKey(guildId, userId), async () => {
     const current = await _readBalance(guildId, userId);
     if ((current.coins || 0) < amount) return null;
@@ -517,6 +531,11 @@ export async function removeCoins(guildId, userId, amount) {
 }
 
 export async function setUserBalance(guildId, userId, data) {
+  // `data` can carry any balance field (coins/bankCoins/etc.) — reject the whole update if any
+  // numeric field in it isn't a finite number, rather than trying to guess which fields matter.
+  if (data && Object.values(data).some((v) => typeof v === 'number' && !Number.isFinite(v))) {
+    return null;
+  }
   return withLock(lockKey(guildId, userId), async () => {
     const current = await _readBalance(guildId, userId);
     return _writeBalance(guildId, userId, { ...current, ...data });
@@ -586,7 +605,8 @@ export async function playUltraGamble(guildId, userId, bet) {
 // ─── Bank (deposit / withdraw) ────────────────────────────────────────────────
 // Bank coins cannot be stolen by /rob — only wallet coins (coins) are at risk.
 export async function depositCoins(guildId, userId, amount) {
-  if (amount < 1) return { success: false, reason: 'amount' };
+  // See transferCoins's comment above — Number.isFinite rejects NaN, `amount < 1` alone doesn't.
+  if (!Number.isFinite(amount) || amount < 1) return { success: false, reason: 'amount' };
   return withLock(lockKey(guildId, userId), async () => {
     const current = await _readBalance(guildId, userId);
     if ((current.coins || 0) < amount) {
@@ -603,7 +623,8 @@ export async function depositCoins(guildId, userId, amount) {
 }
 
 export async function withdrawCoins(guildId, userId, amount) {
-  if (amount < 1) return { success: false, reason: 'amount' };
+  // See transferCoins's comment above — Number.isFinite rejects NaN, `amount < 1` alone doesn't.
+  if (!Number.isFinite(amount) || amount < 1) return { success: false, reason: 'amount' };
   return withLock(lockKey(guildId, userId), async () => {
     const current = await _readBalance(guildId, userId);
     if ((current.bankCoins || 0) < amount) {
