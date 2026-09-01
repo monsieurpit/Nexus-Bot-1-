@@ -2,6 +2,7 @@ import { EmbedBuilder } from 'discord.js';
 import { getFromDb, setInDb } from '../utils/database.js';
 import { logger } from '../utils/logger.js';
 import { getColor } from '../config/bot.js';
+import { Mutex } from '../utils/mutex.js';
 
 const MILESTONE_INTERVAL = 100;
 
@@ -27,7 +28,17 @@ export function getNextMilestone(currentCount) {
     return Math.ceil(currentCount / MILESTONE_INTERVAL) * MILESTONE_INTERVAL;
 }
 
+// Wrapped in Mutex.runExclusive — this was a classic check-then-act race: read config, check
+// `lastMilestone >= currentCount` to dedupe, send the announcement, THEN write back
+// `lastMilestone`. If two guildMemberAdd handlers run concurrently for the same milestone count
+// (plausible under back-to-back joins, since guild.memberCount can be stale/lag), both can pass
+// the dedupe check before either writes back, so both send the public announcement and ping the
+// member. Verified live with a concurrent repro: channel.send() fired twice for the same
+// milestone before this fix. The whole function (not just the config read/write) needs to be
+// inside the lock, since the side effect being deduplicated — the announcement itself — has to be
+// serialized against the check, not just the database write.
 export async function checkAndAnnounceMilestone(client, guild, member, currentCount) {
+  return await Mutex.runExclusive(`milestone:${guild.id}`, async () => {
     try {
         const config = await getMilestoneConfig(client, guild.id);
 
@@ -95,6 +106,7 @@ export async function checkAndAnnounceMilestone(client, guild, member, currentCo
         logger.error('Error checking/announcing milestone:', error);
         return { announced: false, reason: error.message };
     }
+  });
 }
 
 export { MILESTONE_INTERVAL };

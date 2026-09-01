@@ -1,5 +1,6 @@
 import { logger } from '../utils/logger.js';
 import { createError, ErrorTypes } from '../utils/errorHandler.js';
+import { Mutex } from '../utils/mutex.js';
 
 
 
@@ -239,14 +240,22 @@ export async function createReactionRoleMessage(client, guildId, channelId, mess
 
 
 
+// Wrapped in Mutex.runExclusive (same established pattern used elsewhere in this codebase for
+// this exact problem, e.g. xpSystem.js) — this was an unguarded read-modify-write on the same
+// per-message DB record that removeReactionRole/setReactionRoleChannel below also touch. Two
+// admins adding different emoji->role mappings to the same message within the same DB round-trip
+// window could otherwise race: both read the same `roles` object, both mutate their own local
+// copy, and whichever write lands last silently discards the other's mapping. Verified live with
+// a concurrent repro: only one of two emojis added to the same message survived before this fix.
 export async function addReactionRole(client, guildId, messageId, emoji, roleId) {
+    const key = `reaction_roles:${guildId}:${messageId}`;
+    return await Mutex.runExclusive(key, async () => {
     try {
         validateGuildId(guildId);
         validateMessageId(messageId);
         validateRoleId(roleId);
         await validateRoleSafety(client, guildId, roleId);
-        
-        const key = `reaction_roles:${guildId}:${messageId}`;
+
         const data = await getReactionRoleMessage(client, guildId, messageId) || {
             messageId,
             guildId,
@@ -255,7 +264,7 @@ export async function addReactionRole(client, guildId, messageId, emoji, roleId)
         };
 
         data.roles[emoji] = roleId;
-        
+
         await client.db.set(key, data);
         logger.info(`Added reaction role for emoji ${emoji} to message ${messageId} in guild ${guildId}`);
         return true;
@@ -271,6 +280,7 @@ export async function addReactionRole(client, guildId, messageId, emoji, roleId)
             { guildId, messageId, originalError: error.message }
         );
     }
+    });
 }
 
 
@@ -321,14 +331,16 @@ export async function deleteReactionRoleMessage(client, guildId, messageId) {
 
 
 
+// Same lock (and same reasoning) as addReactionRole above.
 export async function removeReactionRole(client, guildId, messageId, emoji) {
+    const key = `reaction_roles:${guildId}:${messageId}`;
+    return await Mutex.runExclusive(key, async () => {
     try {
         validateGuildId(guildId);
         validateMessageId(messageId);
-        
-        const key = `reaction_roles:${guildId}:${messageId}`;
+
         const data = await getReactionRoleMessage(client, guildId, messageId);
-        
+
         if (!data || !data.roles[emoji]) {
             return false;
         }
@@ -342,7 +354,7 @@ export async function removeReactionRole(client, guildId, messageId, emoji) {
             await client.db.set(key, data);
             logger.info(`Removed reaction role for emoji ${emoji} from message ${messageId}`);
         }
-        
+
         return true;
     } catch (error) {
         if (error.name === 'TitanBotError') {
@@ -356,6 +368,7 @@ export async function removeReactionRole(client, guildId, messageId, emoji) {
             { guildId, messageId, originalError: error.message }
         );
     }
+    });
 }
 
 /**
@@ -460,11 +473,14 @@ export async function getAllReactionRoleMessages(client, guildId) {
 
 
 
+// Same lock (and same reasoning) as addReactionRole above.
 export async function setReactionRoleChannel(client, guildId, messageId, channelId) {
+    const key = `reaction_roles:${guildId}:${messageId}`;
+    return await Mutex.runExclusive(key, async () => {
     try {
         validateGuildId(guildId);
         validateMessageId(messageId);
-        
+
         if (!channelId || typeof channelId !== 'string' || !/^\d{17,19}$/.test(channelId)) {
             throw createError(
                 `Invalid channel ID: ${channelId}`,
@@ -473,8 +489,7 @@ export async function setReactionRoleChannel(client, guildId, messageId, channel
                 { channelId }
             );
         }
-        
-        const key = `reaction_roles:${guildId}:${messageId}`;
+
         const data = await getReactionRoleMessage(client, guildId, messageId) || {
             messageId,
             guildId,
@@ -498,6 +513,7 @@ export async function setReactionRoleChannel(client, guildId, messageId, channel
             { guildId, messageId, channelId, originalError: error.message }
         );
     }
+    });
 }
 
 /**

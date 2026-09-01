@@ -3,6 +3,33 @@ import { logger } from '../utils/logger.js';
 const DM_SESSION_KEY = (userId) => `dm_session:${userId}`;
 const inMemoryDmSessions = new Map();
 
+// Found by a code review: every setDmSession call permanently adds two entries to this Map (one
+// per side of the link) with no TTL or eviction — each entry already stores an `updatedAt`
+// timestamp, but nothing anywhere ever reads it to expire anything. For a bot with a long uptime,
+// this grows without bound, proportional to the total number of distinct users who have ever used
+// DM routing, for the life of the process. Same fix pattern already used for this exact bug class
+// in rateLimiter.js this session: a periodic sweep removing entries past a staleness threshold —
+// this is purely an in-process cache in front of the real DB record (getDmSession falls back to
+// client.db.get and re-populates the cache on a miss), so pruning a stale entry here never loses
+// data, it just means the next lookup for that user re-fetches from the DB instead of hitting the
+// in-memory cache.
+const DM_SESSION_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const DM_SESSION_SWEEP_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+function sweepStaleDmSessions() {
+  const now = Date.now();
+  let removed = 0;
+  for (const [userId, session] of inMemoryDmSessions) {
+    if (now - session.updatedAt > DM_SESSION_CACHE_TTL_MS) {
+      inMemoryDmSessions.delete(userId);
+      removed++;
+    }
+  }
+  if (removed > 0) {
+    logger.debug(`DM session cache sweep: removed ${removed} stale entr${removed === 1 ? 'y' : 'ies'}, ${inMemoryDmSessions.size} remaining`);
+  }
+}
+setInterval(sweepStaleDmSessions, DM_SESSION_SWEEP_INTERVAL_MS).unref();
+
 /**
  * Saves a DM routing session between sender and target
  */

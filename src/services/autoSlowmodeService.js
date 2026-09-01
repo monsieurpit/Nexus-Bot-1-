@@ -55,6 +55,30 @@ function getChannelState(channelId) {
   return state.get(channelId);
 }
 
+// Found by a code review: every distinct channel that ever receives a message while auto-slowmode
+// is enabled gets a permanent entry here — never deleted on channel delete, guild leave, or even
+// in disableAutoSlowmode (which only clears pending timers, never removes the entries themselves).
+// For a bot active across many guilds over a long uptime, this grows unbounded with the total
+// number of distinct channels ever seen, for the life of the process. Swept periodically instead:
+// an entry is safe to remove once it has no recent activity (timestamps empty — pruneWindow
+// already clears anything older than WINDOW_MS on access), no elevated slowmode still in effect,
+// and no pending timer — at that point it holds no state at all beyond what getChannelState()
+// would hand back fresh anyway, so removing it changes nothing observable, just reclaims memory.
+const STATE_SWEEP_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
+function sweepIdleChannelState() {
+  let removed = 0;
+  for (const [channelId, ch] of state) {
+    if (ch.timestamps.length === 0 && ch.currentSlowmode === 0 && !ch.timer) {
+      state.delete(channelId);
+      removed++;
+    }
+  }
+  if (removed > 0) {
+    logger.debug(`[AutoSlowmode] State sweep: removed ${removed} idle channel entr${removed === 1 ? 'y' : 'ies'}, ${state.size} remaining`);
+  }
+}
+setInterval(sweepIdleChannelState, STATE_SWEEP_INTERVAL_MS).unref();
+
 function pruneWindow(timestamps) {
   const cutoff = Date.now() - WINDOW_MS;
   return timestamps.filter(ts => ts > cutoff);

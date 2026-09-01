@@ -21,6 +21,7 @@ import { logger } from '../utils/logger.js';
 import { getWelcomeConfig, updateWelcomeConfig } from '../utils/database.js';
 import { formatWelcomeMessage } from '../utils/welcome.js';
 import { createError, ErrorTypes } from '../utils/errorHandler.js';
+import { Mutex } from '../utils/mutex.js';
 
 
 const autoRoleUpdateLimits = new Map();
@@ -362,7 +363,17 @@ class WelcomeService {
 
 
 
+    // Wrapped in Mutex.runExclusive — getWelcomeConfig/updateWelcomeConfig looks like a safe
+    // read-merge-write at a glance (updateWelcomeConfig re-fetches and spreads the current config
+    // before saving), but `roleIds` is a fully-replaced key in the `updates` object, not something
+    // the merge reconciles element-wise — two admins adding different auto-roles within the same
+    // DB round-trip window both compute their own `updatedRoles` array from the same stale
+    // snapshot, and whichever write lands last silently discards the other's role. Verified live
+    // with a concurrent repro: only one of two roles added to the same guild survived before this
+    // fix. Same lock key shared with removeAutoRole/bulkUpdateAutoRoles below, since all three
+    // mutate the same `roleIds` field.
     static async addAutoRole(client, guildId, roleId, adminId) {
+      return await Mutex.runExclusive(`welcome-autorole:${guildId}`, async () => {
         logger.info(`[WELCOME_SERVICE] Adding auto-role`, { guildId, roleId, adminId });
 
         const guild = client.guilds.cache.get(guildId);
@@ -458,9 +469,9 @@ class WelcomeService {
             roleName: role.name,
             totalAutoRoles: updatedRoles.length
         };
+      });
     }
 
-    
 
 
 
@@ -468,7 +479,10 @@ class WelcomeService {
 
 
 
+
+    // Same lock (and same reasoning) as addAutoRole above.
     static async removeAutoRole(client, guildId, roleId, adminId) {
+      return await Mutex.runExclusive(`welcome-autorole:${guildId}`, async () => {
         logger.info(`[WELCOME_SERVICE] Removing auto-role`, { guildId, roleId, adminId });
 
         const guild = client.guilds.cache.get(guildId);
@@ -520,9 +534,10 @@ class WelcomeService {
             roleId,
             totalAutoRoles: updatedRoles.length
         };
+      });
     }
 
-    
+
 
 
 
@@ -615,7 +630,12 @@ class WelcomeService {
 
 
 
+    // Same lock as addAutoRole/removeAutoRole above — this function fully replaces `roleIds`
+    // rather than merging with the existing list, but it still needs to be serialized against
+    // concurrent add/remove calls on the same guild, otherwise a bulk update racing an individual
+    // add/remove could silently clobber whichever one lands second.
     static async bulkUpdateAutoRoles(client, guildId, roleIds, adminId) {
+      return await Mutex.runExclusive(`welcome-autorole:${guildId}`, async () => {
         logger.info(`[WELCOME_SERVICE] Bulk updating auto-roles`, {
             guildId,
             roleCount: roleIds.length,
@@ -688,6 +708,7 @@ class WelcomeService {
             skippedCount: roleIds.length - validRoles.length,
             totalAutoRoles: validRoles.length
         };
+      });
     }
 }
 
