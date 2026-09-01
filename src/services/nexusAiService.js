@@ -2,6 +2,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 import { logger } from '../utils/logger.js';
 import { NexusAI } from '../../nexus-ai.js';
+import { getUserMemories, saveUserMemory } from './memoryBrainService.js';
 
 // Talks to your real, deployed Nexus AI engine — the same custom engine that lives in the
 // Nexus-AI- repo (footballIntelligence.ts, bm25Engine.ts, reasoningEngine.ts, etc.), instead of
@@ -97,19 +98,39 @@ function generateOfflineFallbackResponse(question, userContext) {
 /**
  * Sends a question to the real Nexus AI engine and returns plain text.
  * Falls back to the minimal offline response if the remote API call fails.
+ *
+ * Cross-conversation memory (favorite team, preferred name, etc. — persisted per Discord user
+ * between separate messages) is wired in here when `userContext.client` is provided: this was
+ * previously a completely dead feature — the engine's /api/v1/nexus endpoint has real logic to
+ * recall stored facts (a "what do you remember about me" path) and already returns a `newMemory`
+ * field whenever it extracts something new to remember, and memoryBrainService.js already had
+ * working get/save functions for exactly this — but nothing on this side ever actually called
+ * either of them, so the engine's own memory recall logic could never fire for any Discord user.
+ * Passing `client` is optional and backward compatible: any other caller of askNexusAi that
+ * doesn't provide one just skips memory loading/saving, same as before this change.
  */
 export async function askNexusAi(question, userContext = {}) {
   const isSuperChillUser = userContext.userId === '1394001641899954368' || Boolean(userContext.isSuperChillUser);
+  const hasMemoryAccess = Boolean(userContext.client && userContext.userId);
 
   try {
+    const memories = hasMemoryAccess
+      ? await getUserMemories(userContext.client, userContext.userId)
+      : [];
     const data = await nexusClient.askJSON({
       prompt: question,
       authorId: userContext.userId,
       username: userContext.username,
       isSuperChillUser,
+      memories,
     });
     const reply = data?.response || data?.text || '';
     if (!reply) throw new Error('Empty response from Nexus API');
+    if (hasMemoryAccess && data?.newMemory) {
+      // Best-effort, fire-and-forget by design (see saveUserMemory's own comment) — never lets a
+      // memory-persistence failure delay or break the reply the user is actually waiting on.
+      saveUserMemory(userContext.client, userContext.userId, data.newMemory).catch(() => {});
+    }
     return reply;
   } catch (err) {
     logger.warn(`[Nexus AI] Real API call failed (${err.message}), using minimal offline fallback`);
@@ -256,7 +277,8 @@ export async function handleNexusAiMessage(message) {
   try {
     const answer = await askNexusAi(question, {
       userId,
-      username: message.author.username
+      username: message.author.username,
+      client: message.client
     });
 
     // Check if answer is missing or consists entirely of invisible blank characters
