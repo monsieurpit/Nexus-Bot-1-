@@ -55,10 +55,12 @@ export function recordChannelMessage(channelId, entry) {
 /**
  * Get the channel's recent history, shaped for the Nexus AI SDK's `history` field (askJSON /
  * NexusChatSession both accept `{ role, content }` entries — see nexus-ai.js's own JSDoc).
- * Usernames are prefixed onto each user message's content ("PatrickH: ...") since a channel can
- * have many different speakers and the AI engine's own history handling (reasoningEngine.ts) has
- * no other way to tell them apart — a bare content-only transcript would read as one person
- * talking to themselves.
+ * Sends `authorId`/`username` as real structured fields now (ChatMessage widened for this in
+ * types.ts) instead of the old "PatrickH: ..." string-prefix workaround — a channel can have many
+ * different speakers, and reasoningEngine.ts's buildConversationMemory can now actually reason
+ * about who said what instead of guessing from text it could only partially pattern-match back
+ * out. Every message still carries `content` on its own (unprefixed) so a caller that ignores the
+ * new fields entirely (or an older cached message shape) still gets a sane transcript.
  * @param {string} channelId
  * @param {number} [limit] defaults to the full buffer (50)
  */
@@ -67,7 +69,9 @@ export function getChannelHistory(channelId, limit = MAX_MESSAGES_PER_CHANNEL) {
   if (!buffer) return [];
   return buffer.messages.slice(-limit).map((m) => ({
     role: m.role,
-    content: m.role === 'user' && m.username ? `${m.username}: ${m.content}` : m.content,
+    content: m.content,
+    authorId: m.authorId,
+    username: m.username,
   }));
 }
 
