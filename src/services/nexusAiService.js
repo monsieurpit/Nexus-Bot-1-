@@ -289,8 +289,17 @@ export async function handleNexusAiMessage(message) {
 
   const question = rawQuestion.trim();
 
-  // Send typing indicator while waiting for the Nexus API
+  // Send typing indicator while waiting for the Nexus API. Discord only displays the typing
+  // indicator for ~10s before it silently expires — a single one-shot call here used to mean a
+  // reply taking longer than that (a broad factual question, or the thorough/deep-cot reasoning
+  // escalation) would look like the bot had stalled or ignored the message for the back half of
+  // the wait, even though it was still genuinely working. Re-firing it on an interval keeps the
+  // indicator alive for the whole real wait; cleared in `finally` below the moment a reply (or an
+  // error) is actually sent, so it never keeps "typing" after the bot has gone quiet.
   message.channel.sendTyping().catch(() => {});
+  const typingInterval = setInterval(() => {
+    message.channel.sendTyping().catch(() => {});
+  }, 8000);
 
   try {
     const answer = await askNexusAi(question, {
@@ -330,5 +339,7 @@ export async function handleNexusAiMessage(message) {
       content: "Nah bro, I ran into a fucking error, Try again when I want to work..."
     }).catch(() => {});
     return true;
+  } finally {
+    clearInterval(typingInterval);
   }
 }
