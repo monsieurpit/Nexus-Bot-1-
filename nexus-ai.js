@@ -492,6 +492,107 @@ export class NexusAI {
   }
 
   /**
+   * Same request as askJSON, but with `stream: true` — the engine streams its reply back as
+   * newline-delimited JSON (one `{type:'token', text}` line per fragment, exactly one
+   * `{type:'final', ...}` line at the end carrying the identical shape askJSON always returns) for
+   * the plain conversational path (greetings/small talk/etc). A query that resolves to a grounded
+   * factual answer, a solver, or a safety refusal on the server side simply produces zero token
+   * lines and goes straight to the one final line — `onToken` just won't fire for those, which is
+   * the correct, safe behavior (see reasoningEngine.ts's own comment on why those paths never
+   * stream raw, unverified text).
+   *
+   * Deliberately does NOT use `_fetchWithTimeout`'s retry wrapper — retrying a request that may
+   * have already streamed several chunks to `onToken` risks the caller seeing duplicated/out-of-
+   * order fragments. On any failure (network error, non-OK status, a malformed stream), this
+   * throws instead of retrying; callers should catch and fall back to the reliable, retrying
+   * `askJSON()` rather than build retry logic into the stream itself.
+   *
+   * @param {Object|string} options - Same shape as askJSON.
+   * @param {(chunk: string) => void} onToken - Called with each raw text fragment as it arrives.
+   * @returns {Promise<Object>} The same shape askJSON() resolves with.
+   */
+  async askStream(options, onToken) {
+    const opts = typeof options === 'string' ? { prompt: options } : options || {};
+    const authorId = opts.authorId || opts.userId || this.defaultAuthorId || '';
+    const isSuperChill = Boolean(opts.isSuperChillUser || opts.isSuperChill || authorId === '1394001641899954368');
+    const requestRules = opts.rules || opts.customRules || opts.directives || '';
+    const extraRules = Array.isArray(requestRules) ? requestRules : requestRules ? [requestRules] : [];
+    const allRules = [...this.clientRules, ...extraRules];
+    const activePersona = opts.persona || opts.model || this.currentPersona || 'nexus-homie';
+
+    const payload = {
+      prompt: opts.prompt || opts.content || opts.message || opts.text || '',
+      persona: activePersona,
+      model: activePersona,
+      authorId,
+      userId: authorId,
+      username: opts.username || 'DiscordUser',
+      isSuperChillUser: isSuperChill,
+      isSuperChill,
+      mode: opts.mode || (opts.deepThink ? 'deep-cot' : opts.crashout ? 'crashout' : undefined),
+      deepThink: Boolean(opts.deepThink || opts.mode === 'deep' || opts.mode === 'deep-cot'),
+      crashout: Boolean(opts.crashout || opts.mode === 'crashout' || activePersona === 'crashout-bot'),
+      history: opts.history || opts.messages || [],
+      memories: Array.isArray(opts.memories) ? opts.memories : [],
+      rules: allRules.join('\n'),
+      customRules: allRules.join('\n'),
+      imageUrl: opts.imageUrl || opts.image || opts.attachmentUrl || '',
+      imageData: opts.imageData || '',
+      image: opts.imageUrl || opts.image || '',
+      temperature: typeof opts.temperature === 'number' ? opts.temperature : this.defaultTemperature,
+      webSearch: opts.webSearch,
+      search: opts.search,
+      searchEngine: opts.searchEngine || opts.provider,
+      provider: opts.provider || opts.searchEngine,
+      stream: true,
+    };
+
+    const res = await fetch(`${this.baseUrl}/nexus`, {
+      method: 'POST',
+      headers: this._getHeaders(),
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok || !res.body) {
+      throw new Error(`Nexus stream API HTTP ${res.status}: ${res.statusText || 'Request failed'}`);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let finalPayload = null;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let parsed;
+        try {
+          parsed = JSON.parse(line);
+        } catch {
+          continue; // a split/malformed line — skip rather than crash the whole stream
+        }
+        if (parsed.type === 'token' && typeof parsed.text === 'string') {
+          onToken(parsed.text);
+        } else if (parsed.type === 'final') {
+          const { type, ...rest } = parsed;
+          finalPayload = rest;
+        } else if (parsed.type === 'error') {
+          throw new Error(parsed.message || 'Nexus stream API reported an error mid-stream');
+        }
+      }
+    }
+
+    if (!finalPayload) {
+      throw new Error('Nexus stream API ended without a final payload');
+    }
+    return finalPayload;
+  }
+
+  /**
    * Ask Nexus a question and receive the plain string text answer.
    * @param {Object|string} options - Prompt string or options object
    * @returns {Promise<string>}

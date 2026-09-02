@@ -157,6 +157,69 @@ export async function askNexusAi(question, userContext = {}) {
 }
 
 /**
+ * Same as askNexusAi above, but streams the reply back via onToken as the engine generates it
+ * (only the casual/small-talk conversational path actually streams anything server-side — a
+ * grounded factual question just produces zero onToken calls and goes straight to the final
+ * result, exactly like askNexusAi would have). Mirrors askNexusAi's memory-fetch/save and
+ * channel-history recording so callers get identical side effects either way.
+ *
+ * Falls back to the plain non-streaming askNexusAi (which has its own retrying HTTP client and
+ * offline-fallback text) on ANY failure — a network hiccup, a malformed stream, whatever — rather
+ * than duplicating that error handling here. Returns `{ reply, streamed }` so the caller (the
+ * Discord message-editing logic) knows whether anything was actually streamed or whether the
+ * fallback text just needs to be sent as one normal reply.
+ *
+ * @param {string} question
+ * @param {Object} userContext
+ * @param {(chunk: string) => void} onToken
+ * @returns {Promise<{ reply: string, streamed: boolean }>}
+ */
+export async function askNexusAiStream(question, userContext = {}, onToken) {
+  const isSuperChillUser = userContext.userId === '1394001641899954368' || Boolean(userContext.isSuperChillUser);
+  const hasMemoryAccess = Boolean(userContext.client && userContext.userId);
+  let streamedAny = false;
+
+  try {
+    const memories = hasMemoryAccess
+      ? await getUserMemories(userContext.client, userContext.userId)
+      : [];
+    const history = userContext.channelId ? getChannelHistory(userContext.channelId) : [];
+    const data = await nexusClient.askStream(
+      {
+        prompt: question,
+        authorId: userContext.userId,
+        username: userContext.username,
+        isSuperChillUser,
+        memories,
+        history,
+      },
+      (chunk) => {
+        streamedAny = true;
+        onToken(chunk);
+      }
+    );
+    const reply = data?.response || data?.text || '';
+    if (!reply) throw new Error('Empty response from Nexus stream API');
+    if (hasMemoryAccess && data?.newMemory) {
+      saveUserMemory(userContext.client, userContext.userId, data.newMemory).catch(() => {});
+    }
+    if (userContext.channelId) {
+      recordChannelMessage(userContext.channelId, {
+        authorId: userContext.client?.user?.id,
+        username: 'Nexus',
+        content: reply,
+        isBot: true,
+      });
+    }
+    return { reply, streamed: streamedAny };
+  } catch (err) {
+    logger.warn(`[Nexus AI] Stream API call failed (${err.message}), falling back to non-streaming askNexusAi`);
+    const reply = await askNexusAi(question, userContext);
+    return { reply, streamed: false };
+  }
+}
+
+/**
  * Strips all invisible Unicode whitespace, braille blanks, hangul fillers, and zero-width characters.
  */
 function cleanInvisibleCharacters(str) {
@@ -302,12 +365,71 @@ export async function handleNexusAiMessage(message) {
   }, 8000);
 
   try {
-    const answer = await askNexusAi(question, {
+    // Progressive streaming: the reply message fills in as Nexus "types" instead of Discord
+    // showing nothing until the whole answer is ready. Only the plain casual-chat path actually
+    // streams anything server-side (see askNexusAiStream/nexus-ai.js's askStream) — a grounded
+    // factual question just produces zero onToken calls, so `sentMessage` never gets created here
+    // and the code falls through to the exact same single-reply-with-full-text behavior this
+    // function always had, just reached from `streamed === false` instead of a separate branch.
+    let sentMessage = null;
+    let sendingInitial = false;
+    let pendingContent = '';
+    let lastEditAt = 0;
+    let editTimer = null;
+    // Discord's real edit rate limits make per-token edits unsafe — batching on a fixed interval
+    // (never faster than this) keeps well clear of them regardless of how fast the model streams.
+    const EDIT_INTERVAL_MS = 1300;
+    // Matches splitIntoChunks' own maxLength — once a streaming reply gets this long, stop live-
+    // editing (a reply this long from the casual path is rare; LLM_MAX_TOKENS_CASUAL keeps these
+    // short in practice) and let the final splitIntoChunks pass below handle it as multiple
+    // messages, same as the non-streaming path always has.
+    const STREAM_EDIT_CHAR_LIMIT = 1900;
+
+    const flushEdit = () => {
+      editTimer = null;
+      if (!sentMessage || pendingContent.length === 0 || pendingContent.length > STREAM_EDIT_CHAR_LIMIT) return;
+      const toWrite = pendingContent;
+      sentMessage.edit({ content: toWrite }).then(() => {
+        lastEditAt = Date.now();
+      }).catch(() => {
+        // A failed edit (message deleted, permissions changed mid-stream, etc.) isn't fatal — the
+        // final edit after generation completes still gets tried the same way.
+      });
+    };
+
+    const onToken = (chunk) => {
+      pendingContent += chunk;
+      if (!sentMessage && !sendingInitial) {
+        // First real content — send the initial reply now rather than waiting on the edit
+        // throttle, so the message appears as soon as there's something worth showing.
+        sendingInitial = true;
+        message.reply({ content: pendingContent.slice(0, STREAM_EDIT_CHAR_LIMIT) || '...' })
+          .then((msg) => {
+            sentMessage = msg;
+            lastEditAt = Date.now();
+          })
+          .catch(() => {
+            // If even the initial reply fails, sentMessage stays null — later logic just falls
+            // through to sending the complete final answer as one normal reply instead.
+          });
+        return;
+      }
+      if (!sentMessage || editTimer) return;
+      const delay = Math.max(0, EDIT_INTERVAL_MS - (Date.now() - lastEditAt));
+      editTimer = setTimeout(flushEdit, delay);
+    };
+
+    const { reply: answer, streamed } = await askNexusAiStream(question, {
       userId,
       username: message.author.username,
       client: message.client,
       channelId: message.channel.id
-    });
+    }, onToken);
+
+    if (editTimer) {
+      clearTimeout(editTimer);
+      editTimer = null;
+    }
 
     // Check if answer is missing or consists entirely of invisible blank characters
     if (!answer || cleanInvisibleCharacters(answer).length === 0) {
@@ -318,14 +440,28 @@ export async function handleNexusAiMessage(message) {
     }
 
     const chunks = splitIntoChunks(answer);
-    if (chunks.length === 1) {
+    if (streamed && sentMessage && chunks.length === 1) {
+      // Final edit with the verified, possibly-slightly-different-from-streamed text (a safety
+      // block, swear-floor top-up, or phone-number correction can tweak the tail end after the
+      // raw stream already showed something close to it) — this edit is the source of truth for
+      // what the message ends up reading, not whatever was last streamed.
+      await sentMessage.edit({ content: chunks[0] }).catch(async () => {
+        // If the edit itself fails for some reason, still get the real answer to the user.
+        await message.reply({ content: chunks[0] }).catch(() => {});
+      });
+    } else if (chunks.length === 1) {
       await message.reply({
         content: chunks[0]
       });
     } else {
-      await message.reply({
-        content: chunks[0]
-      });
+      // Multi-chunk answers (rare for the streaming-eligible casual path, normal for longer
+      // grounded answers) — if a streamed reply message already exists, its first edit becomes
+      // chunk 1 instead of sending a duplicate message.
+      if (streamed && sentMessage) {
+        await sentMessage.edit({ content: chunks[0] }).catch(() => {});
+      } else {
+        await message.reply({ content: chunks[0] });
+      }
       for (let i = 1; i < chunks.length; i++) {
         await message.channel.send({
           content: chunks[i]
