@@ -13,6 +13,7 @@ import { handleAutoSlowmode } from '../services/autoSlowmodeService.js';
 import { handleChaosTriggers } from '../services/chaosTriggerService.js';
 import { handleStickyNote } from '../services/stickyNoteService.js';
 import { handleNexusAiMessage } from '../services/nexusAiService.js';
+import { recordChannelMessage } from '../services/channelHistoryService.js';
 import { recordWeeklyStat } from '../services/weeklySummaryService.js';
 import { handleDirectMessage } from '../services/dmService.js';
 
@@ -107,6 +108,20 @@ export default {
           logger.debug('Error in chaos trigger handler:', err)
         );
       }
+
+      // Nexus's "brain" — record this message into its channel's rolling history AFTER
+      // handleNexusAiMessage already ran above, not before: that ordering means a message that
+      // itself triggers Nexus sees the channel's history as it stood BEFORE this message (so
+      // it isn't handed its own current question as if it were prior context), while still
+      // being available to every message that comes after it. Every real message counts, not
+      // just ones addressed to Nexus — that's the whole point, ambient awareness of the channel
+      // instead of only its own Q&A turns.
+      recordChannelMessage(message.channel.id, {
+        authorId: message.author.id,
+        username: message.author.username,
+        content: message.content,
+        isBot: false,
+      });
     } catch (error) {
       logger.error('Error in messageCreate event:', error);
     } finally {

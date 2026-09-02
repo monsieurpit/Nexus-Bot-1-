@@ -3,6 +3,7 @@ dotenv.config();
 import { logger } from '../utils/logger.js';
 import { NexusAI } from '../../nexus-ai.js';
 import { getUserMemories, saveUserMemory } from './memoryBrainService.js';
+import { getChannelHistory, recordChannelMessage } from './channelHistoryService.js';
 
 // Talks to your real, deployed Nexus AI engine — the same custom engine that lives in the
 // Nexus-AI- repo (footballIntelligence.ts, bm25Engine.ts, reasoningEngine.ts, etc.), instead of
@@ -117,12 +118,19 @@ export async function askNexusAi(question, userContext = {}) {
     const memories = hasMemoryAccess
       ? await getUserMemories(userContext.client, userContext.userId)
       : [];
+    // Nexus's "brain" — channelHistoryService.js's rolling per-channel buffer, recorded on EVERY
+    // message in messageCreate.js (not just ones addressed to Nexus). Before this, `history` was
+    // never populated at all: every question got answered with zero conversation context, no
+    // matter how good the AI engine's own follow-up/entity-tracking logic was on the other end —
+    // it simply never received anything to work with.
+    const history = userContext.channelId ? getChannelHistory(userContext.channelId) : [];
     const data = await nexusClient.askJSON({
       prompt: question,
       authorId: userContext.userId,
       username: userContext.username,
       isSuperChillUser,
       memories,
+      history,
     });
     const reply = data?.response || data?.text || '';
     if (!reply) throw new Error('Empty response from Nexus API');
@@ -130,6 +138,16 @@ export async function askNexusAi(question, userContext = {}) {
       // Best-effort, fire-and-forget by design (see saveUserMemory's own comment) — never lets a
       // memory-persistence failure delay or break the reply the user is actually waiting on.
       saveUserMemory(userContext.client, userContext.userId, data.newMemory).catch(() => {});
+    }
+    // Record Nexus's own reply too, tagged assistant — so the NEXT message in this channel
+    // (whether it's a follow-up to Nexus or just ambient chatter) has this turn available too.
+    if (userContext.channelId) {
+      recordChannelMessage(userContext.channelId, {
+        authorId: userContext.client?.user?.id,
+        username: 'Nexus',
+        content: reply,
+        isBot: true,
+      });
     }
     return reply;
   } catch (err) {
@@ -278,7 +296,8 @@ export async function handleNexusAiMessage(message) {
     const answer = await askNexusAi(question, {
       userId,
       username: message.author.username,
-      client: message.client
+      client: message.client,
+      channelId: message.channel.id
     });
 
     // Check if answer is missing or consists entirely of invisible blank characters
