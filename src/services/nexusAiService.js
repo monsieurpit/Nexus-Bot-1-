@@ -147,6 +147,9 @@ export async function askNexusAi(question, userContext = {}) {
         username: 'Nexus',
         content: reply,
         isBot: true,
+        // Which user's question this reply is actually answering — see channelHistoryService.js's
+        // own comment on replyToAuthorId for why this matters more than positional adjacency.
+        replyToAuthorId: userContext.userId,
       });
     }
     return reply;
@@ -209,6 +212,9 @@ export async function askNexusAiStream(question, userContext = {}, onToken) {
         username: 'Nexus',
         content: reply,
         isBot: true,
+        // Which user's question this reply is actually answering — see channelHistoryService.js's
+        // own comment on replyToAuthorId for why this matters more than positional adjacency.
+        replyToAuthorId: userContext.userId,
       });
     }
     return { reply, streamed: streamedAny };

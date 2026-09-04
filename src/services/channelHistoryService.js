@@ -34,7 +34,7 @@ function getOrCreateBuffer(channelId) {
  * messageCreate.js (not just ones addressed to Nexus) — that's the whole point, ambient
  * awareness of the channel, not just its own Q&A turns.
  * @param {string} channelId
- * @param {{ authorId: string, username: string, content: string, isBot: boolean }} entry
+ * @param {{ authorId: string, username: string, content: string, isBot: boolean, replyToAuthorId?: string }} entry
  */
 export function recordChannelMessage(channelId, entry) {
   if (!channelId || !entry?.content?.trim()) return;
@@ -44,6 +44,11 @@ export function recordChannelMessage(channelId, entry) {
     content: entry.content.trim().slice(0, 1000), // a single message being absurdly long shouldn't blow out the buffer
     authorId: entry.authorId,
     username: entry.username,
+    // Only meaningful on the bot's own (isBot) entries — which user's question this specific
+    // reply was actually answering. See ChatMessage.replyToAuthorId (types.ts, Nexus-AI- repo) for
+    // why this exists: positional adjacency in a busy multi-speaker channel can't reliably tell
+    // who a reply was for once other people's messages land in between.
+    replyToAuthorId: entry.replyToAuthorId,
     timestamp: Date.now(),
   });
   if (buffer.messages.length > MAX_MESSAGES_PER_CHANNEL) {
@@ -72,6 +77,7 @@ export function getChannelHistory(channelId, limit = MAX_MESSAGES_PER_CHANNEL) {
     content: m.content,
     authorId: m.authorId,
     username: m.username,
+    replyToAuthorId: m.replyToAuthorId,
   }));
 }
 
