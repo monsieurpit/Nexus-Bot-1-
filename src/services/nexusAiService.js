@@ -371,71 +371,21 @@ export async function handleNexusAiMessage(message) {
   }, 8000);
 
   try {
-    // Progressive streaming: the reply message fills in as Nexus "types" instead of Discord
-    // showing nothing until the whole answer is ready. Only the plain casual-chat path actually
-    // streams anything server-side (see askNexusAiStream/nexus-ai.js's askStream) — a grounded
-    // factual question just produces zero onToken calls, so `sentMessage` never gets created here
-    // and the code falls through to the exact same single-reply-with-full-text behavior this
-    // function always had, just reached from `streamed === false` instead of a separate branch.
-    let sentMessage = null;
-    let sendingInitial = false;
-    let pendingContent = '';
-    let lastEditAt = 0;
-    let editTimer = null;
-    // Discord's real edit rate limits make per-token edits unsafe — batching on a fixed interval
-    // (never faster than this) keeps well clear of them regardless of how fast the model streams.
-    const EDIT_INTERVAL_MS = 1300;
-    // Matches splitIntoChunks' own maxLength — once a streaming reply gets this long, stop live-
-    // editing (a reply this long from the casual path is rare; LLM_MAX_TOKENS_CASUAL keeps these
-    // short in practice) and let the final splitIntoChunks pass below handle it as multiple
-    // messages, same as the non-streaming path always has.
-    const STREAM_EDIT_CHAR_LIMIT = 1900;
+    // Progressive token-by-token streaming was removed on purpose: it made the Discord message
+    // visibly rebuild itself through half-formed, under-sworn intermediate states (the swear
+    // floor / safety top-up only applies to the FINAL text, so the streamed preview and the
+    // settled message always differed and it "edited" in front of you). One complete, fully
+    // processed reply, sent once, is what Patrick wants. The persistent typing indicator above
+    // covers the wait.
+    const sentMessage = null;
+    const streamed = false;
 
-    const flushEdit = () => {
-      editTimer = null;
-      if (!sentMessage || pendingContent.length === 0 || pendingContent.length > STREAM_EDIT_CHAR_LIMIT) return;
-      const toWrite = pendingContent;
-      sentMessage.edit({ content: toWrite }).then(() => {
-        lastEditAt = Date.now();
-      }).catch(() => {
-        // A failed edit (message deleted, permissions changed mid-stream, etc.) isn't fatal — the
-        // final edit after generation completes still gets tried the same way.
-      });
-    };
-
-    const onToken = (chunk) => {
-      pendingContent += chunk;
-      if (!sentMessage && !sendingInitial) {
-        // First real content — send the initial reply now rather than waiting on the edit
-        // throttle, so the message appears as soon as there's something worth showing.
-        sendingInitial = true;
-        message.reply({ content: pendingContent.slice(0, STREAM_EDIT_CHAR_LIMIT) || '...' })
-          .then((msg) => {
-            sentMessage = msg;
-            lastEditAt = Date.now();
-          })
-          .catch(() => {
-            // If even the initial reply fails, sentMessage stays null — later logic just falls
-            // through to sending the complete final answer as one normal reply instead.
-          });
-        return;
-      }
-      if (!sentMessage || editTimer) return;
-      const delay = Math.max(0, EDIT_INTERVAL_MS - (Date.now() - lastEditAt));
-      editTimer = setTimeout(flushEdit, delay);
-    };
-
-    const { reply: answer, streamed } = await askNexusAiStream(question, {
+    const answer = await askNexusAi(question, {
       userId,
       username: message.author.username,
       client: message.client,
       channelId: message.channel.id
-    }, onToken);
-
-    if (editTimer) {
-      clearTimeout(editTimer);
-      editTimer = null;
-    }
+    });
 
     // Check if answer is missing or consists entirely of invisible blank characters
     if (!answer || cleanInvisibleCharacters(answer).length === 0) {
