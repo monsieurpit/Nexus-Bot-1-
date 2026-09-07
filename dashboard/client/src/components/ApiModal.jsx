@@ -289,7 +289,7 @@ export default function ApiModal({ isOpen, onClose }) {
               <div className="bg-[#161824] p-4 rounded-xl border border-[#222638] space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold text-gray-200 uppercase tracking-wider">🚀 3-Step Discord Bot Quickstart</span>
-                  <span className="text-[11px] text-brand-400 font-mono">bot.js & nexus-ai.js ready in root</span>
+                  <span className="text-[11px] text-brand-400 font-mono">index.js & nexus-ai.js ready in root</span>
                 </div>
                 <div className="bg-[#0b0c12] p-3 rounded-lg border border-[#1b1e2c] text-xs font-mono text-gray-300 space-y-1">
                   <p className="text-gray-500"># 1. Install dependencies</p>
@@ -297,7 +297,7 @@ export default function ApiModal({ isOpen, onClose }) {
                   <p className="text-gray-500 mt-2"># 2. Configure .env with your DISCORD_BOT_TOKEN</p>
                   <p className="text-brand-300">DISCORD_BOT_TOKEN="your_token_here"</p>
                   <p className="text-gray-500 mt-2"># 3. Start your custom AI Discord Bot</p>
-                  <p className="text-emerald-400">node bot.js</p>
+                  <p className="text-emerald-400">node index.js</p>
                 </div>
               </div>
             </div>
