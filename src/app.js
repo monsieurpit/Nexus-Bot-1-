@@ -259,6 +259,26 @@ class TitanBot extends Client {
       res.json({ ok: true, guildId });
     });
 
+    // Internal API: force a global slash-command re-registration without a full bot restart.
+    // Useful right after shipping a new command / subcommand (e.g. `/football prediction-now`)
+    // so it doesn't have to wait for the next Railway redeploy to be PUT to Discord. Discord's
+    // own global-command propagation delay (minutes, up to ~1h) still applies afterward.
+    app.post('/api/internal/redeploy-commands', async (req, res) => {
+      if (!this.isReady()) {
+        return res.status(503).json({ error: 'Bot not ready yet' });
+      }
+      try {
+        await loadCommands(this);
+        await this.registerCommands();
+        const names = Array.from(this.commands.keys()).sort();
+        logger.info(`Slash commands re-registered on demand via internal API (${names.length} commands)`);
+        res.json({ ok: true, count: names.length, commands: names });
+      } catch (err) {
+        logger.error('On-demand command re-registration failed:', err.message);
+        res.status(500).json({ error: err.message });
+      }
+    });
+
     const startServer = (port, attempt = 0) => {
       let hasStartedListening = false;
       const server = app.listen(port, host, () => {
