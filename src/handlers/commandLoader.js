@@ -266,10 +266,27 @@ export async function registerCommands(client, clientId, guildId) {
             );
         }
 
-        const targetClientId = clientId || client.user?.id || client.application?.id;
+        let targetClientId = clientId || client.user?.id || client.application?.id;
         if (!targetClientId) {
-            logger.warn('Could not register commands: No clientId or client.user.id available yet.');
-            return;
+            // Last resort: pull the application id straight from Discord. This path matters when
+            // CLIENT_ID isn't set as an env var AND registerCommands ran before the gateway READY
+            // dispatch populated client.user — in which case this used to silently `return` and
+            // NO command update ever reached Discord (existing commands kept working from a prior
+            // successful run, so nothing looked broken). Now it fetches the id and, only if that
+            // also fails, throws loudly instead of no-oping.
+            try {
+                const app = await client.application?.fetch();
+                targetClientId = app?.id || null;
+            } catch (err) {
+                logger.error(`Could not resolve application id for command registration: ${err.message}`);
+            }
+            if (!targetClientId) {
+                throw new Error(
+                    'Command registration aborted: could not determine the application/client id ' +
+                    '(no CLIENT_ID env var, and client.user / client.application are not ready yet). ' +
+                    'Set CLIENT_ID in the environment or register after the client "ready" event.'
+                );
+            }
         }
 
         // ─── GLOBAL REGISTRATION ───────────────────────────────────────────────

@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { Client, Collection, GatewayIntentBits } from 'discord.js';
+import { Client, Collection, GatewayIntentBits, Events } from 'discord.js';
 import { REST } from '@discordjs/rest';
 import express from 'express';
 import cron from 'node-cron';
@@ -90,7 +90,26 @@ class TitanBot extends Client {
           startupLog('Logging into Discord...');
           await this.login(this.config.bot.token);
           startupLog('Discord login successful');
-          
+
+          // Wait for the gateway READY dispatch before registering commands. `client.login()`
+          // can resolve before `client.user` / `client.application` are populated; registering
+          // at that point leaves the application id undefined and — with no CLIENT_ID env var —
+          // the whole global command PUT silently no-ops, so new commands/subcommands (e.g.
+          // `/football prediction-now`) never reach Discord even though every deploy "succeeds".
+          if (!this.isReady()) {
+            startupLog('Waiting for client ready before registering commands...');
+            await new Promise((resolve) => {
+              const timer = setTimeout(() => {
+                logger.warn('Timed out waiting for client ready; attempting command registration anyway.');
+                resolve();
+              }, 45000);
+              this.once(Events.ClientReady, () => {
+                clearTimeout(timer);
+                resolve();
+              });
+            });
+          }
+
           startupLog('Registering slash commands...');
           await this.registerCommands();
           startupLog('Slash commands registration complete');
