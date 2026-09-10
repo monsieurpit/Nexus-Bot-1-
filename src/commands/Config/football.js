@@ -14,6 +14,7 @@ import {
     setFootballConfig,
     getAllMatches,
     sendMatchAlert,
+    sendPredictionRequest,
     formatMatchAnnouncement,
     syncBarcelonaFixturesFromApi,
     getFootballApiStatus,
@@ -47,6 +48,55 @@ export default {
                     opt
                         .setName('enabled')
                         .setDescription('Enable automated 3-day announcements (default: true)')
+                        .setRequired(false)
+                )
+        )
+        .addSubcommand(sub =>
+            sub
+                .setName('set-prediction-channel')
+                .setDescription('Set the channel + role for match prediction requests (posted with the 3-day matchday alert)')
+                .addChannelOption(opt =>
+                    opt
+                        .setName('channel')
+                        .setDescription('Channel where prediction requests will be posted')
+                        .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
+                        .setRequired(true)
+                )
+                .addRoleOption(opt =>
+                    opt
+                        .setName('role')
+                        .setDescription('Role to ping when asking for predictions (optional)')
+                        .setRequired(false)
+                )
+                .addBooleanOption(opt =>
+                    opt
+                        .setName('enabled')
+                        .setDescription('Enable automated prediction requests (default: true)')
+                        .setRequired(false)
+                )
+        )
+        .addSubcommand(sub =>
+            sub
+                .setName('prediction-now')
+                .setDescription('Immediately post a prediction request to test or run one on demand')
+                .addStringOption(opt =>
+                    opt
+                        .setName('match')
+                        .setDescription('Select or enter match ID (defaults to the next upcoming match)')
+                        .setAutocomplete(true)
+                        .setRequired(false)
+                )
+                .addBooleanOption(opt =>
+                    opt
+                        .setName('ping_role')
+                        .setDescription('Whether to ping the configured prediction role (default: true)')
+                        .setRequired(false)
+                )
+                .addChannelOption(opt =>
+                    opt
+                        .setName('channel')
+                        .setDescription('Optional specific channel to send this prediction request to')
+                        .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
                         .setRequired(false)
                 )
         )
@@ -210,6 +260,110 @@ export default {
             return await InteractionHelper.safeEditReply(interaction, { embeds: [embed] });
         }
 
+        if (sub === 'set-prediction-channel') {
+            const channel = interaction.options.getChannel('channel');
+            const role = interaction.options.getRole('role');
+            const enabled = interaction.options.getBoolean('enabled') ?? true;
+
+            let me = guild.members.me;
+            if (!me) me = await guild.members.fetchMe().catch(() => null);
+
+            const perms = me ? channel.permissionsFor(me) : channel.permissionsFor(client.user.id);
+            if (!perms || !perms.has(['ViewChannel', 'SendMessages', 'EmbedLinks'])) {
+                return await InteractionHelper.safeEditReply(interaction, {
+                    embeds: [errorEmbed(
+                        'Missing Channel Permissions',
+                        `I need **View Channel**, **Send Messages**, and **Embed Links** permissions in ${channel}.`
+                    )],
+                    flags: MessageFlags.Ephemeral
+                });
+            }
+
+            await setFootballConfig(client, guild.id, {
+                predictionChannelId: channel.id,
+                predictionRoleId: role ? role.id : null,
+                predictionsEnabled: enabled
+            });
+
+            const roleDisplay = role ? `<@&${role.id}>` : '*None (No ping)*';
+
+            const embed = new EmbedBuilder()
+                .setColor(getColor('success'))
+                .setTitle('🔮 FC Barcelona Match Predictions Configured')
+                .setDescription(
+                    `Prediction requests are now configured!\n\n` +
+                    `📢 **Channel:** ${channel}\n` +
+                    `🔔 **Prediction Role:** ${roleDisplay}\n` +
+                    `⏱️ **Schedule:** A prediction request is posted **at the same time as the 3-day matchday alert** for each FC Barcelona match.\n` +
+                    `⚡ **Status:** ${enabled ? '🟢 Active' : '🔴 Disabled'}\n\n` +
+                    `*Run \`/football prediction-now\` to test a live prediction request at any time.*`
+                )
+                .setFooter({ text: 'FC Barcelona Prediction System' })
+                .setTimestamp();
+
+            return await InteractionHelper.safeEditReply(interaction, { embeds: [embed] });
+        }
+
+        if (sub === 'prediction-now') {
+            const matchIdInput = interaction.options.getString('match');
+            const pingRoleOpt = interaction.options.getBoolean('ping_role') ?? true;
+            const channelOverride = interaction.options.getChannel('channel');
+            const config = await getFootballConfig(client, guild.id);
+
+            const matches = getAllMatches(config.customMatches);
+
+            let selectedMatch = null;
+            if (matchIdInput) {
+                const cleanInput = matchIdInput.trim().toLowerCase();
+                selectedMatch = matches.find(m =>
+                    m.id.toLowerCase() === cleanInput ||
+                    m.id.toLowerCase().includes(cleanInput) ||
+                    m.title.toLowerCase().includes(cleanInput) ||
+                    m.opponent?.toLowerCase().includes(cleanInput)
+                );
+            }
+            if (!selectedMatch) {
+                selectedMatch = matches.find(m => new Date(m.kickoffUtc).getTime() > Date.now()) || matches[0] || DEFAULT_BARCELONA_MATCHES[0];
+            }
+
+            let targetChannel = channelOverride;
+            if (!targetChannel && config.predictionChannelId) {
+                targetChannel = client.channels.cache.get(config.predictionChannelId) ||
+                                await client.channels.fetch(config.predictionChannelId).catch(() => null);
+            }
+            if (!targetChannel) targetChannel = interaction.channel;
+
+            const targetChannelId = targetChannel?.id || interaction.channelId;
+            const roleToPing = (pingRoleOpt && config.predictionRoleId) ? config.predictionRoleId : null;
+
+            try {
+                await sendPredictionRequest(client, targetChannelId, selectedMatch, roleToPing);
+
+                if (!config.predictedMatches?.includes(selectedMatch.id)) {
+                    const newPredicted = [...(config.predictedMatches || []), selectedMatch.id];
+                    await setFootballConfig(client, guild.id, { predictedMatches: newPredicted });
+                }
+
+                return await InteractionHelper.safeEditReply(interaction, {
+                    embeds: [successEmbed(
+                        'Prediction Request Sent 🔮',
+                        `Successfully posted a prediction request for **${selectedMatch.title}** (ID: \`${selectedMatch.id}\`) to <#${targetChannelId}>!`
+                    )],
+                    flags: MessageFlags.Ephemeral
+                });
+            } catch (err) {
+                logger.error('Error in football prediction-now:', err);
+                return await InteractionHelper.safeEditReply(interaction, {
+                    embeds: [errorEmbed(
+                        'Failed to Send Prediction Request',
+                        `Could not post to <#${targetChannelId}>:\n${err.message}`,
+                        { showDetails: true }
+                    )],
+                    flags: MessageFlags.Ephemeral
+                });
+            }
+        }
+
         if (sub === 'sync-api') {
             try {
                 const updatedMatches = await syncBarcelonaFixturesFromApi();
@@ -319,6 +473,8 @@ export default {
             const channelDisplay = config.channelId ? `<#${config.channelId}>` : '*Not configured*';
             const liveBoardDisplay = config.scheduleChannelId ? `<#${config.scheduleChannelId}> (${config.scheduleEnabled ? '🟢 Hourly Auto-Updates' : '🔴 Disabled'})` : '*Not configured*';
             const roleDisplay = config.roleId ? `<@&${config.roleId}>` : '*None*';
+            const predictionChannelDisplay = config.predictionChannelId ? `<#${config.predictionChannelId}>` : '*Not configured*';
+            const predictionRoleDisplay = config.predictionRoleId ? `<@&${config.predictionRoleId}>` : '*None*';
             const allMatches = getAllMatches(config.customMatches);
             const apiStatus = getFootballApiStatus();
 
@@ -335,6 +491,9 @@ export default {
                     { name: '📌 Live Schedule Board', value: liveBoardDisplay, inline: true },
                     { name: '🔔 Ping Role', value: roleDisplay, inline: true },
                     { name: '⚡ Auto Alerts', value: config.enabled ? '🟢 Enabled (3 days prior)' : '🔴 Disabled', inline: true },
+                    { name: '🔮 Prediction Channel', value: predictionChannelDisplay, inline: true },
+                    { name: '🔮 Prediction Role', value: predictionRoleDisplay, inline: true },
+                    { name: '🔮 Auto Predictions', value: config.predictionsEnabled ? '🟢 Enabled (with 3-day alert)' : '🔴 Disabled', inline: true },
                     { name: '📋 Total Fixtures in Schedule', value: `${allMatches.length} matches (API + Custom)`, inline: true },
                     { name: '🌐 API Sync Status', value: apiStatus.lastSyncStatus || 'Active', inline: true },
                     { name: '⏳ Next Scheduled Match', value: nextMatchText, inline: false }

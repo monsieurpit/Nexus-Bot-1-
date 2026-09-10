@@ -976,6 +976,100 @@ ${match.transportEs || 'Consulta el transporte público local para llegar al est
 }
 
 /**
+ * Formats a prediction request for an upcoming match — posted at the same time as the 3-day matchday alert,
+ * pings the configured prediction role and asks members to drop their scoreline predictions.
+ */
+export function formatPredictionAnnouncement(match, roleId = null) {
+    let roleMention = '';
+    if (roleId) {
+        const cleanRoleId = String(roleId).trim();
+        if (cleanRoleId === 'everyone' || cleanRoleId === '@everyone') {
+            roleMention = '@everyone ';
+        } else if (cleanRoleId === 'here' || cleanRoleId === '@here') {
+            roleMention = '@here ';
+        } else {
+            roleMention = `<@&${cleanRoleId}> `;
+        }
+    }
+
+    const kickoffUnix = match.kickoffUtc ? Math.floor(new Date(match.kickoffUtc).getTime() / 1000) : null;
+    const discordTime = kickoffUnix ? `<t:${kickoffUnix}:F> (<t:${kickoffUnix}:R>)` : 'TBA';
+    const isHome = match.homeOrAway === 'home';
+    const scoreExample = isHome ? `Barça 2–1 ${match.opponent || 'Rival'}` : `${match.opponent || 'Rival'} 0–3 Barça`;
+
+    return `${roleMention}
+# 🔮 PREDICCIONES / PREDICTIONS — ${match.title}
+
+🏆 **${match.competition || 'Official Competition'}** • ${match.matchday || 'Official Matchday'}
+⏰ **Kick-off:** ${discordTime}
+
+---
+🗳️ **Deja tu pronóstico del marcador en este canal / Drop your scoreline prediction in this channel.**
+Ejemplo / Example: \`${scoreExample}\`
+
+Bonus: ¿goleador? ¿resultado exacto? / top scorer? exact result?
+Los pronósticos cierran al pitido inicial. / Predictions close at kick-off. 🔵🔴`;
+}
+
+/**
+ * Posts a prediction request message to a channel, pinging the given role.
+ */
+export async function sendPredictionRequest(client, channelIdOrChannel, match, roleId = null) {
+    if (!match) {
+        throw new Error('No match fixture data provided to sendPredictionRequest.');
+    }
+
+    let targetChannelId = null;
+    if (typeof channelIdOrChannel === 'string') {
+        targetChannelId = channelIdOrChannel;
+    } else if (channelIdOrChannel && typeof channelIdOrChannel === 'object' && channelIdOrChannel.id) {
+        targetChannelId = channelIdOrChannel.id;
+    }
+    if (!targetChannelId) {
+        throw new Error('No valid channel or channel ID provided for prediction request.');
+    }
+
+    let channel = client.channels?.cache?.get(targetChannelId) ||
+        await client.channels?.fetch?.(targetChannelId).catch(err => {
+            logger.warn(`Could not fetch channel ${targetChannelId} for prediction request: ${err.message}`);
+            return null;
+        });
+
+    if (!channel && channelIdOrChannel && typeof channelIdOrChannel.send === 'function') {
+        channel = channelIdOrChannel;
+    }
+
+    if (!channel || typeof channel.send !== 'function') {
+        throw new Error(`Target prediction channel <#${targetChannelId}> is not accessible or cannot receive text messages. Run \`/football set-prediction-channel\` to choose another channel.`);
+    }
+
+    let allowedMentions = { parse: [] };
+    if (roleId) {
+        const cleanRoleId = String(roleId).trim();
+        if (cleanRoleId === 'everyone' || cleanRoleId === '@everyone' || (channel.guild && cleanRoleId === channel.guild.id)) {
+            allowedMentions = { parse: ['everyone'] };
+        } else if (cleanRoleId === 'here' || cleanRoleId === '@here') {
+            allowedMentions = { parse: ['everyone'] };
+        } else {
+            allowedMentions = { roles: [cleanRoleId] };
+        }
+    }
+
+    try {
+        return await channel.send({
+            content: formatPredictionAnnouncement(match, roleId),
+            allowedMentions
+        });
+    } catch (sendError) {
+        logger.error(`Failed to send prediction request in #${channel.name || targetChannelId}:`, sendError);
+        if (sendError.code === 50013 || sendError.message?.toLowerCase().includes('permission')) {
+            throw new Error(`Missing required Discord permissions to send messages in <#${targetChannelId}>.`);
+        }
+        throw new Error(`Failed to send prediction request to <#${targetChannelId}>: ${sendError.message}`);
+    }
+}
+
+/**
  * Gets the football configuration for a guild
  */
 export async function getFootballConfig(client, guildId) {
@@ -986,6 +1080,10 @@ export async function getFootballConfig(client, guildId) {
             channelId: guildConfig.football?.channelId ?? null,
             roleId: guildConfig.football?.roleId ?? null,
             postedMatches: guildConfig.football?.postedMatches ?? [],
+            predictionsEnabled: guildConfig.football?.predictionsEnabled ?? false,
+            predictionChannelId: guildConfig.football?.predictionChannelId ?? null,
+            predictionRoleId: guildConfig.football?.predictionRoleId ?? null,
+            predictedMatches: guildConfig.football?.predictedMatches ?? [],
             customMatches: guildConfig.football?.customMatches ?? [],
             scheduleChannelId: guildConfig.football?.scheduleChannelId ?? null,
             scheduleMessageId: guildConfig.football?.scheduleMessageId ?? null,
@@ -998,6 +1096,10 @@ export async function getFootballConfig(client, guildId) {
             channelId: null,
             roleId: null,
             postedMatches: [],
+            predictionsEnabled: false,
+            predictionChannelId: null,
+            predictionRoleId: null,
+            predictedMatches: [],
             customMatches: [],
             scheduleChannelId: null,
             scheduleMessageId: null,
@@ -1245,13 +1347,16 @@ export async function checkFootballAnnouncements(client) {
             }
 
             // 3. Process 3-day automated match announcements
-            if (!config.enabled || !config.channelId) {
+            const alertsActive = config.enabled && config.channelId;
+            if (!alertsActive && !(config.predictionsEnabled && config.predictionChannelId)) {
                 continue;
             }
 
             const allMatches = getAllMatches(config.customMatches);
             const matchMap = new Map(allMatches.map(m => [m.id, m]));
             const postedSet = new Set(config.postedMatches || []);
+            const predictedSet = new Set(config.predictedMatches || []);
+            const predictionsActive = config.predictionsEnabled && config.predictionChannelId;
             let configNeedsSave = false;
 
             // Prune stale postedMatch IDs older than 45 days
@@ -1265,6 +1370,16 @@ export async function checkFootballAnnouncements(client) {
                     }
                 }
             }
+            for (const predId of predictedSet) {
+                const match = matchMap.get(predId);
+                if (match && match.kickoffUtc) {
+                    const matchTime = new Date(match.kickoffUtc).getTime();
+                    if (now - matchTime > FORTY_FIVE_DAYS_MS) {
+                        predictedSet.delete(predId);
+                        configNeedsSave = true;
+                    }
+                }
+            }
 
             for (const match of allMatches) {
                 const matchTime = new Date(match.kickoffUtc).getTime();
@@ -1272,7 +1387,7 @@ export async function checkFootballAnnouncements(client) {
                 // Check if match is in the future AND within 3 days from now
                 const isWithin3Days = matchTime > now && matchTime <= triggerThreshold;
 
-                if (isWithin3Days && !postedSet.has(match.id)) {
+                if (isWithin3Days && alertsActive && !postedSet.has(match.id)) {
                     logger.info(`[Football] Match ${match.title} is within 3 days! Posting announcement to guild ${guild.name} (#${config.channelId})...`);
 
                     try {
@@ -1285,11 +1400,26 @@ export async function checkFootballAnnouncements(client) {
                         logger.error(`[Football] Failed to post match announcement for ${match.title} in guild ${guildId}:`, sendErr);
                     }
                 }
+
+                // Prediction request — fires on the same 3-day trigger as the matchday alert
+                if (isWithin3Days && predictionsActive && !predictedSet.has(match.id)) {
+                    logger.info(`[Football] Match ${match.title} within 3 days! Posting prediction request to guild ${guild.name} (#${config.predictionChannelId})...`);
+
+                    try {
+                        await sendPredictionRequest(client, config.predictionChannelId, match, config.predictionRoleId);
+                        predictedSet.add(match.id);
+                        configNeedsSave = true;
+                        logger.info(`[Football] Successfully posted prediction request for ${match.title} in ${guild.name}`);
+                    } catch (predErr) {
+                        logger.error(`[Football] Failed to post prediction request for ${match.title} in guild ${guildId}:`, predErr);
+                    }
+                }
             }
 
             if (configNeedsSave) {
                 await setFootballConfig(client, guildId, {
-                    postedMatches: Array.from(postedSet)
+                    postedMatches: Array.from(postedSet),
+                    predictedMatches: Array.from(predictedSet)
                 });
             }
         } catch (guildErr) {
