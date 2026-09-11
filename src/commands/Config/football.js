@@ -21,6 +21,7 @@ import {
     updateLiveScheduleBoard,
     DEFAULT_BARCELONA_MATCHES
 } from '../../services/footballService.js';
+import { getPredictionsForMatch, resolvePredictions, getLeaderboard } from '../../services/predictionService.js';
 
 export default {
     data: new SlashCommandBuilder()
@@ -99,6 +100,39 @@ export default {
                         .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
                         .setRequired(false)
                 )
+        )
+        .addSubcommand(sub =>
+            sub
+                .setName('set-result')
+                .setDescription('Record the real final score for a match and score everyone\'s predictions')
+                .addStringOption(opt =>
+                    opt
+                        .setName('match')
+                        .setDescription('Select the match to resolve (defaults to the active prediction match)')
+                        .setAutocomplete(true)
+                        .setRequired(false)
+                )
+                .addIntegerOption(opt =>
+                    opt
+                        .setName('home_score')
+                        .setDescription('Final score for the home team')
+                        .setMinValue(0)
+                        .setMaxValue(20)
+                        .setRequired(true)
+                )
+                .addIntegerOption(opt =>
+                    opt
+                        .setName('away_score')
+                        .setDescription('Final score for the away team')
+                        .setMinValue(0)
+                        .setMaxValue(20)
+                        .setRequired(true)
+                )
+        )
+        .addSubcommand(sub =>
+            sub
+                .setName('leaderboard')
+                .setDescription('View the all-time FC Barcelona score-prediction leaderboard')
         )
         .addSubcommand(sub =>
             sub
@@ -203,6 +237,32 @@ export default {
 
         const { guild } = interaction;
         const sub = interaction.options.getSubcommand();
+
+        // Leaderboard is a read-only fun feature, not server configuration — anyone should be
+        // able to check the standings, not just Manage Server members. Every other subcommand
+        // below still requires ManageGuild.
+        if (sub === 'leaderboard') {
+            const board = await getLeaderboard(guild.id, 10);
+
+            const embed = new EmbedBuilder()
+                .setColor(getColor('primary'))
+                .setTitle('🔮 FC Barcelona Prediction Leaderboard')
+                .setFooter({ text: 'Exact score = 3 pts • Correct result, wrong score = 1 pt' })
+                .setTimestamp();
+
+            if (board.length === 0) {
+                embed.setDescription('No predictions have been scored yet. Predict a match, then wait for `/football set-result`!');
+            } else {
+                const medals = ['🥇', '🥈', '🥉'];
+                const lines = board.map((entry, i) => {
+                    const rank = medals[i] || `#${i + 1}`;
+                    return `${rank} <@${entry.userId}> — **${entry.points} pts** (${entry.exactCount} exact, ${entry.correctCount} correct result, ${entry.predictionCount} total)`;
+                });
+                embed.setDescription(lines.join('\n'));
+            }
+
+            return await InteractionHelper.safeEditReply(interaction, { embeds: [embed] });
+        }
 
         if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) {
             return await InteractionHelper.safeEditReply(interaction, {
@@ -339,10 +399,15 @@ export default {
             try {
                 await sendPredictionRequest(client, targetChannelId, selectedMatch, roleToPing);
 
-                if (!config.predictedMatches?.includes(selectedMatch.id)) {
-                    const newPredicted = [...(config.predictedMatches || []), selectedMatch.id];
-                    await setFootballConfig(client, guild.id, { predictedMatches: newPredicted });
-                }
+                const newPredicted = config.predictedMatches?.includes(selectedMatch.id)
+                    ? config.predictedMatches
+                    : [...(config.predictedMatches || []), selectedMatch.id];
+                // Opens this match up for capturePrediction() to start recording "2-1"-style
+                // messages posted in the prediction channel from here on.
+                await setFootballConfig(client, guild.id, {
+                    predictedMatches: newPredicted,
+                    activePredictionMatchId: selectedMatch.id
+                });
 
                 return await InteractionHelper.safeEditReply(interaction, {
                     embeds: [successEmbed(
@@ -359,6 +424,95 @@ export default {
                         `Could not post to <#${targetChannelId}>:\n${err.message}`,
                         { showDetails: true }
                     )],
+                    flags: MessageFlags.Ephemeral
+                });
+            }
+        }
+
+        if (sub === 'set-result') {
+            const matchIdInput = interaction.options.getString('match');
+            const homeScore = interaction.options.getInteger('home_score');
+            const awayScore = interaction.options.getInteger('away_score');
+            const config = await getFootballConfig(client, guild.id);
+            const matches = getAllMatches(config.customMatches);
+
+            let selectedMatch = null;
+            if (matchIdInput) {
+                const cleanInput = matchIdInput.trim().toLowerCase();
+                selectedMatch = matches.find(m =>
+                    m.id.toLowerCase() === cleanInput ||
+                    m.id.toLowerCase().includes(cleanInput) ||
+                    m.title.toLowerCase().includes(cleanInput) ||
+                    m.opponent?.toLowerCase().includes(cleanInput)
+                );
+            }
+            if (!selectedMatch && config.activePredictionMatchId) {
+                selectedMatch = matches.find(m => m.id === config.activePredictionMatchId);
+            }
+
+            if (!selectedMatch) {
+                return await InteractionHelper.safeEditReply(interaction, {
+                    embeds: [errorEmbed(
+                        'No Match Selected',
+                        'Pick a `match:` or run this once a prediction request has gone out for one (so there\'s an active match to resolve).'
+                    )],
+                    flags: MessageFlags.Ephemeral
+                });
+            }
+
+            try {
+                const predictions = await getPredictionsForMatch(guild.id, selectedMatch.id);
+                if (predictions.length === 0) {
+                    return await InteractionHelper.safeEditReply(interaction, {
+                        embeds: [errorEmbed(
+                            'No Predictions To Score',
+                            `Nobody predicted **${selectedMatch.title}** in the prediction channel, so there's nothing to resolve.`
+                        )],
+                        flags: MessageFlags.Ephemeral
+                    });
+                }
+
+                const results = await resolvePredictions(client, guild.id, selectedMatch.id, homeScore, awayScore);
+                const exact = results.filter(r => r.exact);
+                const correct = results.filter(r => !r.exact && r.correctOutcome);
+
+                const isHome = selectedMatch.homeOrAway === 'home';
+                const scoreLine = isHome ? `${homeScore} - ${awayScore}` : `${awayScore} - ${homeScore}`;
+
+                const embed = new EmbedBuilder()
+                    .setColor(getColor('success'))
+                    .setTitle(`🔮 Predictions Resolved — ${selectedMatch.title}`)
+                    .setDescription(`Final score: **${scoreLine}**\n\n${results.length} prediction(s) scored.`)
+                    .addFields(
+                        {
+                            name: exact.length > 0 ? '🎯 Exact score (+3 pts)' : '🎯 Exact score (+3 pts)',
+                            value: exact.length > 0 ? exact.map(r => `<@${r.userId}>`).join(', ') : 'Nobody',
+                            inline: false
+                        },
+                        {
+                            name: '✅ Correct result, wrong score (+1 pt)',
+                            value: correct.length > 0 ? correct.map(r => `<@${r.userId}>`).join(', ') : 'Nobody',
+                            inline: false
+                        }
+                    )
+                    .setFooter({ text: 'Check /football leaderboard for the all-time standings' })
+                    .setTimestamp();
+
+                // Post publicly in the prediction channel too, not just ephemeral to the staffer
+                // who ran the command — the whole point is the community sees who won.
+                if (config.predictionChannelId) {
+                    const predictionChannel = client.channels.cache.get(config.predictionChannelId) ||
+                        await client.channels.fetch(config.predictionChannelId).catch(() => null);
+                    if (predictionChannel?.isTextBased()) {
+                        await predictionChannel.send({ embeds: [embed] }).catch(() => null);
+                    }
+                }
+
+                return await InteractionHelper.safeEditReply(interaction, { embeds: [embed] });
+            } catch (err) {
+                logger.error('Error in football set-result:', err);
+                return await InteractionHelper.safeEditReply(interaction, {
+                    embeds: [errorEmbed('Failed to Resolve Predictions', err.message)],
                     flags: MessageFlags.Ephemeral
                 });
             }

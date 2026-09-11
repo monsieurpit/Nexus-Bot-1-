@@ -1084,6 +1084,11 @@ export async function getFootballConfig(client, guildId) {
             predictionChannelId: guildConfig.football?.predictionChannelId ?? null,
             predictionRoleId: guildConfig.football?.predictionRoleId ?? null,
             predictedMatches: guildConfig.football?.predictedMatches ?? [],
+            // The single match currently open for score predictions in predictionChannelId — set
+            // when a prediction request goes out, cleared once /football set-result resolves it.
+            // predictionService.js reads this to know which match a "2-1" message in that channel
+            // is a prediction FOR (there's only ever one open at a time).
+            activePredictionMatchId: guildConfig.football?.activePredictionMatchId ?? null,
             customMatches: guildConfig.football?.customMatches ?? [],
             scheduleChannelId: guildConfig.football?.scheduleChannelId ?? null,
             scheduleMessageId: guildConfig.football?.scheduleMessageId ?? null,
@@ -1100,6 +1105,7 @@ export async function getFootballConfig(client, guildId) {
             predictionChannelId: null,
             predictionRoleId: null,
             predictedMatches: [],
+            activePredictionMatchId: null,
             customMatches: [],
             scheduleChannelId: null,
             scheduleMessageId: null,
@@ -1358,6 +1364,7 @@ export async function checkFootballAnnouncements(client) {
             const predictedSet = new Set(config.predictedMatches || []);
             const predictionsActive = config.predictionsEnabled && config.predictionChannelId;
             let configNeedsSave = false;
+            let activePredictionMatchId = null;
 
             // Prune stale postedMatch IDs older than 45 days
             for (const postedId of postedSet) {
@@ -1408,6 +1415,7 @@ export async function checkFootballAnnouncements(client) {
                     try {
                         await sendPredictionRequest(client, config.predictionChannelId, match, config.predictionRoleId);
                         predictedSet.add(match.id);
+                        activePredictionMatchId = match.id;
                         configNeedsSave = true;
                         logger.info(`[Football] Successfully posted prediction request for ${match.title} in ${guild.name}`);
                     } catch (predErr) {
@@ -1417,10 +1425,12 @@ export async function checkFootballAnnouncements(client) {
             }
 
             if (configNeedsSave) {
-                await setFootballConfig(client, guildId, {
+                const patch = {
                     postedMatches: Array.from(postedSet),
                     predictedMatches: Array.from(predictedSet)
-                });
+                };
+                if (activePredictionMatchId) patch.activePredictionMatchId = activePredictionMatchId;
+                await setFootballConfig(client, guildId, patch);
             }
         } catch (guildErr) {
             logger.error(`[Football] Error processing announcements for guild ${guildId}:`, guildErr);

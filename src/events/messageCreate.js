@@ -16,6 +16,7 @@ import { handleNexusAiMessage } from '../services/nexusAiService.js';
 import { recordChannelMessage } from '../services/channelHistoryService.js';
 import { recordWeeklyStat } from '../services/weeklySummaryService.js';
 import { handleDirectMessage } from '../services/dmService.js';
+import { capturePrediction } from '../services/predictionService.js';
 
 const MESSAGE_XP_RATE_LIMIT_ATTEMPTS = 12;
 const MESSAGE_XP_RATE_LIMIT_WINDOW_MS = 10000;
@@ -94,6 +95,9 @@ export default {
         ),
         handleStickyNote(message, client).catch(err =>
           logger.debug('Error in sticky note handling:', err)
+        ),
+        capturePrediction(message, client).catch(err =>
+          logger.debug('Error capturing football prediction:', err)
         ),
       ]);
 
