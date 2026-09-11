@@ -44,7 +44,7 @@ export const helpBugReportButton = {
         const githubButton = new ButtonBuilder()
             .setLabel('🐛 Report Bug on GitHub / Reportar Error en GitHub')
             .setStyle(ButtonStyle.Link)
-            .setURL('https://github.com/codebymitch/TitanBot/issues');
+            .setURL('https://github.com/monsieurpit/Nexus-Bot-1-/issues');
 
         const bugRow = new ActionRowBuilder().addComponents(githubButton);
 
@@ -67,7 +67,7 @@ export const helpBugReportButton = {
             color: 'error'
         });
         bugReportEmbed.setFooter({
-            text: 'TitanBot Bug Reporting System / Sistema de Reportes',
+            text: 'NexusBot Bug Reporting System / Sistema de Reportes',
             iconURL: client.user.displayAvatarURL()
         });
         bugReportEmbed.setTimestamp();

@@ -10,7 +10,7 @@ import {
     guardMemberExists,
     guardRoleHierarchy
 } from '../../utils/commandGuards.js';
-import { TitanBotError, ErrorTypes } from '../../utils/errorHandler.js';
+import { NexusBotError, ErrorTypes } from '../../utils/errorHandler.js';
 
 export default {
     data: new SlashCommandBuilder()
@@ -41,7 +41,7 @@ export default {
             guardRoleHierarchy(interaction, member, 'kick');
 
             if (!member.kickable) {
-                throw new TitanBotError(
+                throw new NexusBotError(
                     "Bot cannot kick",
                     ErrorTypes.PERMISSION,
                     "I cannot kick this user. Please check my role position relative to the target user."

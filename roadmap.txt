@@ -1,4 +1,4 @@
-TitanBot Roadmap / Structure Overview 
+NexusBot Roadmap / Structure Overview 
 
 Goal
 - Keep this as a practical map of the codebase.

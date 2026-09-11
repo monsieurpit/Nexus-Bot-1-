@@ -119,7 +119,7 @@ export const isPostgresConfigured = Boolean(
 
 export const pgConfig = {
     isConfigured: isPostgresConfigured,
-    url: CONNECTION_URL || 'postgresql://localhost:5432/titanbot',
+    url: CONNECTION_URL || 'postgresql://localhost:5432/nexusbot',
     // When set, postgresDatabase.js will pass this directly to pg.Pool
     // instead of individual host/port/... options.
     connectionString: CONNECTION_URL || null,
@@ -128,7 +128,7 @@ export const pgConfig = {
         
         host:     _parsedUrl.host     || process.env.POSTGRES_HOST || 'localhost',
         port:     _parsedUrl.port     || parseInt(process.env.POSTGRES_PORT) || 5432,
-        database: _parsedUrl.database || process.env.POSTGRES_DB   || 'titanbot',
+        database: _parsedUrl.database || process.env.POSTGRES_DB   || 'nexusbot',
         user:     _parsedUrl.user     || process.env.POSTGRES_USER  || 'postgres',
         password: _parsedUrl.password || (process.env.POSTGRES_PASSWORD || '').toString(),
         ssl: _parsedUrl.ssl || (process.env.POSTGRES_SSL === 'true' ? { rejectUnauthorized: process.env.POSTGRES_SSL_REJECT_UNAUTHORIZED !== 'false' } : false),
@@ -140,7 +140,7 @@ export const pgConfig = {
         connectionTimeoutMillis: parseInt(process.env.POSTGRES_CONNECTION_TIMEOUT) || 10000,
         
         
-        application_name: 'titanbot',
+        application_name: 'nexusbot',
         statement_timeout: process.env.NODE_ENV === 'production' ? 30000 : 0,
         keepalives: 1,
         keepalives_idle: 30,

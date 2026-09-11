@@ -1,7 +1,7 @@
 import { PermissionFlagsBits, MessageFlags } from 'discord.js';
 import { InteractionHelper } from './interactionHelper.js';
 import { logger } from './logger.js';
-import { TitanBotError, ErrorTypes } from './errorHandler.js';
+import { NexusBotError, ErrorTypes } from './errorHandler.js';
 import { errorEmbed, warningEmbed } from './embeds.js';
 import { checkRateLimit } from './rateLimiter.js';
 
@@ -23,7 +23,7 @@ export async function guardDefer(interaction, commandName, options = {}) {
 
 /**
  * Validates that the target user is not the invoking user or the bot.
- * Throws TitanBotError on violation.
+ * Throws NexusBotError on violation.
  * @param {string} targetId - The target user's ID
  * @param {import('discord.js').CommandInteraction} interaction
  * @param {import('discord.js').Client} client
@@ -31,14 +31,14 @@ export async function guardDefer(interaction, commandName, options = {}) {
  */
 export function guardSelfTarget(targetId, interaction, client, actionName) {
     if (targetId === interaction.user.id) {
-        throw new TitanBotError(
+        throw new NexusBotError(
             `Cannot ${actionName} self`,
             ErrorTypes.VALIDATION,
             `You cannot ${actionName} yourself.`
         );
     }
     if (targetId === client.user.id) {
-        throw new TitanBotError(
+        throw new NexusBotError(
             `Cannot ${actionName} bot`,
             ErrorTypes.VALIDATION,
             `You cannot ${actionName} the bot.`
@@ -48,14 +48,14 @@ export function guardSelfTarget(targetId, interaction, client, actionName) {
 
 /**
  * Checks that the invoking member has the required permission.
- * Throws TitanBotError on failure.
+ * Throws NexusBotError on failure.
  * @param {import('discord.js').CommandInteraction} interaction
  * @param {bigint} permission - PermissionFlagsBits value
  * @param {string} permissionName - Human-readable name, e.g. "Kick Members"
  */
 export function guardPermission(interaction, permission, permissionName) {
     if (!interaction.member.permissions.has(permission)) {
-        throw new TitanBotError(
+        throw new NexusBotError(
             'User lacks permission',
             ErrorTypes.PERMISSION,
             `You need the \`${permissionName}\` permission to use this command.`,
@@ -65,12 +65,12 @@ export function guardPermission(interaction, permission, permissionName) {
 }
 
 /**
- * Ensures the command is used inside a guild. Throws TitanBotError otherwise.
+ * Ensures the command is used inside a guild. Throws NexusBotError otherwise.
  * @param {import('discord.js').CommandInteraction} interaction
  */
 export function guardGuild(interaction) {
     if (!interaction.inGuild()) {
-        throw new TitanBotError(
+        throw new NexusBotError(
             'Command used outside guild',
             ErrorTypes.VALIDATION,
             'This command can only be used in a server.',
@@ -107,12 +107,12 @@ export async function guardRateLimit(interaction, actionKey, maxAttempts = 5, wi
 
 /**
  * Validates that a target guild member exists and is actable upon.
- * Throws TitanBotError if the member is not in the server.
+ * Throws NexusBotError if the member is not in the server.
  * @param {import('discord.js').GuildMember|null} member
  */
 export function guardMemberExists(member) {
     if (!member) {
-        throw new TitanBotError(
+        throw new NexusBotError(
             'Target not found',
             ErrorTypes.USER_INPUT,
             'The target user is not currently in this server.',
@@ -123,14 +123,14 @@ export function guardMemberExists(member) {
 
 /**
  * Validates the invoking member outranks the target in role hierarchy.
- * Throws TitanBotError on violation.
+ * Throws NexusBotError on violation.
  * @param {import('discord.js').CommandInteraction} interaction
  * @param {import('discord.js').GuildMember} targetMember
  * @param {string} actionName - e.g. "kick", "ban"
  */
 export function guardRoleHierarchy(interaction, targetMember, actionName) {
     if (interaction.member.roles.highest.position <= targetMember.roles.highest.position) {
-        throw new TitanBotError(
+        throw new NexusBotError(
             `Cannot ${actionName} user`,
             ErrorTypes.PERMISSION,
             `You cannot ${actionName} a user with an equal or higher role than you.`

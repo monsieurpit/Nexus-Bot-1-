@@ -1,6 +1,6 @@
 import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import { logger } from '../utils/logger.js';
-import { TitanBotError, ErrorTypes } from '../utils/errorHandler.js';
+import { NexusBotError, ErrorTypes } from '../utils/errorHandler.js';
 import { getColor } from '../config/bot.js';
 import { getEndedGiveaways, markGiveawayEnded } from '../utils/database.js';
 import { logEvent, EVENT_TYPES } from './loggingService.js';
@@ -35,7 +35,7 @@ function cleanupInteractionCache(force = false) {
 
 export function parseDuration(durationString) {
     if (!durationString || typeof durationString !== 'string') {
-        throw new TitanBotError(
+        throw new NexusBotError(
             'Invalid duration format provided',
             ErrorTypes.VALIDATION,
             'Please provide a valid duration (e.g., 1h, 30m, 5d, 10s).',
@@ -45,7 +45,7 @@ export function parseDuration(durationString) {
 
     const match = durationString.trim().match(/^(\d+)([hmds])$/i);
     if (!match) {
-        throw new TitanBotError(
+        throw new NexusBotError(
             `Invalid duration format: ${durationString}`,
             ErrorTypes.VALIDATION,
             'Invalid duration format. Use: 1h, 30m, 5d, 10s (min: 10s, max: 30d)',
@@ -57,7 +57,7 @@ export function parseDuration(durationString) {
     const unit = match[2].toLowerCase();
 
     if (amount <= 0 || amount > 999) {
-        throw new TitanBotError(
+        throw new NexusBotError(
             `Duration amount out of range: ${amount}`,
             ErrorTypes.VALIDATION,
             'Duration amount must be between 1 and 999.',
@@ -69,28 +69,28 @@ export function parseDuration(durationString) {
     const ms = amount * multipliers[unit];
 
     if (ms > 30 * 86_400_000) {
-        throw new TitanBotError(`Duration exceeds maximum`, ErrorTypes.VALIDATION, 'Maximum duration is 30 days.');
+        throw new NexusBotError(`Duration exceeds maximum`, ErrorTypes.VALIDATION, 'Maximum duration is 30 days.');
     }
     if (ms < 10_000) {
-        throw new TitanBotError(`Duration below minimum`, ErrorTypes.VALIDATION, 'Minimum duration is 10 seconds.');
+        throw new NexusBotError(`Duration below minimum`, ErrorTypes.VALIDATION, 'Minimum duration is 10 seconds.');
     }
     return ms;
 }
 
 export function validatePrize(prize) {
     if (!prize || typeof prize !== 'string') {
-        throw new TitanBotError('Prize must be a non-empty string', ErrorTypes.VALIDATION, 'Please provide a valid prize description.');
+        throw new NexusBotError('Prize must be a non-empty string', ErrorTypes.VALIDATION, 'Please provide a valid prize description.');
     }
     const trimmed = prize.trim();
     if (trimmed.length === 0 || trimmed.length > 256) {
-        throw new TitanBotError(`Prize length out of range`, ErrorTypes.VALIDATION, 'Prize must be between 1 and 256 characters.');
+        throw new NexusBotError(`Prize length out of range`, ErrorTypes.VALIDATION, 'Prize must be between 1 and 256 characters.');
     }
     return trimmed;
 }
 
 export function validateWinnerCount(winnerCount) {
     if (!Number.isInteger(winnerCount) || winnerCount < 1 || winnerCount > 20) {
-        throw new TitanBotError(`Invalid winner count: ${winnerCount}`, ErrorTypes.VALIDATION, 'Winner count must be between 1 and 20.');
+        throw new NexusBotError(`Invalid winner count: ${winnerCount}`, ErrorTypes.VALIDATION, 'Winner count must be between 1 and 20.');
     }
 }
 
@@ -191,7 +191,7 @@ export function createGiveawayEmbed(giveaway, status, winners = []) {
         return embed;
     } catch (error) {
         logger.error('Error creating giveaway embed:', error);
-        throw new TitanBotError('Failed to create giveaway embed', ErrorTypes.UNKNOWN, 'An internal error occurred while formatting the giveaway.');
+        throw new NexusBotError('Failed to create giveaway embed', ErrorTypes.UNKNOWN, 'An internal error occurred while formatting the giveaway.');
     }
 }
 
@@ -230,7 +230,7 @@ export function createGiveawayButtons(ended = false) {
         return row;
     } catch (error) {
         logger.error('Error creating giveaway buttons:', error);
-        throw new TitanBotError('Failed to create giveaway buttons', ErrorTypes.UNKNOWN, 'An internal error occurred while creating interactive buttons.');
+        throw new NexusBotError('Failed to create giveaway buttons', ErrorTypes.UNKNOWN, 'An internal error occurred while creating interactive buttons.');
     }
 }
 
@@ -251,7 +251,7 @@ export function selectWinners(participants, winnerCount) {
     const uniqueParticipants = [...new Set(participants)];
 
     if (!Number.isInteger(winnerCount) || winnerCount < 1) {
-        throw new TitanBotError('Invalid winner count for selection', ErrorTypes.VALIDATION, 'Winner count must be at least 1.');
+        throw new NexusBotError('Invalid winner count for selection', ErrorTypes.VALIDATION, 'Winner count must be at least 1.');
     }
 
     const pool = [...participants]; // may have duplicates for weighted draws
@@ -337,10 +337,10 @@ export function buildEntryTickets(userId, giveaway) {
 export async function endGiveaway(client, giveaway, guildId, endedBy) {
     try {
         if (!giveaway) {
-            throw new TitanBotError('Giveaway object is null or undefined', ErrorTypes.VALIDATION, 'Cannot end a non-existent giveaway.');
+            throw new NexusBotError('Giveaway object is null or undefined', ErrorTypes.VALIDATION, 'Cannot end a non-existent giveaway.');
         }
         if (giveaway.ended === true || giveaway.isEnded === true) {
-            throw new TitanBotError(`Giveaway ${giveaway.messageId} is already ended`, ErrorTypes.VALIDATION, 'This giveaway has already ended.');
+            throw new NexusBotError(`Giveaway ${giveaway.messageId} is already ended`, ErrorTypes.VALIDATION, 'This giveaway has already ended.');
         }
 
         const participants = giveaway.participants || [];
@@ -365,9 +365,9 @@ export async function endGiveaway(client, giveaway, guildId, endedBy) {
             participantCount: new Set(participants).size,
         };
     } catch (error) {
-        if (error instanceof TitanBotError) throw error;
+        if (error instanceof NexusBotError) throw error;
         logger.error('Error ending giveaway:', error);
-        throw new TitanBotError('Failed to end giveaway', ErrorTypes.UNKNOWN, 'An error occurred while ending the giveaway.');
+        throw new NexusBotError('Failed to end giveaway', ErrorTypes.UNKNOWN, 'An error occurred while ending the giveaway.');
     }
 }
 

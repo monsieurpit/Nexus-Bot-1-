@@ -1,7 +1,7 @@
 {
-  "name": "titanbot-custom",
+  "name": "nexusbot-custom",
   "version": "1.1.1",
-  "description": "Modular Ultimate Community Bot by Touchpoint Support",
+  "description": "Nexus — modular Discord community bot with a web dashboard",
   "main": "src/app.js",
   "type": "module",
   "scripts": {

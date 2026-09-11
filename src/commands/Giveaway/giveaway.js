@@ -1,7 +1,7 @@
 import { SlashCommandBuilder, PermissionFlagsBits, ChannelType, MessageFlags } from 'discord.js';
 import { successEmbed } from '../../utils/embeds.js';
 import { logger } from '../../utils/logger.js';
-import { TitanBotError, ErrorTypes, handleInteractionError } from '../../utils/errorHandler.js';
+import { NexusBotError, ErrorTypes, handleInteractionError } from '../../utils/errorHandler.js';
 import { getGuildGiveaways, saveGiveaway, deleteGiveaway } from '../../utils/giveaways.js';
 import {
     parseDuration,
@@ -128,7 +128,7 @@ async function handleCreate(interaction) {
         const bonusEntries = interaction.options.getInteger('bonus_entries') || null;
 
         if (bonusEntries && !bonusRole) {
-            throw new TitanBotError(
+            throw new NexusBotError(
                 'Bonus entries specified without bonus role',
                 ErrorTypes.VALIDATION,
                 'You specified `bonus_entries` but did not select a `bonus_role`. Please specify both or neither.',
@@ -138,7 +138,7 @@ async function handleCreate(interaction) {
 
         const durationMs = parseDuration(durationStr);
         if (!durationMs) {
-            throw new TitanBotError(
+            throw new NexusBotError(
                 'Invalid duration format',
                 ErrorTypes.VALIDATION,
                 'Invalid duration format. Use values like `1h`, `30m`, `5d`, or `1w`.',
@@ -148,7 +148,7 @@ async function handleCreate(interaction) {
 
         const prizeError = validatePrize(prize);
         if (prizeError) {
-            throw new TitanBotError(
+            throw new NexusBotError(
                 'Invalid prize',
                 ErrorTypes.VALIDATION,
                 prizeError,
@@ -158,7 +158,7 @@ async function handleCreate(interaction) {
 
         const winnerError = validateWinnerCount(winners);
         if (winnerError) {
-            throw new TitanBotError(
+            throw new NexusBotError(
                 'Invalid winner count',
                 ErrorTypes.VALIDATION,
                 winnerError,
@@ -167,7 +167,7 @@ async function handleCreate(interaction) {
         }
 
         if (!targetChannel.isTextBased()) {
-            throw new TitanBotError(
+            throw new NexusBotError(
                 'Target channel is not text-based',
                 ErrorTypes.VALIDATION,
                 'The specified channel is not a text channel.',
@@ -183,7 +183,7 @@ async function handleCreate(interaction) {
         ];
         const missing = requiredPerms.filter(p => !botMember.permissionsIn(targetChannel).has(p));
         if (missing.length > 0) {
-            throw new TitanBotError(
+            throw new NexusBotError(
                 'Bot lacks permissions in target channel',
                 ErrorTypes.PERMISSION,
                 `I am missing permissions in ${targetChannel}: **${missing.map(p => Object.keys(PermissionFlagsBits).find(k => PermissionFlagsBits[k] === p)).join(', ')}**`,
@@ -267,13 +267,13 @@ async function handleEnd(interaction) {
 
         const messageId = interaction.options.getString('messageid');
         if (!messageId || !/^\d+$/.test(messageId)) {
-            throw new TitanBotError('Invalid message ID format', ErrorTypes.VALIDATION, 'Please provide a valid message ID.');
+            throw new NexusBotError('Invalid message ID format', ErrorTypes.VALIDATION, 'Please provide a valid message ID.');
         }
 
         const giveaways = await getGuildGiveaways(interaction.client, interaction.guildId);
         const giveaway = giveaways.find(g => g.messageId === messageId);
         if (!giveaway) {
-            throw new TitanBotError('Giveaway not found', ErrorTypes.VALIDATION, 'No giveaway was found with that message ID in the database.');
+            throw new NexusBotError('Giveaway not found', ErrorTypes.VALIDATION, 'No giveaway was found with that message ID in the database.');
         }
 
         const endResult = await endGiveawayService(interaction.client, giveaway, interaction.guildId, interaction.user.id);
@@ -282,12 +282,12 @@ async function handleEnd(interaction) {
 
         const channel = await interaction.client.channels.fetch(updatedGiveaway.channelId).catch(() => null);
         if (!channel || !channel.isTextBased()) {
-            throw new TitanBotError('Channel not found', ErrorTypes.VALIDATION, 'Could not find the channel where the giveaway was hosted.');
+            throw new NexusBotError('Channel not found', ErrorTypes.VALIDATION, 'Could not find the channel where the giveaway was hosted.');
         }
 
         const message = await channel.messages.fetch(messageId).catch(() => null);
         if (!message) {
-            throw new TitanBotError('Message not found', ErrorTypes.VALIDATION, 'Could not find the giveaway message.');
+            throw new NexusBotError('Message not found', ErrorTypes.VALIDATION, 'Could not find the giveaway message.');
         }
 
         await saveGiveaway(interaction.client, interaction.guildId, updatedGiveaway);
@@ -338,22 +338,22 @@ async function handleReroll(interaction) {
 
         const messageId = interaction.options.getString('messageid');
         if (!messageId || !/^\d+$/.test(messageId)) {
-            throw new TitanBotError('Invalid message ID format', ErrorTypes.VALIDATION, 'Please provide a valid message ID.');
+            throw new NexusBotError('Invalid message ID format', ErrorTypes.VALIDATION, 'Please provide a valid message ID.');
         }
 
         const giveaways = await getGuildGiveaways(interaction.client, interaction.guildId);
         const giveaway = giveaways.find(g => g.messageId === messageId);
         if (!giveaway) {
-            throw new TitanBotError('Giveaway not found', ErrorTypes.VALIDATION, 'No giveaway was found with that message ID in the database.');
+            throw new NexusBotError('Giveaway not found', ErrorTypes.VALIDATION, 'No giveaway was found with that message ID in the database.');
         }
 
         if (!giveaway.isEnded && !giveaway.ended) {
-            throw new TitanBotError('Giveaway still active', ErrorTypes.VALIDATION, 'This giveaway is still active. Please end it first using `/giveaway end`.');
+            throw new NexusBotError('Giveaway still active', ErrorTypes.VALIDATION, 'This giveaway is still active. Please end it first using `/giveaway end`.');
         }
 
         const participants = giveaway.participants || [];
         if (participants.length < giveaway.winnerCount) {
-            throw new TitanBotError('Insufficient participants', ErrorTypes.VALIDATION, 'Not enough entries to pick the required number of winners.');
+            throw new NexusBotError('Insufficient participants', ErrorTypes.VALIDATION, 'Not enough entries to pick the required number of winners.');
         }
 
         const newWinners = selectWinners(participants, giveaway.winnerCount);
@@ -421,13 +421,13 @@ async function handleDelete(interaction) {
 
         const messageId = interaction.options.getString('messageid');
         if (!messageId || !/^\d+$/.test(messageId)) {
-            throw new TitanBotError('Invalid message ID format', ErrorTypes.VALIDATION, 'Please provide a valid message ID.');
+            throw new NexusBotError('Invalid message ID format', ErrorTypes.VALIDATION, 'Please provide a valid message ID.');
         }
 
         const giveaways = await getGuildGiveaways(interaction.client, interaction.guildId);
         const giveaway = giveaways.find(g => g.messageId === messageId);
         if (!giveaway) {
-            throw new TitanBotError('Giveaway not found', ErrorTypes.VALIDATION, 'No giveaway was found with that message ID.');
+            throw new NexusBotError('Giveaway not found', ErrorTypes.VALIDATION, 'No giveaway was found with that message ID.');
         }
 
         let deletedMessage = false;

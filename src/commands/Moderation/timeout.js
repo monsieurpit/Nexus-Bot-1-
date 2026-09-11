@@ -2,7 +2,7 @@ import { SlashCommandBuilder, PermissionFlagsBits } from 'discord.js';
 import { successEmbed } from '../../utils/embeds.js';
 import { logModerationAction } from '../../utils/moderation.js';
 import { logger } from '../../utils/logger.js';
-import { TitanBotError, ErrorTypes, handleInteractionError } from '../../utils/errorHandler.js';
+import { NexusBotError, ErrorTypes, handleInteractionError } from '../../utils/errorHandler.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import {
     guardDefer,
@@ -60,7 +60,7 @@ export default {
             guardMemberExists(member);
 
             if (!member.moderatable) {
-                throw new TitanBotError(
+                throw new NexusBotError(
                     "Cannot timeout member",
                     ErrorTypes.PERMISSION,
                     "I cannot timeout this user. They might have a higher role than me or you."

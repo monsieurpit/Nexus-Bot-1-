@@ -1,6 +1,6 @@
 import { SlashCommandBuilder, EmbedBuilder } from 'discord.js';
 import { logger } from '../../utils/logger.js';
-import { handleInteractionError, TitanBotError, ErrorTypes } from '../../utils/errorHandler.js';
+import { handleInteractionError, NexusBotError, ErrorTypes } from '../../utils/errorHandler.js';
 import { getLeaderboard, getLevelingConfig, getXpForLevel } from '../../services/leveling.js';
 import { getEconomyConfig, getEconomyLeaderboard } from '../../services/economy.js';
 import { getQLeaderboard } from '../../services/questionService.js';
@@ -43,7 +43,7 @@ export default {
 
         const leaderboard = await getLeaderboard(client, interaction.guildId, 10);
         if (leaderboard.length === 0) {
-          throw new TitanBotError(
+          throw new NexusBotError(
             'No leaderboard data found',
             ErrorTypes.DATABASE,
             'No level data found yet. Start chatting to gain XP!'

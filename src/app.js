@@ -18,7 +18,7 @@ import { checkLaligaStandingsUpdates } from './services/laligaStandingsService.j
 import { loadCommands, registerCommands as registerSlashCommands } from './handlers/commandLoader.js';
 import { logCrash } from './services/aiTelemetryService.js';
 
-class TitanBot extends Client {
+class NexusBot extends Client {
   constructor() {
     super({
       intents: [
@@ -51,7 +51,7 @@ class TitanBot extends Client {
 
   async start() {
     try {
-      startupLog('Starting TitanBot...');
+      startupLog('Starting NexusBot...');
       await new Promise(resolve => setTimeout(resolve, 1000));
       
       startupLog('Initializing database...');
@@ -230,7 +230,7 @@ class TitanBot extends Client {
 
     app.get('/', (req, res) => {
       res.status(200).json({ 
-        message: 'TitanBot System Online',
+        message: 'NexusBot System Online',
         version: '2.0.0',
         timestamp: new Date().toISOString()
       });
@@ -519,7 +519,7 @@ class TitanBot extends Client {
 }
 
 try {
-  const bot = new TitanBot();
+  const bot = new NexusBot();
   
   const setupShutdown = () => {
     process.on('SIGTERM', () => bot.shutdown('SIGTERM'));
@@ -553,7 +553,7 @@ try {
   logger.error('Fatal error during bot startup:', error);
 }
 
-export default TitanBot;
+export default NexusBot;
 
 
 
