@@ -135,7 +135,7 @@ function normalizePhrase(content) {
   if (typeof content !== 'string') return '';
   return content
     .toLowerCase()
-    .replace(/<@!?⁠?\d+>/g, '@mention')
+    .replace(/<@!?\d+>/g, '@mention')
     .replace(/<#\d+>/g, '#channel')
     .replace(/<:\w+:\d+>/g, ':emoji:')
     .replace(/https?:\/\/\S+/g, '[link]')
@@ -194,7 +194,14 @@ function isSuspiciousAccount(user) {
   const ageDays = accountAgeMs / (1000 * 60 * 60 * 24);
   const isYoung = ageDays < ACCOUNT_AGE_THRESHOLD_DAYS;
   const isDefaultAvatar = isUsingDefaultAvatar(user);
-  return { isYoung, isDefaultAvatar, isFlagged: isYoung || isDefaultAvatar, ageDays };
+  // Found by a code review: OR-combining these two weak signals (either alone marks an account
+  // "flagged") makes SUSPICIOUS_SUBSET_THRESHOLD (5 accounts in 30s) trip on entirely ordinary
+  // viral growth — a Reddit/TikTok mention or a Server Discovery spike very plausibly brings in
+  // 5+ people who are either recently-created Discord accounts or just haven't set a custom
+  // avatar (extremely common for casual users), auto-quarantining real new members. Requiring
+  // BOTH signals together is a much stronger, more raid-specific tell — actual raid accounts are
+  // typically both fresh AND still on the default avatar, not just one or the other.
+  return { isYoung, isDefaultAvatar, isFlagged: isYoung && isDefaultAvatar, ageDays };
 }
 
 function extractNameBase(name) {
@@ -322,9 +329,16 @@ function getMembersFromEntries(entries) {
 }
 
 function getNamePatternMembers(window, pattern) {
+  // Found by a code review: findSequentialPattern() deliberately isolates a specific run of >=3
+  // CONSECUTIVE numeric suffixes (pattern.numbers) for a prefix, but this used to re-filter the
+  // whole join window by prefix only — so innocent same-prefix joiners whose number wasn't part
+  // of the flagged run (Alex1, Alex3, Alex99 alongside a raid's Alex5/Alex6/Alex7) got swept into
+  // the quarantine and role-strip too. Now only members whose number is actually in the flagged
+  // sequence are returned.
+  const numberSet = new Set(pattern.numbers);
   return window.filter(e => {
     const base = extractNameBase(e.member?.user?.username || '');
-    return base && base.prefix === pattern.prefix;
+    return base && base.prefix === pattern.prefix && numberSet.has(base.number);
   }).map(e => e.member);
 }
 
@@ -413,6 +427,12 @@ export class RaidDetectionService {
       // Check 2: Name sequential pattern
       const sequentialPattern = findSequentialPattern(activeJoins.map(e => e.member));
       if (sequentialPattern && !isQuarantineLocked(guildId) && !guildNamePatternLock.get(guildId)) {
+        // Found by a code review: this set guildNamePatternLock but never set the shared
+        // guildQuarantineLock that Checks 1/4 (and processMessage's spam check) gate on, so a
+        // burst that tripped this check AND the join-burst threshold on the very next join in the
+        // same burst would fire a second, redundant triggerQuarantine on largely the same
+        // members. Now holds both locks, same as Checks 1/4.
+        setQuarantineLock(guildId, true);
         guildNamePatternLock.set(guildId, true);
         const suspects = getNamePatternMembers(activeJoins, sequentialPattern);
         const dominant = findDominantInvite(activeJoins);
@@ -454,6 +474,9 @@ export class RaidDetectionService {
       // Check 3: Name similarity cluster
       const similarityClusters = findSimilarNameCluster(activeJoins.map(e => e.member));
       if (similarityClusters && !isQuarantineLocked(guildId) && !guildNamePatternLock.get(guildId)) {
+        // Same fix as Check 2 above — hold the shared quarantine lock too, not just the
+        // name-pattern-specific one.
+        setQuarantineLock(guildId, true);
         guildNamePatternLock.set(guildId, true);
         const suspects = getSimilarityClusterMembers(activeJoins, similarityClusters);
         const dominant = findDominantInvite(activeJoins);
@@ -494,39 +517,51 @@ export class RaidDetectionService {
       // Check 4: Standard join burst (10+ in 30s)
       if (activeJoins.length >= JOIN_BURST_THRESHOLD && !isQuarantineLocked(guildId)) {
         setQuarantineLock(guildId, true);
-        const uniqueUserIds = [...new Set(activeJoins.map(j => j.userId))];
-        const suspects = uniqueUserIds
-          .map(id => member.guild.members.cache.get(id))
-          .filter(Boolean);
-        const dominant = findDominantInvite(activeJoins);
+        // Found by a code review: setQuarantineLock(true) ran unconditionally here, but the
+        // setTimeout that released it 300s later used to live INSIDE `if (suspects.length >=
+        // JOIN_BURST_THRESHOLD)` below with no else branch. suspects is a live re-resolve from
+        // guild.members.cache — if even one of the joiners already left by the time this ran (a
+        // very common raid pattern: bot accounts that join-and-dash), suspects.length fell under
+        // threshold, the inner `if` was skipped, and the lock stayed `true` FOREVER — silently
+        // disabling Checks 1/2/3/4 and the cross-channel spam check for this guild until a
+        // restart or a manual clearWindows() call. The release now always happens, and suspects
+        // falls back to the member captured at join time (activeJoins) instead of only a live
+        // cache lookup, so a departed member no longer undercounts the suspect list either.
+        try {
+          const uniqueUserIds = [...new Set(activeJoins.map(j => j.userId))];
+          const suspects = uniqueUserIds
+            .map(id => member.guild.members.cache.get(id) || activeJoins.find(j => j.userId === id)?.member)
+            .filter(Boolean);
+          const dominant = findDominantInvite(activeJoins);
 
-        if (suspects.length >= JOIN_BURST_THRESHOLD) {
-          logger.warn(`Raid detected: join burst in guild ${member.guild.name}`, {
-            event: 'raid.join_burst',
-            guildId,
-            count: activeJoins.length,
-            threshold: JOIN_BURST_THRESHOLD
-          });
+          if (suspects.length >= JOIN_BURST_THRESHOLD) {
+            logger.warn(`Raid detected: join burst in guild ${member.guild.name}`, {
+              event: 'raid.join_burst',
+              guildId,
+              count: activeJoins.length,
+              threshold: JOIN_BURST_THRESHOLD
+            });
 
-          await QuarantineService.triggerQuarantine({
-            guild: member.guild,
-            client,
-            suspects,
-            reason: 'raid_join_burst',
-            metadata: {
-              joinCount: activeJoins.length,
-              windowMs: JOIN_BURST_WINDOW_MS,
-              detectedAt: new Date().toISOString(),
-              dominantInvite: dominant.code || null,
-              inviteDominance: dominant.ratio,
-              tripReasons: ['mass_join']
+            await QuarantineService.triggerQuarantine({
+              guild: member.guild,
+              client,
+              suspects,
+              reason: 'raid_join_burst',
+              metadata: {
+                joinCount: activeJoins.length,
+                windowMs: JOIN_BURST_WINDOW_MS,
+                detectedAt: new Date().toISOString(),
+                dominantInvite: dominant.code || null,
+                inviteDominance: dominant.ratio,
+                tripReasons: ['mass_join']
+              }
+            });
+
+            if (dominant.code && dominant.ratio >= INVITE_DOMINANCE_THRESHOLD) {
+              await QuarantineService.deleteInvite(member.guild, dominant.code);
             }
-          });
-
-          if (dominant.code && dominant.ratio >= INVITE_DOMINANCE_THRESHOLD) {
-            await QuarantineService.deleteInvite(member.guild, dominant.code);
           }
-
+        } finally {
           setTimeout(() => setQuarantineLock(guildId, false), 300000);
         }
       }
@@ -638,9 +673,16 @@ export class RaidDetectionService {
       // Identify the executor from the audit log
       let executorId = null;
       try {
+        // Found by a code review: limit: 5 races against a genuinely fast nuke (a nuke bot can
+        // delete 10-30+ channels in 1-2 seconds — far more than CHANNEL_DELETE_THRESHOLD). Each
+        // deleted channel's handler independently awaits this fetch, so by the time an EARLIER
+        // channel's handler resolves, several LATER deletions may have already posted their own
+        // audit-log entries and pushed this channel's entry out of the top 5 — the find() then
+        // returns undefined and that deletion is silently dropped from the window, undercounting
+        // the exact attack this feature exists to catch. Raised to a cheap, much safer margin.
         const logs = await guild.fetchAuditLogs({
           type: AuditLogEvent.ChannelDelete,
-          limit: 5
+          limit: 20
         });
         const entry = logs.entries.find(e => e.target?.id === channel.id);
 
@@ -670,22 +712,34 @@ export class RaidDetectionService {
 
       if (timestamps.length < CHANNEL_DELETE_THRESHOLD) return;
 
-      // Threshold reached — reset to prevent repeat triggers, then kick
-      guildWindow.set(executorId, []);
-
       const member = await guild.members.fetch(executorId).catch(() => null);
       const kickReason = `Anti-nuke: deleted ${timestamps.length} channels in under ${CHANNEL_DELETE_WINDOW_MS / 1000}s`;
+
+      // Found by a code review: this used to fully reset the window to [] BEFORE the kick was
+      // even attempted, regardless of outcome. When the executor isn't kickable (a compromised
+      // account holding a role at/above the bot's own — exactly the threat model anti-nuke is
+      // built for), the kick silently no-ops and the attacker gets a fresh full allotment of
+      // (CHANNEL_DELETE_THRESHOLD - 1) more free deletions before the next alert fires — they can
+      // keep nuking the whole server, generating only a periodic warning. Dropping just the
+      // oldest timestamp instead means the very next deletion re-triggers this check immediately,
+      // so an un-kickable attacker still gets an alert on every single subsequent deletion instead
+      // of a fresh grace window each time.
 
       let kicked = false;
       if (member && member.kickable) {
         try {
           await member.kick(kickReason);
           kicked = true;
+          // Only fully reset on a successful kick — the threat is actually gone. Otherwise drop
+          // only the oldest timestamp (see comment above) so the window stays "hot".
+          guildWindow.set(executorId, []);
         } catch (err) {
           logger.warn(`Anti-nuke: failed to kick ${executorId}:`, err.message);
+          guildWindow.set(executorId, timestamps.slice(1));
         }
       } else {
         logger.warn(`Anti-nuke: member ${executorId} is not kickable in guild ${guildId}`);
+        guildWindow.set(executorId, timestamps.slice(1));
       }
 
       logger.warn(`Anti-nuke: mass channel deletion in ${guild.name}`, {
@@ -734,9 +788,11 @@ export class RaidDetectionService {
 
       let executorId = null;
       try {
+        // Same limit raise as processChannelDelete above, same reasoning (fast bursts can push
+        // this entry out of the top 5 before this handler's own fetch resolves).
         const logs = await guild.fetchAuditLogs({
           type: AuditLogEvent.RoleDelete,
-          limit: 5
+          limit: 20
         });
         const entry = logs.entries.find(e => e.target?.id === role.id);
         if (entry && Date.now() - entry.createdTimestamp < ROLE_DELETE_WINDOW_MS + 2000) {
@@ -761,22 +817,26 @@ export class RaidDetectionService {
 
       if (timestamps.length < ROLE_DELETE_THRESHOLD) return;
 
-      // Threshold reached — reset window then act
-      guildWindow.set(executorId, []);
-
       const member = await guild.members.fetch(executorId).catch(() => null);
       const kickReason = `Anti-nuke: deleted ${timestamps.length} roles in under ${ROLE_DELETE_WINDOW_MS / 1000}s`;
 
+      // Same fix as processChannelDelete: only fully reset the window on a SUCCESSFUL kick.
+      // Otherwise drop just the oldest timestamp so an un-kickable attacker (role hierarchy /
+      // missing permission) re-triggers an alert on every subsequent deletion instead of getting
+      // a fresh (THRESHOLD - 1)-deletion grace window each time.
       let kicked = false;
       if (member && member.kickable) {
         try {
           await member.kick(kickReason);
           kicked = true;
+          guildWindow.set(executorId, []);
         } catch (err) {
           logger.warn(`Anti-nuke (role): failed to kick ${executorId}:`, err.message);
+          guildWindow.set(executorId, timestamps.slice(1));
         }
       } else {
         logger.warn(`Anti-nuke (role): member ${executorId} is not kickable in guild ${guildId}`);
+        guildWindow.set(executorId, timestamps.slice(1));
       }
 
       logger.warn(`Anti-nuke: mass role deletion in ${guild.name}`, {

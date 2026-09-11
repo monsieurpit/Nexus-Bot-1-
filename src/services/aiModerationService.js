@@ -34,9 +34,17 @@ const nexusClient = new NexusAI({
 // bursts, cross-channel spam, name/invite similarity) runs as a fully separate, always-on,
 // non-AI-dependent check regardless of this limit - this is specifically about the AI CONTENT
 // classifier's own coverage, not raid protection as a whole.
-const AI_RATE_LIMIT_KEY_TEXT = 'ai-mod-global-text';
+// Found by a code review: these were flat, guild-agnostic string constants
+// ('ai-mod-global-text' / 'ai-mod-global-image'), so checkRateLimit() — which keys purely off the
+// string it's given, see rateLimiter.js — shared ONE bucket across every guild this bot is in.
+// Any regular member in ANY guild could exhaust the entire global text bucket (90 one-character
+// messages in under 60s costs nothing and isn't even blocked by permissions), and for the next
+// 60s every OTHER guild's real traffic — including an actual coordinated raid — got skipped with
+// zero AI analysis. Now built per-guild in processMessage() below (`ai-mod-text:${guildId}`),
+// so one guild's traffic can never starve another's.
+const AI_RATE_LIMIT_KEY_TEXT_PREFIX = 'ai-mod-text';
 const AI_RATE_LIMIT_ATTEMPTS_TEXT = 90;
-const AI_RATE_LIMIT_KEY_IMAGE = 'ai-mod-global-image';
+const AI_RATE_LIMIT_KEY_IMAGE_PREFIX = 'ai-mod-image';
 const AI_RATE_LIMIT_ATTEMPTS_IMAGE = 20;
 const AI_RATE_LIMIT_WINDOW_MS = 60000;
 
@@ -106,6 +114,21 @@ function formatMessageIdentity(message) {
 }
 
 async function analyzeContent(text, imageUrls = [], recentMessages = [], currentMessage = null) {
+  const imageUrl = (imageUrls && imageUrls[0]) || '';
+
+  // The image cache (getCachedImage/setCachedImage) used to be fully implemented but never
+  // actually called anywhere — every image-bearing message paid the real vision-model round-trip
+  // even when the exact same attachment URL (a re-posted scam image, or a message people keep
+  // reacting to / re-sharing) had already been scanned in the last 30 minutes. Wired in here so
+  // repeat scans of the same URL are free and don't eat into AI_RATE_LIMIT_KEY_IMAGE's budget.
+  if (imageUrl) {
+    const cached = getCachedImage(imageUrl);
+    if (cached) {
+      logger.debug('[AI Moderation] Image classification served from cache', { imageUrl });
+      return cached;
+    }
+  }
+
   logger.info('🔍 Nexus AI RaidShield: Starting threat analysis', {
     textLength: text?.length ?? 0,
     imageCount: imageUrls.length,
@@ -119,14 +142,16 @@ async function analyzeContent(text, imageUrls = [], recentMessages = [], current
     const result = await nexusClient.checkSecurity({
       messageText: text,
       authorId: currentMessage?.authorId || '',
-      imageUrl: (imageUrls && imageUrls[0]) || ''
+      imageUrl
     });
     if (result && result.classification) {
-      return {
+      const classified = {
         classification: result.classification,
         confidence: typeof result.confidence === 'number' ? result.confidence : 0.95,
         reason: result.reason || 'Verified via central Nexus AI RaidShield engine'
       };
+      if (imageUrl) setCachedImage(imageUrl, classified);
+      return classified;
     }
   } catch (err) {
     logger.debug(`[AI Moderation] Central RaidShield call failed, defaulting to safe: ${err.message}`);
@@ -144,6 +169,16 @@ function getActionForClassification(aiConfig, classification) {
   return actions[classification] || 'quarantine';
 }
 
+// Returns the action actually taken, which may differ from the requested `action` — every call
+// site (sendAiAlert, in particular) must use THIS return value for what it reports, never the
+// input `action` string. Found by a code review: kick/ban/timeout used to silently no-op when
+// member.kickable/bannable/moderatable was false (bot's role below the target's, or missing the
+// underlying permission) with no log line at all, and the 'quarantine' case never checked
+// QuarantineService.triggerQuarantine's own { success, reason } return — it can silently no-op
+// when the core Raid Shield toggle (/raidshield toggle) is off even though AI moderation has its
+// own, independent enable flag. In both cases the message still got deleted and the staff alert
+// still claimed the configured action succeeded, so staff believed a threat was contained when
+// the member kept every role and could act again immediately.
 async function executeAction(action, message, client, aiResult, aiConfig) {
   const guild = message.guild;
   const authorId = message.author?.id;
@@ -152,25 +187,27 @@ async function executeAction(action, message, client, aiResult, aiConfig) {
       messageId: message.id,
       guildId: guild?.id
     });
-    return;
+    return { action: 'none', reason: 'no_author_id' };
   }
 
   const member = message.member?.id === authorId
     ? message.member
     : await guild.members.fetch(authorId).catch(() => null);
-  if (!member) return;
+  if (!member) return { action: 'none', reason: 'member_not_found' };
   if (member.id !== authorId) {
     logger.error('AI moderation refused to act because the resolved member did not match the message author', {
       messageId: message.id,
       expectedAuthorId: authorId,
       resolvedMemberId: member.id
     });
-    return;
+    return { action: 'none', reason: 'member_mismatch' };
   }
+
+  let outcome = { action: 'none', reason: 'unknown_action' };
 
   switch (action) {
     case 'quarantine': {
-      await QuarantineService.triggerQuarantine({
+      const result = await QuarantineService.triggerQuarantine({
         guild,
         client,
         suspects: [member],
@@ -188,11 +225,32 @@ async function executeAction(action, message, client, aiResult, aiConfig) {
           tripReasons: [`ai_${aiResult.classification}`]
         }
       });
+      if (result?.success) {
+        outcome = { action: 'quarantine' };
+      } else if (result?.reason === 'disabled') {
+        // Quarantine requires the core Raid Shield toggle to be on; AI moderation can be enabled
+        // independently of it. Fall back to a real, always-available action instead of doing
+        // nothing while claiming otherwise.
+        logger.warn(`AI moderation: quarantine unavailable (Raid Shield core is disabled) for ${authorId} in guild ${guild.id}, falling back to timeout`);
+        if (member.moderatable) {
+          await member.timeout(600000, `AI Moderation: ${aiResult.classification} (${aiResult.reason}) — quarantine unavailable, Raid Shield disabled`).catch(() => null);
+          outcome = { action: 'timeout', reason: 'quarantine_disabled_fallback' };
+        } else {
+          outcome = { action: 'failed', reason: 'quarantine_disabled_and_not_moderatable' };
+        }
+      } else {
+        logger.warn(`AI moderation: quarantine failed for ${authorId} in guild ${guild.id}: ${result?.reason}`);
+        outcome = { action: 'failed', reason: result?.reason || 'quarantine_failed' };
+      }
       break;
     }
     case 'kick': {
       if (member.kickable) {
         await member.kick(`AI Moderation: ${aiResult.classification} (${aiResult.reason})`);
+        outcome = { action: 'kick' };
+      } else {
+        logger.warn(`AI moderation: cannot kick ${authorId} in guild ${guild.id} — not kickable (role hierarchy or missing permission)`);
+        outcome = { action: 'failed', reason: 'not_kickable' };
       }
       break;
     }
@@ -202,18 +260,24 @@ async function executeAction(action, message, client, aiResult, aiConfig) {
           reason: `AI Moderation: ${aiResult.classification} (${aiResult.reason})`,
           deleteMessageSeconds: 86400
         });
+        outcome = { action: 'ban' };
+      } else {
+        logger.warn(`AI moderation: cannot ban ${authorId} in guild ${guild.id} — not bannable (role hierarchy or missing permission)`);
+        outcome = { action: 'failed', reason: 'not_bannable' };
       }
       break;
     }
     case 'delete': {
-      if (message.deletable) {
-        await message.delete().catch(() => null);
-      }
+      outcome = { action: 'delete' };
       break;
     }
     case 'timeout': {
       if (member.moderatable) {
         await member.timeout(600000, `AI Moderation: ${aiResult.classification} (${aiResult.reason})`);
+        outcome = { action: 'timeout' };
+      } else {
+        logger.warn(`AI moderation: cannot timeout ${authorId} in guild ${guild.id} — not moderatable (role hierarchy or missing permission)`);
+        outcome = { action: 'failed', reason: 'not_moderatable' };
       }
       break;
     }
@@ -221,9 +285,11 @@ async function executeAction(action, message, client, aiResult, aiConfig) {
       break;
   }
 
-  if (action !== 'delete' && message.deletable) {
+  if (outcome.action !== 'delete' && message.deletable) {
     await message.delete().catch(() => null);
   }
+
+  return outcome;
 }
 
 async function sendAiAlert(message, client, aiResult, action, aiConfig) {
@@ -242,12 +308,17 @@ async function sendAiAlert(message, client, aiResult, action, aiConfig) {
     raid: '🚨'
   };
 
+  // `action` here is the REAL outcome returned by executeAction() — not the configured/requested
+  // action — so a permission failure or a disabled quarantine correctly shows as failed/fallback
+  // instead of always claiming the configured action succeeded.
   const actionLabels = {
     quarantine: 'Quarantined / En Cuarentena',
     kick: 'Kicked / Expulsado',
     ban: 'Banned / Baneado',
     delete: 'Message Deleted / Mensaje Eliminado',
-    timeout: 'Timed Out / Silenciado'
+    timeout: 'Timed Out / Silenciado',
+    failed: '⚠️ Action FAILED — check bot role position/permissions / Acción FALLIDA — revisa el rol/permisos del bot',
+    none: '⚠️ No action taken / Ninguna acción tomada'
   };
 
   const embed = createEmbed({
@@ -392,10 +463,18 @@ export class AiModerationService {
         return;
       }
 
+      // Found by a code review: ManageMessages used to grant a blanket AI-moderation bypass, but
+      // that permission is commonly handed out to "trusted member" / pin-in-this-channel roles
+      // that have nothing to do with real moderation authority — a hijacked account holding one
+      // of those roles became permanently invisible to RaidShield. Restricted to actual
+      // moderation power (owner, Administrator, or the ability to remove people: Ban/Kick
+      // Members); anything looser belongs in the purpose-built `trustedRoles` config below, which
+      // a server can still use for exactly that case.
       if (
         member.id === message.guild.ownerId ||
         member.permissions.has('Administrator') ||
-        member.permissions.has('ManageMessages')
+        member.permissions.has('BanMembers') ||
+        member.permissions.has('KickMembers')
       ) {
         logger.debug('User has moderation permissions, skipping AI moderation');
         return;
@@ -424,23 +503,27 @@ export class AiModerationService {
         }
       }
 
+      // Length/attachment filter now runs BEFORE the rate-limit check (it used to run after,
+      // so a trivial 1-3 character message still consumed a rate-limit slot it never needed).
+      if (text.length < MIN_CONTENT_LENGTH && imageUrls.length === 0) {
+        logger.debug('Message too short and no images, skipping');
+        return;
+      }
+
       const hasImage = imageUrls.length > 0;
+      // Per-guild keys (see the constants' comment above) — one guild's traffic, malicious or
+      // not, can no longer exhaust another guild's AI-moderation budget.
       const canProcess = hasImage
-        ? await checkRateLimit(AI_RATE_LIMIT_KEY_IMAGE, AI_RATE_LIMIT_ATTEMPTS_IMAGE, AI_RATE_LIMIT_WINDOW_MS)
-        : await checkRateLimit(AI_RATE_LIMIT_KEY_TEXT, AI_RATE_LIMIT_ATTEMPTS_TEXT, AI_RATE_LIMIT_WINDOW_MS);
+        ? await checkRateLimit(`${AI_RATE_LIMIT_KEY_IMAGE_PREFIX}:${message.guild.id}`, AI_RATE_LIMIT_ATTEMPTS_IMAGE, AI_RATE_LIMIT_WINDOW_MS)
+        : await checkRateLimit(`${AI_RATE_LIMIT_KEY_TEXT_PREFIX}:${message.guild.id}`, AI_RATE_LIMIT_ATTEMPTS_TEXT, AI_RATE_LIMIT_WINDOW_MS);
       if (!canProcess) {
         // Warn rather than info-log: every message skipped here gets zero AI content analysis at
         // all, which matters for visibility even though RaidDetectionService's separate,
         // non-AI-dependent burst/spam/join checks are unaffected and keep running regardless.
-        logger.warn(`⏱️ AI moderation rate limit exceeded (${hasImage ? 'image' : 'text'} queue), skipping message with no analysis`, {
+        logger.warn(`⏱️ AI moderation rate limit exceeded (${hasImage ? 'image' : 'text'} queue) for guild ${message.guild.id}, skipping message with no analysis`, {
           guildId: message.guild.id,
           userId: message.author.id,
         });
-        return;
-      }
-
-      if (text.length < MIN_CONTENT_LENGTH && imageUrls.length === 0) {
-        logger.debug('Message too short and no images, skipping');
         return;
       }
 
@@ -478,10 +561,13 @@ export class AiModerationService {
         reason: result.reason
       });
 
-      await Promise.all([
-        executeAction(action, message, client, result, aiConfig),
-        sendAiAlert(message, client, result, action, aiConfig)
-      ]);
+      // executeAction runs BEFORE sendAiAlert (no longer Promise.all'd) and its real outcome is
+      // what gets reported — previously the alert always echoed the configured `action` string
+      // regardless of whether it actually happened (a failed kick/ban/timeout from insufficient
+      // permissions, or a quarantine silently skipped because the core Raid Shield toggle was
+      // off, both rendered as a normal success). Staff now see the truth.
+      const outcome = await executeAction(action, message, client, result, aiConfig);
+      await sendAiAlert(message, client, result, outcome.action, aiConfig);
     } catch (error) {
       logger.error('❌ Error in AI moderation processing:', error);
     }

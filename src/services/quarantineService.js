@@ -2,12 +2,24 @@ import {
   EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags, PermissionFlagsBits
 } from 'discord.js';
 import { logger } from '../utils/logger.js';
-import { getFromDb, setInDb } from '../utils/database.js';
+import { getFromDb, setInDb, deleteFromDb } from '../utils/database.js';
 import { getColor } from '../config/bot.js';
 import { sanitizeMarkdown } from '../utils/sanitization.js';
 import { Mutex } from '../utils/mutex.js';
 
 const QUARANTINE_DB_PREFIX = 'quarantine';
+
+// Index of "this user currently has an open quarantine" — guards against the same person being
+// quarantined twice concurrently (e.g. two AI-flagged messages processed a few ms apart via
+// messageCreate.js's Promise.all fan-out). Without it, two independent triggerQuarantine() calls
+// for the same user each create their own record with their own previousRoles snapshot (the
+// second snapshot can be wrong/empty since the first call already mutated the member's roles by
+// the time it runs), and resolving one record (ban/false-alarm) leaves the other orphaned —
+// forever "quarantined" in the DB with live action buttons pointing at a user who's already been
+// released.
+function activeQuarantineKey(guildId, userId) {
+  return `quarantine:active:${guildId}:${userId}`;
+}
 
 /**
  * Bilingual text helper
@@ -52,7 +64,12 @@ const STRINGS = {
     burned_invite: t('Burned Invite', 'Invitación Comprometida'),
     ai_spam: t('AI Detected Spam', 'IA Detectó Spam'),
     ai_bot: t('AI Detected Bot', 'IA Detectó Bot'),
-    ai_raid: t('AI Detected Raid', 'IA Detectó Raid')
+    ai_raid: t('AI Detected Raid', 'IA Detectó Raid'),
+    // `scam` is the single most common AI classification (aiModerationService's default action
+    // for it is 'quarantine', and scamDetectionService's keyword set is scam-focused) — this was
+    // the one classification missing from the map, so it silently printed the raw 'ai_scam'
+    // internal string instead of a bilingual label everywhere every sibling was formatted.
+    ai_scam: t('AI Detected Scam', 'IA Detectó Estafa')
   }
 };
 
@@ -145,19 +162,38 @@ export class QuarantineService {
           logger.warn(`Skipping invalid suspect in quarantine ${quarantineId}`);
           continue;
         }
-        const previousRoles = suspect.roles.cache
-          .filter(r => r.id !== guild.id && r.id !== config.quarantineRoleId)
-          .map(r => r.id);
 
-        try {
-          // Strip verified role
-          if (verifiedRole && suspect.roles.cache.has(verifiedRole.id)) {
-            await suspect.roles.remove(verifiedRole, 'Raid shield quarantine');
+        // Serializes this user's own quarantine processing against any OTHER triggerQuarantine
+        // call for them that's in flight at the same time (see activeQuarantineKey's comment).
+        await Mutex.runExclusive(`quarantine-user:${guild.id}:${suspect.id}`, async () => {
+          const existingQuarantineId = await getFromDb(activeQuarantineKey(guild.id, suspect.id), null);
+          if (existingQuarantineId) {
+            logger.info(`Skipping duplicate quarantine for ${suspect.id} — already open under ${existingQuarantineId}`);
+            return;
           }
 
-          // Assign quarantine role
-          if (quarantineRole) {
-            await suspect.roles.add(quarantineRole, 'Raid shield quarantine');
+          const previousRoles = suspect.roles.cache
+            .filter(r => r.id !== guild.id && r.id !== config.quarantineRoleId)
+            .map(r => r.id);
+
+          let roleStripComplete = false;
+          let roleStripError = null;
+          try {
+            if (quarantineRole) {
+              // Single atomic call instead of remove-verified + add-quarantine + a remove-loop as
+              // several separate sequential API calls: closes the window where the member briefly
+              // has neither their old roles nor the quarantine role, and any hierarchy failure
+              // (a role sitting above the bot's own top role) now throws and is recorded instead
+              // of being silently swallowed per-role with no trace anywhere.
+              await suspect.roles.set([quarantineRole.id], 'Raid shield quarantine');
+            } else if (verifiedRole && suspect.roles.cache.has(verifiedRole.id)) {
+              // No quarantine role configured — best effort: at least strip the verified role.
+              await suspect.roles.remove(verifiedRole, 'Raid shield quarantine');
+            }
+            roleStripComplete = true;
+          } catch (roleError) {
+            roleStripError = roleError.message;
+            logger.warn(`Failed to strip roles for quarantined member ${suspect.id} (likely role hierarchy):`, roleError.message);
           }
 
           // Move to quarantine channel if it's a voice channel
@@ -165,30 +201,27 @@ export class QuarantineService {
             await suspect.voice.setChannel(quarantineChannel, 'Raid shield quarantine').catch(() => null);
           }
 
-          // Lock to quarantine channel only (strip all other roles except quarantine)
-          if (quarantineRole && config.quarantineRoleId) {
-            const rolesToRemove = suspect.roles.cache.filter(
-              r => r.id !== guild.id && r.id !== config.quarantineRoleId
-            );
-            for (const [, role] of rolesToRemove) {
-              await suspect.roles.remove(role, 'Raid shield — lock to quarantine').catch(() => null);
-            }
-          }
-
           // Apply maximum timeout (28 days) while staff reviews
           await suspect.timeout(28 * 24 * 60 * 60 * 1000, 'Raid shield quarantine — pending staff review').catch(err => {
             logger.warn(`Failed to timeout quarantined member ${suspect.id}:`, err.message);
           });
 
+          // Always recorded — even a fully-failed role strip stays visible in the quarantine
+          // record and staff alert (roleStripComplete: false) instead of the suspect silently
+          // vanishing from the list, which is what happened before: a hierarchy failure meant
+          // this person was never pushed into processedSuspects at all, so nobody — not the
+          // alert, not /raidshield history, not Ban All/False Alarm — ever knew they existed.
           processedSuspects.push({
             userId: suspect.id,
             username: suspect.user.tag,
             previousRoles: [...previousRoles],
-            quarantinedAt: new Date().toISOString()
+            quarantinedAt: new Date().toISOString(),
+            roleStripComplete,
+            roleStripError
           });
-        } catch (roleError) {
-          logger.warn(`Failed to quarantine member ${suspect.id}:`, roleError.message);
-        }
+
+          await setInDb(activeQuarantineKey(guild.id, suspect.id), quarantineId);
+        });
       }
 
       quarantineData.suspects = processedSuspects;

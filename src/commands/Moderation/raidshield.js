@@ -86,7 +86,7 @@ export default {
         .addNumberOption(opt =>
           opt
             .setName('confidence')
-            .setDescription('Minimum confidence to act (0.5-1.0, default: 0.80)')
+            .setDescription('Minimum confidence to act (0.5-1.0, default: 0.90)')
             .setRequired(false)
             .setMinValue(0.5)
             .setMaxValue(1.0)
@@ -465,7 +465,10 @@ export default {
             raid_name_similarity: 'Name Similarity',
             ai_spam: 'AI: Spam',
             ai_bot: 'AI: Bot',
-            ai_raid: 'AI: Raid'
+            ai_raid: 'AI: Raid',
+            // Was missing — 'scam' is the single most common AI classification, so /raidshield
+            // history was printing the raw 'ai_scam' internal string for the most frequent case.
+            ai_scam: 'AI: Scam'
           };
           const reason = reasonMap[q.reason] || q.reason || 'Unknown';
           return `\`${i + 1}.\` ${statusEmoji} **${reason}** — ${date} — ${q.suspects.length} suspects`;
