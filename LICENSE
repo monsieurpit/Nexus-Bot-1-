@@ -1,21 +1,26 @@
-MIT License
+Nexus Bot License
 
-Copyright (c) 2026 Patrick Houle (Nexus Bot Project)
+Copyright (c) 2026 Patrick Houle. All rights reserved except where this
+license grants permission below.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+Nexus Bot began from an early open-source Discord bot template, but has since
+been rewritten and extended so extensively (custom AI engine, security/anti-
+raid system, prediction and economy features, dashboard, and more) that it is
+now Patrick Houle's own project. This license applies to the project as it
+exists today.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+You are allowed to:
+  - Read, run, and study this code for your own personal or educational use.
+  - Fork it and modify your own copy for private, non-commercial projects.
+  - Share small excerpts of the code (for teaching, discussion, or examples)
+    as long as you credit Patrick Houle / Nexus Bot as the source.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+You are not allowed to:
+  - Present this code, or a modified copy of it, as your own original work.
+  - Deploy this code (as-is or modified) as a public or commercial bot/service
+    without Patrick Houle's permission first.
+  - Remove or alter this license file from any copy of the project you share.
+
+This software is provided "as is," with no warranty of any kind, express or
+implied. Patrick Houle is not liable for any damage, data loss, downtime, or
+other consequences arising from using, modifying, or hosting this software.
