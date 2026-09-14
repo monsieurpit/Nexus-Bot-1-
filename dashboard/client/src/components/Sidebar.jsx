@@ -30,6 +30,20 @@ export default function Sidebar() {
       </div>
 
       <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
+        <NavLink
+          to="/nexus-code"
+          className={({ isActive }) =>
+            `flex items-center gap-3 px-3 py-2 mb-4 rounded-lg text-sm transition-colors ${
+              isActive
+                ? 'bg-brand-600/20 text-brand-400 font-medium'
+                : 'text-gray-200 hover:text-white bg-white/5 hover:bg-white/10'
+            }`
+          }
+        >
+          <span className="text-base leading-none">🧑‍💻</span>
+          Nexus Code
+        </NavLink>
+
         <p className="text-gray-600 text-[10px] font-semibold uppercase tracking-wider px-3 pb-2">Configuration</p>
         {nav.map(({ to, label, icon }) => (
           <NavLink
