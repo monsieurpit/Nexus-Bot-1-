@@ -480,6 +480,11 @@ export class NexusAI {
       search: opts.search,
       searchEngine: opts.searchEngine || opts.provider,
       provider: opts.provider || opts.searchEngine,
+      // "Nexus Code" repo-editing feature only — the one narrow, explicit exception to Nexus-AI-'s
+      // resolveRequestedPersona() always forcing crashout-bot for this Discord-bot client (see
+      // server.ts's own comment on this same flag). Only askCodeEdit() below ever sets this;
+      // every other call through askJSON/ask/askCode/etc. leaves it false and is unaffected.
+      codeEditRequest: Boolean(opts.codeEditRequest),
     };
 
     const res = await this._fetchWithTimeout(`${this.baseUrl}/nexus`, {
@@ -787,6 +792,19 @@ export class NexusAI {
   async askCode(options) {
     const opts = typeof options === 'string' ? { prompt: options } : options;
     return this.ask({ ...opts, persona: 'code-architect' });
+  }
+
+  /**
+   * Direct Helper: "Nexus Code" repo-editing feature. Same code-architect persona as askCode(),
+   * plus the codeEditRequest flag that's required to actually reach it (see the comment on that
+   * field in askJSON above) — kept as its own named method rather than modifying askCode() itself,
+   * so nothing else that might someday call askCode() picks up this behavior by surprise.
+   * @param {string|Object} options
+   * @returns {Promise<string>} the complete modified file content, nothing else
+   */
+  async askCodeEdit(options) {
+    const opts = typeof options === 'string' ? { prompt: options } : options;
+    return this.ask({ ...opts, persona: 'code-architect', codeEditRequest: true });
   }
 
   /**

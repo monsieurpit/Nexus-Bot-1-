@@ -6,6 +6,7 @@ import { dirname, resolve, join } from 'path'
 import { existsSync } from 'fs'
 import guildsRouter from './routes/guilds.js'
 import v1Router from './routes/v1.js'
+import codeeditRouter from './routes/codeedit.js'
 
 // Anti-crash handlers for Railway
 process.on('unhandledRejection', (reason, promise) => {
@@ -38,6 +39,7 @@ app.get('/api/health', (_req, res) => {
 
 app.use('/api/guilds', guildsRouter)
 app.use('/api/v1', v1Router)
+app.use('/api/codeedit', codeeditRouter)
 
 if (process.env.NODE_ENV !== 'production') {
   try {

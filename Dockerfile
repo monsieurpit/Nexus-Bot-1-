@@ -1,5 +1,10 @@
 FROM node:20-alpine
 
+# node:20-alpine has no git binary by default — the "Nexus Code" repo-editing feature
+# (dashboard/server/services/repoEditService.js) shells out to real git via simple-git to clone,
+# commit, and push to a user's repo, which fails outright without this.
+RUN apk add --no-cache git
+
 # Create app directory
 WORKDIR /usr/src/app
 

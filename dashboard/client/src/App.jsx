@@ -15,6 +15,7 @@ import JoinToCreate from './pages/JoinToCreate.jsx'
 import RaidShield from './pages/RaidShield.jsx'
 import Economy from './pages/Economy.jsx'
 import Football from './pages/Football.jsx'
+import NexusCode from './pages/NexusCode.jsx'
 
 export default function App() {
   return (
@@ -38,6 +39,7 @@ export default function App() {
               <Route path="/join-to-create" element={<JoinToCreate />} />
               <Route path="/raid-shield"    element={<RaidShield />} />
               <Route path="/economy"        element={<Economy />} />
+              <Route path="/nexus-code"     element={<NexusCode />} />
             </Routes>
           </main>
         </div>
