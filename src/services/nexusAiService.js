@@ -131,6 +131,12 @@ export async function askNexusAi(question, userContext = {}) {
       isSuperChillUser,
       memories,
       history,
+      // Found missing entirely (2026-09-17): nexus-ai.js's askJSON already supports imageUrl and
+      // Nexus-AI-'s /api/v1/nexus already runs it through a real vision model, but nothing on this
+      // side of the pipe ever extracted a Discord attachment and passed it through — a message
+      // like "nexus what does this say" with an image attached silently answered as if there were
+      // no image at all. handleNexusAiMessage below is what actually populates this now.
+      imageUrl: userContext.imageUrl || '',
     });
     const reply = data?.response || data?.text || '';
     if (!reply) throw new Error('Empty response from Nexus API');
@@ -195,6 +201,8 @@ export async function askNexusAiStream(question, userContext = {}, onToken) {
         isSuperChillUser,
         memories,
         history,
+        // Same fix as askNexusAi above — parity so a streamed reply sees an attached image too.
+        imageUrl: userContext.imageUrl || '',
       },
       (chunk) => {
         streamedAny = true;
@@ -312,6 +320,15 @@ export async function handleNexusAiMessage(message) {
   const printableCharacters = cleanInvisibleCharacters(rawQuestion);
   const targetScopeId = message.guild?.id || message.channel?.id || 'global';
 
+  // Found missing entirely (2026-09-17): a message like "nexus what does this say" with an image
+  // attached never looked at the attachment at all — the CDN URL just sat unused on
+  // message.attachments while only the text question was ever sent to the AI engine, even though
+  // Nexus-AI-'s /api/v1/nexus endpoint already has a real vision pipeline wired up and waiting for
+  // exactly this. Takes the first image-type attachment only (a genuine multi-image message is
+  // rare enough in practice, and the engine's own vision call only ever looks at one image anyway).
+  const imageAttachment = message.attachments?.find((a) => a.contentType?.startsWith('image/'));
+  const imageUrl = imageAttachment?.url || '';
+
   // Check for deactivation trigger (e.g. "Nexus, desactivate", "hey nexus deactivate", "@Nexus desactivate")
   if (DEACTIVATE_REGEX.test(rawQuestion.trim())) {
     await setNexusAiDisabled(targetScopeId, message.client, true);
@@ -342,8 +359,12 @@ export async function handleNexusAiMessage(message) {
 
   const userId = message.author?.id;
 
-  // If user only pinged/said "nexus" or sent greeting with no question
-  if (printableCharacters.length === 0) {
+  // If user only pinged/said "nexus" or sent greeting with no question — UNLESS they attached an
+  // image with no other text ("@Nexus" + a screenshot, no caption), which is a real, common way to
+  // ask "what is this" — that case now falls through to the real question below instead of the
+  // generic "why'd you mention me" filler, same as before this fix would have shown for a plain
+  // text-only ping.
+  if (printableCharacters.length === 0 && !imageUrl) {
     if (userId === '1394001641899954368') {
       await message.reply({
         content: "What's good my fucking bro! How can I help your awesome ass today?"
@@ -356,7 +377,10 @@ export async function handleNexusAiMessage(message) {
     return true;
   }
 
-  const question = rawQuestion.trim();
+  // A bare "@Nexus" + image with no caption still needs SOME prompt text for the engine's own
+  // language/intent detection to run against — mirrors the same fallback Nexus-AI-'s server.ts
+  // itself already uses when an image arrives with no accompanying user text.
+  const question = rawQuestion.trim() || (imageUrl ? 'Analyze this uploaded image attachment' : '');
 
   // Send typing indicator while waiting for the Nexus API. Discord only displays the typing
   // indicator for ~10s before it silently expires — a single one-shot call here used to mean a
@@ -384,7 +408,8 @@ export async function handleNexusAiMessage(message) {
       userId,
       username: message.author.username,
       client: message.client,
-      channelId: message.channel.id
+      channelId: message.channel.id,
+      imageUrl
     });
 
     // Check if answer is missing or consists entirely of invisible blank characters
