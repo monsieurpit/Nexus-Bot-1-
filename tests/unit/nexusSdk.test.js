@@ -36,11 +36,17 @@ test('NexusAI askJSON builds the correct /nexus payload', async (t) => {
   let capturedUrl;
   let capturedBody;
 
-  t.mock.method(global, 'fetch', async (url, init) => {
+  // Plain reassignment instead of node:test's t.mock.method — that API throws
+  // NotImplementedError under Bun (see https://github.com/oven-sh/bun/issues/5090), and this
+  // machine only has Bun installed (no `node` binary at all), so every test in this file using
+  // t.mock.method silently failed here regardless of what the actual client code did. A direct
+  // `global.fetch = fn` achieves the identical stubbing effect and is valid under real
+  // `node --test` too, so this stays runnable under either runtime.
+  global.fetch = async (url, init) => {
     capturedUrl = url;
     capturedBody = JSON.parse(init.body);
     return { ok: true, json: async () => ({ response: 'hi there' }) };
-  });
+  };
 
   const result = await client.askJSON({
     prompt: 'hello',
@@ -62,25 +68,25 @@ test('NexusAI askJSON builds the correct /nexus payload', async (t) => {
 test('NexusAI ask() returns plain text and throws on HTTP failure', async (t) => {
   const client = new NexusAI();
 
-  t.mock.method(global, 'fetch', async () => ({ ok: true, json: async () => ({ text: 'sup bro' }) }));
+  global.fetch = async () => ({ ok: true, json: async () => ({ text: 'sup bro' }) });
   assert.equal(await client.ask('yo'), 'sup bro');
 
-  t.mock.method(global, 'fetch', async () => ({ ok: false, status: 500, statusText: 'Server Error', text: async () => '' }));
+  global.fetch = async () => ({ ok: false, status: 500, statusText: 'Server Error', text: async () => '' });
   await assert.rejects(() => client.ask('yo'), /Nexus API HTTP 500/);
 });
 
 test('NexusAI checkSecurity forwards the RaidShield response and throws on failure', async (t) => {
   const client = new NexusAI();
 
-  t.mock.method(global, 'fetch', async () => ({
+  global.fetch = async () => ({
     ok: true,
     json: async () => ({ classification: 'safe', confidence: 0.95, reason: 'looks fine' })
-  }));
+  });
   const safeRes = await client.checkSecurity({ messageText: 'Hello world' });
   assert.equal(safeRes.classification, 'safe');
   assert.equal(await client.isSafe('Hello world'), true);
 
-  t.mock.method(global, 'fetch', async () => ({ ok: false, status: 503, statusText: 'Unavailable', text: async () => '' }));
+  global.fetch = async () => ({ ok: false, status: 503, statusText: 'Unavailable', text: async () => '' });
   await assert.rejects(() => client.checkSecurity({ messageText: 'test' }), /RaidShield API HTTP 503/);
 });
 
@@ -93,7 +99,7 @@ test('NexusAI stateful chat session creation and history', async (t) => {
   assert.equal(session.persona, 'nexus-homie');
   assert.deepEqual(session.getHistory(), []);
 
-  t.mock.method(global, 'fetch', async () => ({ ok: true, json: async () => ({ response: 'yo' }) }));
+  global.fetch = async () => ({ ok: true, json: async () => ({ response: 'yo' }) });
   await session.sendMessage('hey nexus');
   assert.equal(session.getHistory().length, 2);
 
@@ -105,7 +111,7 @@ test('NexusAI retries and recovers from transient HTTP 502 error', async (t) => 
   const client = new NexusAI();
   let callCount = 0;
 
-  t.mock.method(global, 'fetch', async () => {
+  global.fetch = async () => {
     callCount++;
     if (callCount === 1) {
       return {
@@ -119,7 +125,7 @@ test('NexusAI retries and recovers from transient HTTP 502 error', async (t) => 
       ok: true,
       json: async () => ({ response: 'recovered after retry!' }),
     };
-  });
+  };
 
   const res = await client.askJSON({ prompt: 'test 502 recovery' });
   assert.equal(callCount, 2);
