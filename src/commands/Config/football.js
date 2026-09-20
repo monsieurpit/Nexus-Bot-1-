@@ -105,13 +105,6 @@ export default {
             sub
                 .setName('set-result')
                 .setDescription('Record the real final score for a match and score everyone\'s predictions')
-                .addStringOption(opt =>
-                    opt
-                        .setName('match')
-                        .setDescription('Select the match to resolve (defaults to the active prediction match)')
-                        .setAutocomplete(true)
-                        .setRequired(false)
-                )
                 .addIntegerOption(opt =>
                     opt
                         .setName('home_score')
@@ -127,6 +120,13 @@ export default {
                         .setMinValue(0)
                         .setMaxValue(20)
                         .setRequired(true)
+                )
+                .addStringOption(opt =>
+                    opt
+                        .setName('match')
+                        .setDescription('Select the match to resolve (defaults to the active prediction match)')
+                        .setAutocomplete(true)
+                        .setRequired(false)
                 )
         )
         .addSubcommand(sub =>
