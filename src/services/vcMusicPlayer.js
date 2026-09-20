@@ -66,8 +66,26 @@ async function playTrack(session, yt, track) {
     }
 
     // Opus is virtually always available for standard YouTube videos, and
-    // @discordjs/voice can play it directly with no transcoding step needed.
-    const webStream = await yt.download(videoId, { type: 'audio', quality: 'best', codec: 'opus' });
+    // @discordjs/voice can play it directly with no transcoding step needed. Found live
+    // (2026-09-20) that this "virtually always" doesn't hold for every video — real tracks
+    // ("Ramenez la coupe à la maison" - Vegedream, "Bad boy" - Marwa Loud) were getting skipped
+    // entirely with "No matching formats found" because requesting Opus specifically excludes any
+    // video whose available formats don't happen to include an Opus-encoded audio stream (real
+    // and not that rare — depends on how/when a given video was transcoded on YouTube's side, not
+    // predictable up front). There was no fallback at all: one missing codec meant the whole track
+    // got skipped rather than trying anything else. Now retries with no codec constraint (accepts
+    // whatever audio format IS actually available) before giving up — createAudioResource() below
+    // was already called with no explicit inputType, so it already lets @discordjs/voice infer/
+    // transcode as needed either way; this fallback costs nothing extra when Opus IS available
+    // (first attempt succeeds and the fallback branch never runs) and only pays for itself on the
+    // videos that were previously failing outright.
+    let webStream;
+    try {
+      webStream = await yt.download(videoId, { type: 'audio', quality: 'best', codec: 'opus' });
+    } catch (opusErr) {
+      logger.debug(`[VC Music] Opus format unavailable for "${query}" (${opusErr.message}), retrying with any available audio format.`);
+      webStream = await yt.download(videoId, { type: 'audio', quality: 'best' });
+    }
     nodeStream = Readable.fromWeb(webStream);
     session.currentStream = nodeStream;
 
