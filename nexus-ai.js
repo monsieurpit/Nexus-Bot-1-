@@ -248,7 +248,21 @@ export class NexusAI {
       } catch (err) {
         clearTimeout(timer);
         lastError = err;
-        if (attempt === maxRetries) {
+        // Found live (2026-09-20) — Nexus never responding to real Discord messages, and taking
+        // up to ~5 minutes when it eventually did. Root cause: this default timeoutMs (50s) was
+        // shorter than server.ts's own real worst-case processing budget (150s for a normal
+        // request, and the multi-pass self-review loop alone can legitimately take up to 55s), so
+        // a genuinely slow-but-working request got aborted client-side before the server ever had
+        // a chance to finish it. Retrying made this WORSE, not better: server.ts's request queue
+        // runs at strict concurrency=1 (Patrick's own explicit request, to protect his Mac), and
+        // aborting the client's fetch does nothing to cancel the server's still-in-flight work on
+        // that same request — so a retry just queued a SECOND attempt behind the first one still
+        // occupying the only processing slot, compounding the wait rather than recovering from
+        // it. A self-inflicted timeout (AbortError from OUR OWN controller above, not a network
+        // failure) now skips the retry entirely; retries stay valuable for what they were
+        // actually meant for — a genuine transient network blip (connection reset, DNS hiccup) —
+        // not "the request needed more time than we gave it".
+        if (err.name === 'AbortError' || attempt === maxRetries) {
           throw err;
         }
         const delayMs = Math.min(2000, Math.pow(2, attempt) * 200 + Math.floor(Math.random() * 100));
@@ -487,11 +501,21 @@ export class NexusAI {
       codeEditRequest: Boolean(opts.codeEditRequest),
     };
 
-    const res = await this._fetchWithTimeout(`${this.baseUrl}/nexus`, {
-      method: 'POST',
-      headers: this._getHeaders(),
-      body: JSON.stringify(payload),
-    });
+    // 170s — comfortably above server.ts's own real worst-case budget for this endpoint (150s;
+    // see that file's own comment on why: OLLAMA_NUM_CTX + the multi-pass self-review loop +
+    // concurrency=1 queueing can legitimately need close to that long). The previous 50s default
+    // was silently abandoning genuinely slow-but-working requests before the server had a real
+    // chance to finish them — see _fetchWithTimeout's own comment on the retry-loop half of this
+    // same fix.
+    const res = await this._fetchWithTimeout(
+      `${this.baseUrl}/nexus`,
+      {
+        method: 'POST',
+        headers: this._getHeaders(),
+        body: JSON.stringify(payload),
+      },
+      170000
+    );
 
     return await this._parseResponse(res, 'Nexus API');
   }
