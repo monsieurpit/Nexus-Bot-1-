@@ -2,6 +2,7 @@ import { EmbedBuilder, PermissionFlagsBits } from 'discord.js';
 import { getColor } from '../config/bot.js';
 import { getGuildConfig, setGuildConfig } from './guildConfig.js';
 import { logger } from '../utils/logger.js';
+import { Mutex } from '../utils/mutex.js';
 
 const STATS_KEY = (guildId) => `guild:${guildId}:weekly_stats`;
 const PREV_STATS_KEY = (guildId) => `guild:${guildId}:prev_weekly_stats`;
@@ -135,18 +136,56 @@ export async function getWeeklyStats(client, guildId) {
 /**
  * Increments a weekly statistic metric
  */
+// Stat increments are buffered in memory and written in one batch per guild every
+// WEEKLY_STAT_FLUSH_MS. Writing on every single message (the `messagesSent` metric) was both racy —
+// two messages at once read the same value and one increment was lost — and cost one database
+// write per message (Firestore's free tier allows 20k writes a day).
+const WEEKLY_STAT_FLUSH_MS = 30 * 1000;
+const pendingWeeklyStats = new Map(); // guildId -> { client, metrics: Map<metric, amount> }
+let weeklyStatFlushTimer = null;
+
 export async function recordWeeklyStat(client, guildId, metric, amount = 1) {
   if (!client || !guildId || !metric) return;
-  try {
-    const { stats } = await getWeeklyStats(client, guildId);
-    if (typeof stats[metric] === 'number') {
-      stats[metric] += amount;
-      if (client.db) {
-        await client.db.set(STATS_KEY(guildId), stats);
-      }
+  let pending = pendingWeeklyStats.get(guildId);
+  if (!pending) {
+    pending = { client, metrics: new Map() };
+    pendingWeeklyStats.set(guildId, pending);
+  }
+  pending.metrics.set(metric, (pending.metrics.get(metric) || 0) + amount);
+
+  if (!weeklyStatFlushTimer) {
+    weeklyStatFlushTimer = setTimeout(() => {
+      weeklyStatFlushTimer = null;
+      flushWeeklyStats().catch(err => logger.debug('Weekly stat flush failed:', err));
+    }, WEEKLY_STAT_FLUSH_MS);
+    weeklyStatFlushTimer.unref?.();
+  }
+}
+
+/** Writes every buffered stat increment (one read + one write per guild). */
+export async function flushWeeklyStats() {
+  const batch = [...pendingWeeklyStats.entries()];
+  pendingWeeklyStats.clear();
+  for (const [guildId, { client, metrics }] of batch) {
+    try {
+      // Same lock as the weekly reset in postWeeklySummary, so a flush can never write last
+      // week's numbers back over a freshly reset week (or archive the same week twice).
+      await Mutex.runExclusive(`weekly-stats:${guildId}`, async () => {
+        const { stats } = await getWeeklyStats(client, guildId);
+        let changed = false;
+        for (const [metric, amount] of metrics) {
+          if (typeof stats[metric] === 'number') {
+            stats[metric] += amount;
+            changed = true;
+          }
+        }
+        if (changed && client.db) {
+          await client.db.set(STATS_KEY(guildId), stats);
+        }
+      });
+    } catch (err) {
+      logger.debug(`Error flushing weekly stats for guild ${guildId}:`, err);
     }
-  } catch (err) {
-    logger.debug(`Error recording weekly stat ${metric} for guild ${guildId}:`, err);
   }
 }
 
@@ -282,6 +321,8 @@ export async function postWeeklySummary(client, guildId, targetChannel = null, i
       return null;
     }
 
+    // Include everything counted so far before building the summary.
+    await flushWeeklyStats();
     const { stats, prevStats } = await getWeeklyStats(client, guild.id);
     const embed = await buildWeeklySummaryEmbed(client, guild, { stats, prevStats });
 
@@ -299,8 +340,10 @@ export async function postWeeklySummary(client, guildId, targetChannel = null, i
     if (!isTest) {
       if (client.db) {
         // Archive current stats to the 3-summary rolling history and start fresh week
-        await archiveWeeklySummary(client, guildId, stats);
-        await client.db.set(STATS_KEY(guildId), getDefaultWeeklyStats());
+        await Mutex.runExclusive(`weekly-stats:${guildId}`, async () => {
+          await archiveWeeklySummary(client, guildId, stats);
+          await client.db.set(STATS_KEY(guildId), getDefaultWeeklyStats());
+        });
       }
     }
 

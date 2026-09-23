@@ -6,6 +6,7 @@ import {
   EmbedBuilder,
   PermissionFlagsBits,
   AttachmentBuilder,
+  Collection
 } from 'discord.js';
 import { getGuildConfig } from './guildConfig.js';
 import { getTicketData, saveTicketData, deleteTicketData, getOpenTicketCountForUser, incrementTicketCounter, db } from '../utils/database.js';
@@ -427,10 +428,19 @@ export async function createTicket(guild, member, categoryId, reason = 'No reaso
 }
 
 export async function closeTicket(channel, closer, reason = 'No reason provided') {
+  // Serialized with claim/unclaim/etc. on the same ticket: two quick clicks on "Close" (or a close
+  // racing a claim) used to run twice — duplicate close messages, DMs and feedback surveys.
+  return await Mutex.runExclusive(`ticket:${channel.guild.id}:${channel.id}`, () => closeTicketUnlocked(channel, closer, reason));
+}
+
+async function closeTicketUnlocked(channel, closer, reason) {
   try {
     const ticketData = await getTicketData(channel.guild.id, channel.id);
     if (!ticketData) {
       return { success: false, error: 'This is not a ticket channel' };
+    }
+    if (ticketData.status === 'closed') {
+      return { success: false, error: 'This ticket is already closed.' };
     }
 
     const config = await getGuildConfig(channel.client, channel.guild.id);
@@ -542,11 +552,12 @@ export async function closeTicket(channel, closer, reason = 'No reason provided'
         logger.warn(`Could not update user permissions for closed ticket: ${permError.message}`);
     }
 
-    const messages = await channel.messages.fetch();
-    const ticketMessage = messages.find(m =>
-      m.embeds.length > 0 &&
-      m.embeds[0].title?.includes('Ticket #')
-    );
+    // The opening message is pinned — look there first; the latest 50 messages alone miss it in
+    // any long ticket, leaving its (now stale) buttons active.
+    const isTicketHeader = m => m.embeds.length > 0 && m.embeds[0].title?.includes('Ticket #');
+    const messages = await channel.messages.fetch({ limit: 50 }).catch(() => new Collection());
+    const pinned = await channel.messages.fetchPinned().catch(() => null);
+    const ticketMessage = pinned?.find(isTicketHeader) || messages.find(isTicketHeader);
 
     if (ticketMessage) {
       const embed = ticketMessage.embeds[0];
@@ -660,11 +671,12 @@ export async function claimTicket(channel, claimer) {
 
     await saveTicketData(channel.guild.id, channel.id, ticketData);
 
-    const messages = await channel.messages.fetch();
-    const ticketMessage = messages.find(m =>
-      m.embeds.length > 0 &&
-      m.embeds[0].title?.includes('Ticket #')
-    );
+    // The opening message is pinned — look there first; the latest 50 messages alone miss it in
+    // any long ticket, leaving its (now stale) buttons active.
+    const isTicketHeader = m => m.embeds.length > 0 && m.embeds[0].title?.includes('Ticket #');
+    const messages = await channel.messages.fetch({ limit: 50 }).catch(() => new Collection());
+    const pinned = await channel.messages.fetchPinned().catch(() => null);
+    const ticketMessage = pinned?.find(isTicketHeader) || messages.find(isTicketHeader);
 
     if (ticketMessage) {
       const embed = ticketMessage.embeds[0];
@@ -841,11 +853,12 @@ export async function reopenTicket(channel, reopener) {
       logger.warn(`Could not restore access for user ${ticketData.userId}:`, error.message);
     }
 
-    const messages = await channel.messages.fetch();
-    const ticketMessage = messages.find(m =>
-      m.embeds.length > 0 &&
-      m.embeds[0].title?.includes('Ticket #')
-    );
+    // The opening message is pinned — look there first; the latest 50 messages alone miss it in
+    // any long ticket, leaving its (now stale) buttons active.
+    const isTicketHeader = m => m.embeds.length > 0 && m.embeds[0].title?.includes('Ticket #');
+    const messages = await channel.messages.fetch({ limit: 50 }).catch(() => new Collection());
+    const pinned = await channel.messages.fetchPinned().catch(() => null);
+    const ticketMessage = pinned?.find(isTicketHeader) || messages.find(isTicketHeader);
 
     if (ticketMessage) {
       const embed = ticketMessage.embeds[0];
@@ -1408,11 +1421,12 @@ export async function unclaimTicket(channel, unclaimer) {
 
     await saveTicketData(channel.guild.id, channel.id, ticketData);
 
-    const messages = await channel.messages.fetch();
-    const ticketMessage = messages.find(m =>
-      m.embeds.length > 0 &&
-      m.embeds[0].title?.includes('Ticket #')
-    );
+    // The opening message is pinned — look there first; the latest 50 messages alone miss it in
+    // any long ticket, leaving its (now stale) buttons active.
+    const isTicketHeader = m => m.embeds.length > 0 && m.embeds[0].title?.includes('Ticket #');
+    const messages = await channel.messages.fetch({ limit: 50 }).catch(() => new Collection());
+    const pinned = await channel.messages.fetchPinned().catch(() => null);
+    const ticketMessage = pinned?.find(isTicketHeader) || messages.find(isTicketHeader);
 
     if (ticketMessage) {
       const embed = ticketMessage.embeds[0];
@@ -1563,11 +1577,12 @@ export async function updateTicketPriority(channel, priority, updater) {
       }
     }
 
-    const messages = await channel.messages.fetch();
-    const ticketMessage = messages.find(m =>
-      m.embeds.length > 0 &&
-      m.embeds[0].title?.includes('Ticket #')
-    );
+    // The opening message is pinned — look there first; the latest 50 messages alone miss it in
+    // any long ticket, leaving its (now stale) buttons active.
+    const isTicketHeader = m => m.embeds.length > 0 && m.embeds[0].title?.includes('Ticket #');
+    const messages = await channel.messages.fetch({ limit: 50 }).catch(() => new Collection());
+    const pinned = await channel.messages.fetchPinned().catch(() => null);
+    const ticketMessage = pinned?.find(isTicketHeader) || messages.find(isTicketHeader);
 
     if (ticketMessage) {
       const embed = ticketMessage.embeds[0];

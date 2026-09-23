@@ -81,7 +81,12 @@ export default {
             let guildConfig = null;
             if (interaction.guild) {
               guildConfig = await getGuildConfig(client, interaction.guild.id, interactionTraceContext);
-              if (guildConfig?.disabledCommands?.[interaction.commandName]) {
+              // `disabledCommands[name] = true` (bot side) or `enabledCommands[name] = false` (what
+              // the dashboard's Commands page saves — previously ignored, so its toggles did nothing).
+              if (
+                guildConfig?.disabledCommands?.[interaction.commandName] ||
+                guildConfig?.enabledCommands?.[interaction.commandName] === false
+              ) {
                 throw createError(
                   `Command ${interaction.commandName} is disabled in this guild`,
                   ErrorTypes.CONFIGURATION,

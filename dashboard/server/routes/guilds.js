@@ -10,8 +10,6 @@ import {
 import {
   getWelcomeConfig,
   updateWelcomeConfig,
-  getLevelingConfig,
-  saveLevelingConfig,
   getJoinToCreateConfig,
   updateJoinToCreateConfig,
   getApplicationSettings,
@@ -97,6 +95,38 @@ router.get('/global/status', async (_req, res, next) => {
   }
 })
 
+// The bot's real slash commands, grouped by category, for the dashboard's Commands page (which used
+// to show a hardcoded list of commands this bot doesn't have). Uses the live bot when it runs in
+// this process, otherwise loads the command definitions once.
+let cachedCommandList = null
+router.get('/meta/commands', async (_req, res, next) => {
+  try {
+    let commands = getReadyBotClient()?.commands
+    if (!commands || commands.size === 0) {
+      if (!cachedCommandList) {
+        const { loadCommands } = await import('../../../src/handlers/commandLoader.js')
+        const holder = {}
+        cachedCommandList = await loadCommands(holder)
+      }
+      commands = cachedCommandList
+    }
+    const byCategory = new Map()
+    for (const command of commands.values()) {
+      if (command.guildOnly) continue
+      const category = command.category || 'Other'
+      if (!byCategory.has(category)) byCategory.set(category, [])
+      byCategory.get(category).push({ name: command.data.name, description: command.data.description })
+    }
+    res.json(
+      [...byCategory.entries()]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([category, list]) => ({ category, commands: list.sort((x, y) => x.name.localeCompare(y.name)) }))
+    )
+  } catch (err) {
+    next(err)
+  }
+})
+
 router.get('/:guildId/config', async (req, res, next) => {
   try {
     res.json(await getGuildConfigData(req.params.guildId))
@@ -137,10 +167,12 @@ router.put('/:guildId/welcome', async (req, res, next) => {
   }
 })
 
+// The bot reads leveling settings from the guild config's `leveling` section
+// (src/services/leveling.js), so that's what the dashboard edits too.
 router.get('/:guildId/leveling', async (req, res, next) => {
   try {
-    await getGuildConfigData(req.params.guildId)
-    res.json(await getLevelingConfig(dbClient, req.params.guildId))
+    const config = await getGuildConfigData(req.params.guildId)
+    res.json(config.leveling || {})
   } catch (err) {
     next(err)
   }
@@ -150,12 +182,9 @@ router.put('/:guildId/leveling', async (req, res, next) => {
   try {
     const body = requireObjectBody(req, res)
     if (!body) return
-    await getGuildConfigData(req.params.guildId)
-    const current = await getLevelingConfig(dbClient, req.params.guildId)
-    const merged = { ...current, ...body }
-    const ok = await saveLevelingConfig(dbClient, req.params.guildId, merged)
-    if (!ok) return res.status(503).json({ error: 'Database write failed' })
-    res.json(merged)
+    const current = (await getGuildConfigData(req.params.guildId)).leveling || {}
+    const updated = await patchGuildConfig(req.params.guildId, { leveling: { ...current, ...body } })
+    res.json(updated.leveling || {})
   } catch (err) {
     next(err)
   }

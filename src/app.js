@@ -12,7 +12,7 @@ import { logger, startupLog, shutdownLog } from './utils/logger.js';
 import { checkGiveaways } from './services/giveawayService.js';
 import { runAutoSave } from './services/autoSaveService.js';
 import { checkFootballAnnouncements, syncBarcelonaFixturesFromApi } from './services/footballService.js';
-import { checkWeeklySummaries } from './services/weeklySummaryService.js';
+import { checkWeeklySummaries, flushWeeklyStats } from './services/weeklySummaryService.js';
 import { checkVcEvents } from './services/vcEventService.js';
 import { checkLaligaStandingsUpdates } from './services/laligaStandingsService.js';
 import { loadCommands, registerCommands as registerSlashCommands } from './handlers/commandLoader.js';
@@ -513,6 +513,9 @@ class NexusBot extends Client {
       logger.info('Stopping cron jobs...');
       cron.getTasks().forEach(task => task.stop());
       logger.info('✅ Cron jobs stopped');
+
+      // Persist buffered weekly-summary counters before the database closes.
+      await flushWeeklyStats().catch(err => logger.warn('Could not flush weekly stats on shutdown:', err.message));
 
       // Close database connection
       if (this.db && this.db.db) {

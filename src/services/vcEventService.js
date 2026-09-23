@@ -18,6 +18,8 @@ const VC_EVENT_DEFAULTS = {
   lastTriggeredKey: null
 };
 
+const VC_EVENT_CATCH_UP_MINUTES = 10;
+
 export const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 export async function getVcEventConfig(client, guildId) {
@@ -103,7 +105,12 @@ export async function checkVcEvents(client) {
       const config = await getVcEventConfig(client, guild.id);
       if (!config.enabled) continue;
       if (config.dayOfWeek === null || config.hour === null) continue;
-      if (config.dayOfWeek !== dayOfWeek || config.hour !== hour || config.minute !== minute) continue;
+      // A catch-up window instead of an exact-minute match: a restart/redeploy (or a delayed cron
+      // tick) during the scheduled minute used to skip that whole week's event.
+      const minutesNow = hour * 60 + minute;
+      const minutesScheduled = config.hour * 60 + (config.minute || 0);
+      const minutesLate = minutesNow - minutesScheduled;
+      if (config.dayOfWeek !== dayOfWeek || minutesLate < 0 || minutesLate > VC_EVENT_CATCH_UP_MINUTES) continue;
       if (config.lastTriggeredKey === dateKey) continue;
       if (!config.announceChannelId || !config.voiceChannelId) continue;
 

@@ -49,6 +49,9 @@ const AI_RATE_LIMIT_WINDOW_MS = 60000;
 
 const MIN_CONTENT_LENGTH = 4;
 
+// Higher sensitivity = acts on lower-confidence classifications.
+const SENSITIVITY_THRESHOLDS = { low: 0.95, medium: 0.90, high: 0.80 };
+
 const IMAGE_CACHE_MAX_SIZE = 100;
 const IMAGE_CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
 const imageCache = new Map();
@@ -363,7 +366,11 @@ export class AiModerationService {
       const config = await getGuildConfig(client, guildId);
       return {
         enabled: config?.raidShield?.aiModeration?.enabled ?? false,
-        confidenceThreshold: config?.raidShield?.aiModeration?.confidenceThreshold ?? 0.90,
+        // The dashboard's "AI Sensitivity" (low / medium / high) used to be saved but never read.
+        // An explicit confidenceThreshold still wins; otherwise sensitivity picks one.
+        confidenceThreshold: config?.raidShield?.aiModeration?.confidenceThreshold
+          ?? SENSITIVITY_THRESHOLDS[config?.raidShield?.aiModeration?.sensitivity]
+          ?? 0.90,
         scanImages: config?.raidShield?.aiModeration?.scanImages ?? true,
         alertChannelId: config?.raidShield?.aiModeration?.alertChannelId ?? null,
         trustedRoles: config?.raidShield?.aiModeration?.trustedRoles ?? [],

@@ -3,6 +3,7 @@ import {
   createAudioPlayer,
   createAudioResource,
   entersState,
+  demuxProbe,
   AudioPlayerStatus,
   VoiceConnectionStatus
 } from '@discordjs/voice';
@@ -20,7 +21,13 @@ const activeSessions = new Map();
 let innertubePromise = null;
 function getInnertube() {
   if (!innertubePromise) {
-    innertubePromise = Innertube.create({ cache: new UniversalCache(false), generate_session_locally: true });
+    innertubePromise = Innertube.create({ cache: new UniversalCache(false), generate_session_locally: true })
+      .catch((err) => {
+        // Don't cache a failure forever — a transient network error at startup used to disable
+        // music until the next restart.
+        innertubePromise = null;
+        throw err;
+      });
   }
   return innertubePromise;
 }
@@ -89,7 +96,15 @@ async function playTrack(session, yt, track) {
     nodeStream = Readable.fromWeb(webStream);
     session.currentStream = nodeStream;
 
-    const resource = createAudioResource(nodeStream);
+    // Probe the container first: YouTube's WebM/Opus (and Ogg/Opus) streams are then passed
+    // straight through with no transcoding. Without an input type, @discordjs/voice treats every
+    // stream as "arbitrary" and requires FFmpeg + an Opus encoder — neither of which the Docker
+    // image had — so every single track failed to start. Other formats still go through FFmpeg
+    // (installed in the Dockerfile) with the pure-JS opusscript encoder.
+    const { stream: probedStream, type: inputType } = await demuxProbe(nodeStream);
+    nodeStream = probedStream;
+    session.currentStream = probedStream;
+    const resource = createAudioResource(probedStream, { inputType });
     session.player.play(resource);
 
     try {

@@ -81,7 +81,9 @@ export async function handleReactionRolesSelectMenu(interaction, client) {
                 continue;
             }
 
-            const roleHasDangerousPermissions = role.permissions.has([
+            // any(): a role with even ONE of these must not be self-assignable. has([...]) required
+            // ALL of them at once, so a plain "Ban Members" or "Manage Server" role slipped through.
+            const roleHasDangerousPermissions = role.permissions.any([
                 'Administrator',
                 'ManageGuild',
                 'ManageRoles',

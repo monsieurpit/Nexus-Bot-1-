@@ -49,7 +49,6 @@ export default function General() {
         adminRole: cfg.adminRole,
         premiumRoleId: cfg.premiumRoleId,
         autoRole: cfg.autoRole,
-        birthdayChannelId: cfg.birthdayChannelId,
         reportChannelId: cfg.reportChannelId,
       })
       // Save bot status globally (it's not per-guild)
@@ -111,9 +110,6 @@ export default function General() {
       </SectionCard>
 
       <SectionCard title="Channels" description="Channel IDs for specific bot functions.">
-        <Field label="Birthday Channel ID" hint="Where birthday announcements are posted">
-          <TextInput value={cfg.birthdayChannelId} onChange={v => set('birthdayChannelId', v)} placeholder="Channel ID…" />
-        </Field>
         <Field label="Report Channel ID" hint="Where member reports are sent">
           <TextInput value={cfg.reportChannelId} onChange={v => set('reportChannelId', v)} placeholder="Channel ID…" />
         </Field>

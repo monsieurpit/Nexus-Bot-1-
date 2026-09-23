@@ -2,18 +2,6 @@ import { useState, useEffect } from 'react'
 import { useGuild } from '../context/GuildContext.jsx'
 import { SectionCard, Toggle, SaveButton } from '../components/SectionCard.jsx'
 
-const COMMAND_LIST = [
-  { category: 'Moderation', commands: ['ban', 'kick', 'mute', 'unmute', 'warn', 'warnings', 'clearwarnings', 'timeout', 'untimeout', 'purge', 'lock', 'unlock', 'slowmode', 'nick', 'role'] },
-  { category: 'Fun', commands: ['8ball', 'coinflip', 'dice', 'joke', 'meme', 'gif', 'ship', 'rps', 'trivia', 'poll'] },
-  { category: 'Utility', commands: ['help', 'ping', 'serverinfo', 'userinfo', 'avatar', 'invite', 'uptime', 'stats', 'afk', 'remind', 'translate'] },
-  { category: 'Leveling', commands: ['rank', 'leaderboard', 'xp', 'setxp', 'resetxp'] },
-  { category: 'Tickets', commands: ['newticket', 'closeticket', 'adduser', 'removeuser', 'renameticket'] },
-  { category: 'Giveaways', commands: ['gcreate', 'gend', 'greroll', 'gdelete', 'glist'] },
-  { category: 'Applications', commands: ['apply', 'application', 'accept', 'deny', 'applications'] },
-  { category: 'Birthday', commands: ['birthday', 'setbirthday', 'deletebirthday', 'birthdays'] },
-  { category: 'Music', commands: ['play', 'stop', 'skip', 'queue', 'nowplaying', 'pause', 'resume', 'volume'] },
-]
-
 export default function Commands() {
   const { fetchSection, saveSection, selectedGuildId } = useGuild()
   const [enabled, setEnabled] = useState({})
@@ -21,6 +9,16 @@ export default function Commands() {
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [search, setSearch] = useState('')
+  // The bot's real commands (served by the API) — this page used to show a hardcoded list of
+  // commands that don't exist in this bot.
+  const [commandList, setCommandList] = useState([])
+
+  useEffect(() => {
+    fetch('/api/guilds/meta/commands')
+      .then(r => (r.ok ? r.json() : []))
+      .then(list => setCommandList(Array.isArray(list) ? list : []))
+      .catch(console.error)
+  }, [])
 
   useEffect(() => {
     if (!selectedGuildId) return
@@ -73,7 +71,8 @@ export default function Commands() {
         />
       </div>
 
-      {COMMAND_LIST.filter(g => !q || g.commands.some(c => c.includes(q))).map(({ category, commands }) => {
+      {commandList.map(({ category, commands }) => ({ category, commands: commands.map(c => c.name) }))
+        .filter(g => !q || g.commands.some(c => c.includes(q))).map(({ category, commands }) => {
         const filtered = q ? commands.filter(c => c.includes(q)) : commands
         const allOn = filtered.every(c => enabled[c] !== false)
         return (

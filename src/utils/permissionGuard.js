@@ -24,10 +24,7 @@ export function isAdmin(member) {
 
 export function isModerator(member) {
   if (!member) return false;
-  return member.permissions.has([
-    PermissionFlagsBits.Administrator,
-    PermissionFlagsBits.ManageGuild
-  ]);
+  return member.permissions.has(PermissionFlagsBits.ManageGuild); // Administrator implies it; has([a, b]) required BOTH
 }
 
 
