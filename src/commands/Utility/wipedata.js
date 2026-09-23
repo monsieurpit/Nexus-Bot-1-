@@ -16,8 +16,10 @@ export default {
                 `⚠️ **THIS ACTION IS IRREVERSIBLE!** ⚠️\n\n` +
                 `This will permanently delete **ALL** your data from this server including:\n` +
                 `• 📊 Levels and XP\n` +
-                `• 🔢 Counter data\n` +
-                `• 📋 All other personal data\n\n` +
+                `• 🪙 Coins, bank and inventory\n` +
+                `• 💤 AFK status\n` +
+                `• 🧠 What Nexus AI remembers about you\n\n` +
+                `*Moderation records (warnings, cases) are kept.*\n\n` +
                 `**This cannot be undone. Are you absolutely sure?**`;
 
             const embed = warningEmbed(warningMessage, '🗑️ Wipe All Data');

@@ -72,11 +72,23 @@ export default function Moderation() {
   )
 }
 
+// Keeps the raw text locally: parsing (and dropping empty lines) on every keystroke made it
+// impossible to press Enter to add a second ID.
 function IDListTextarea({ values, onChange, placeholder }) {
+  const joined = values.join('\n')
+  const [text, setText] = useState(joined)
+  useEffect(() => {
+    const parsed = text.split('\n').map(s => s.trim()).filter(Boolean).join('\n')
+    if (parsed !== joined) setText(joined)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [joined])
   return (
     <textarea
-      value={values.join('\n')}
-      onChange={e => onChange(e.target.value.split('\n').map(s => s.trim()).filter(Boolean))}
+      value={text}
+      onChange={e => {
+        setText(e.target.value)
+        onChange(e.target.value.split('\n').map(s => s.trim()).filter(Boolean))
+      }}
       placeholder={placeholder}
       rows={4}
       className="w-full bg-[#0f1117] border border-[#2a2d3e] text-gray-200 text-sm rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-500 placeholder-gray-600 resize-none font-mono"

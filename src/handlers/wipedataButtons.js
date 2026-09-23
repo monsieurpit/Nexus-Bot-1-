@@ -18,23 +18,26 @@ const wipedataConfirmHandler = {
       const guildId = interaction.guildId;
 
       
-      const dataKeyPatterns = [
-        `level:${guildId}:${userId}`,
-        `xp:${guildId}:${userId}`,
-        `cooldowns:${guildId}:${userId}`,
-        `counter:${guildId}:${userId}`,
-        `user:${guildId}:${userId}`,
-        `leveling:${guildId}:${userId}`,
+      // The real keys this bot stores per-user data under. This used to try `level:…`, `xp:…`,
+      // `user:…` etc. — formats nothing in the bot uses — so it deleted nothing while telling the
+      // user their data was wiped. Moderation records (warnings, cases) are deliberately kept.
+      const dataKeys = [
+        `guild:${guildId}:leveling:users:${userId}`,
+        `${guildId}:leveling:users:${userId}`, // legacy leveling key
+        `economy:${guildId}:user:${userId}`,
+        `economy:${guildId}:inventory:${userId}`,
+        `guild:${guildId}:afk:${userId}`,
+        `nexus:memory:${userId}`, // what Nexus AI remembers about this user
       ];
 
       let deletedCount = 0;
       const deleteErrors = [];
 
-      
-      for (const key of dataKeyPatterns) {
+      for (const key of dataKeys) {
         try {
-          const exists = await client.db.exists(key);
-          if (exists) {
+          // get() rather than exists(): on Firestore, exists() ignores the kv_data fallback copy.
+          const existing = await client.db.get(key, null);
+          if (existing !== null) {
             await client.db.delete(key);
             deletedCount++;
           }
@@ -44,54 +47,11 @@ const wipedataConfirmHandler = {
         }
       }
 
-      
-      try {
-        if (client.db.list && typeof client.db.list === 'function') {
-          const searchPrefixes = [
-            `${guildId}:${userId}`,
-            `${guildId}:`,
-            `level:${guildId}:`,
-            `xp:${guildId}:`,
-            `user:${guildId}:`
-          ];
-
-          const discoveredKeys = new Set();
-
-          for (const prefix of searchPrefixes) {
-            try {
-              const keys = await client.db.list(prefix);
-              if (Array.isArray(keys)) {
-                keys.forEach((key) => discoveredKeys.add(key));
-              }
-            } catch (listError) {
-              logger.debug(`Key listing failed for prefix ${prefix}:`, listError);
-            }
-          }
-
-          const additionalUserKeys = [...discoveredKeys].filter((key) => {
-            if (dataKeyPatterns.includes(key)) return false;
-            return typeof key === 'string' && key.includes(`${guildId}:${userId}`);
-          });
-
-          for (const key of additionalUserKeys) {
-            try {
-              await client.db.delete(key);
-              deletedCount++;
-            } catch (error) {
-              logger.error(`Error deleting additional key ${key}:`, error);
-              deleteErrors.push(key);
-            }
-          }
-        }
-      } catch (error) {
-        logger.warn('Could not perform prefix search on database:', error);
-      }
-
       const successMessage =
         `✅ **Your data has been successfully wiped!**\n\n` +
         `**Records Deleted:** ${deletedCount}\n\n` +
         `Your account has been reset to default values. You can now start fresh!\n\n` +
-        `*All your levels, and personal data have been removed.*`;
+        `*Your levels/XP, coins, inventory, AFK status and what Nexus AI remembered about you have been removed. Moderation records are kept.*`;
 
       await interaction.editReply({
         embeds: [successEmbed(successMessage, '🗑️ Data Wipe Complete')],

@@ -8,11 +8,20 @@ export default function Applications() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  // Raw textarea text, kept separately: parsing on every keystroke dropped empty lines, so pressing
+  // Enter to start a new question did nothing.
+  const [questionsText, setQuestionsText] = useState('')
 
   useEffect(() => {
     if (!selectedGuildId) return
     setLoading(true)
-    fetchSection('applications').then(setCfg).catch(console.error).finally(() => setLoading(false))
+    fetchSection('applications')
+      .then(data => {
+        setCfg(data)
+        setQuestionsText((data.questions || []).join('\n'))
+      })
+      .catch(console.error)
+      .finally(() => setLoading(false))
     setSaved(false)
   }, [selectedGuildId])
 
@@ -29,7 +38,8 @@ export default function Applications() {
   async function handleSave() {
     setSaving(true)
     try {
-      await saveSection('applications', cfg)
+      const questions = questionsText.split('\n').map(q => q.trim()).filter(Boolean).slice(0, 5)
+      await saveSection('applications', { ...cfg, questions })
       setSaved(true)
       setTimeout(() => setSaved(false), 3000)
     } catch (e) {
@@ -58,10 +68,10 @@ export default function Applications() {
         </Field>
       </SectionCard>
 
-      <SectionCard title="Application Questions" description="Questions asked in the application modal. One per line.">
+      <SectionCard title="Application Questions" description="Questions asked in the application form. One per line — Discord forms allow up to 5.">
         <textarea
-          value={(cfg.questions || []).join('\n')}
-          onChange={e => set('questions', e.target.value.split('\n').map(s => s.trim()).filter(Boolean))}
+          value={questionsText}
+          onChange={e => { setQuestionsText(e.target.value); setSaved(false) }}
           placeholder={"What is your age?\nWhy do you want to join?\nWhat can you contribute?"}
           rows={6}
           className="w-full bg-[#0f1117] border border-[#2a2d3e] text-gray-200 text-sm rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-500 placeholder-gray-600 resize-none"

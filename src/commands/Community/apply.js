@@ -143,10 +143,10 @@ export async function handleApplicationModal(interaction) {
     const settings = await getApplicationSettings(interaction.client, interaction.guild.id);
     
     // Get questions - use per-application questions if they exist, otherwise use global
-    let questions = settings.questions || ["Why do you want this role?", "What is your experience?"];
+    let questions = normalizeQuestions(settings.questions) || ["Why do you want this role?", "What is your experience?"];
     const roleSettings = await getApplicationRoleSettings(interaction.client, interaction.guild.id, roleId);
-    if (roleSettings.questions && roleSettings.questions.length > 0) {
-        questions = roleSettings.questions;
+    if (normalizeQuestions(roleSettings.questions)) {
+        questions = normalizeQuestions(roleSettings.questions);
     }
     
     for (let i = 0; i < questions.length; i++) {
@@ -316,13 +316,13 @@ async function handleSubmit(interaction, settings) {
 
     const modal = new ModalBuilder()
         .setCustomId(`app_modal_${applicationRole.roleId}`)
-        .setTitle(`Application for ${applicationRole.name}`);
+        .setTitle(`Application for ${applicationRole.name}`.slice(0, 45));
 
     // Get questions - use per-application questions if they exist, otherwise use global
-    let questions = settings.questions || ["Why do you want this role?", "What is your experience?"];
+    let questions = normalizeQuestions(settings.questions) || ["Why do you want this role?", "What is your experience?"];
     const roleSettings = await getApplicationRoleSettings(interaction.client, interaction.guild.id, applicationRole.roleId);
-    if (roleSettings.questions && roleSettings.questions.length > 0) {
-        questions = roleSettings.questions;
+    if (normalizeQuestions(roleSettings.questions)) {
+        questions = normalizeQuestions(roleSettings.questions);
     }
 
     questions.forEach((question, index) => {
@@ -431,3 +431,14 @@ async function handleStatus(interaction) {
 
 
 
+
+// A Discord form (modal) holds at most 5 text inputs — more questions (the dashboard allows any
+// number) made showModal() fail, so nobody could apply at all. Blank entries are dropped too.
+function normalizeQuestions(questions) {
+    if (!Array.isArray(questions)) return null;
+    const cleaned = questions
+        .map(q => (typeof q === 'string' ? q.trim() : ''))
+        .filter(Boolean)
+        .slice(0, 5);
+    return cleaned.length > 0 ? cleaned : null;
+}
