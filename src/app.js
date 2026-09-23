@@ -73,9 +73,9 @@ class NexusBot extends Client {
         logger.warn('╔═══════════════════════════════════════════════════════╗');
         logger.warn('║ ⚠️  DATABASE RUNNING IN DEGRADED MODE                 ║');
         logger.warn('║                                                       ║');
-        logger.warn('║ Connection: In-Memory Storage (PostgreSQL unavailable)║');
-        logger.warn('║ Data Persistence: DISABLED - data lost on restart    ║');
-        logger.warn('║ Action Required: Fix PostgreSQL and restart bot      ║');
+        logger.warn('║ Connection: In-Memory (Firestore & PostgreSQL down)   ║');
+        logger.warn('║ Data Persistence: DISABLED - data lost on restart     ║');
+        logger.warn('║ Action Required: check Firestore/DB access, restart   ║');
         logger.warn('╚═══════════════════════════════════════════════════════╝');
         logger.warn('');
       } else {
@@ -96,7 +96,7 @@ class NexusBot extends Client {
       if (this.config.bot.token && this.config.bot.token !== 'your_bot_token_here') {
         try {
           startupLog('Logging into Discord...');
-          await this.login(this.config.bot.token);
+          await this.loginWithRetry();
           startupLog('Discord login successful');
 
           // Wait for the gateway READY dispatch before registering commands. `client.login()`
@@ -145,6 +145,26 @@ class NexusBot extends Client {
     } catch (error) {
       logger.error('Failed to start bot:', error);
       process.exit(1);
+    }
+  }
+
+  /**
+   * A failed login (Discord outage, network hiccup, gateway rate limit) used to leave the bot
+   * offline until the next redeploy. Retries with exponential backoff (capped at 5 minutes) — except
+   * for an invalid token, which no amount of retrying fixes.
+   */
+  async loginWithRetry() {
+    let delayMs = 5000;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await this.login(this.config.bot.token);
+      } catch (error) {
+        const invalidToken = error?.code === 'TokenInvalid' || /invalid token|disallowed intents/i.test(error?.message || '');
+        if (invalidToken) throw error;
+        logger.warn(`Discord login attempt ${attempt} failed (${error?.message}); retrying in ${Math.round(delayMs / 1000)}s`);
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+        delayMs = Math.min(delayMs * 2, 5 * 60 * 1000);
+      }
     }
   }
 

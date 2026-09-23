@@ -1,8 +1,18 @@
 rules_version = '2';
+
+// ⚠️ The bot's original rules were `allow read, write: if true;` — anyone holding the web config
+// (firebase-applet-config.json) could read or wipe the entire database.
+//
+// To lock it down:
+//   1. Firebase console → Authentication → enable "Email/Password" and create a user for the bot.
+//   2. Railway → Variables: FIREBASE_AUTH_EMAIL and FIREBASE_AUTH_PASSWORD for that user.
+//   3. Redeploy, check the logs say "Signed in to Firebase Auth", then publish THESE rules
+//      (Firebase console → Firestore → Rules), replacing the email below with the bot's.
 service cloud.firestore {
   match /databases/{database}/documents {
     match /{document=**} {
-      allow read, write: if true;
+      allow read, write: if request.auth != null
+        && request.auth.token.email == 'REPLACE-WITH-THE-BOT-EMAIL@example.com';
     }
   }
 }

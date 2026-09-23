@@ -628,7 +628,7 @@ class PostgreSQLDatabase {
 
 
 
-    async get(key, defaultValue = null) {
+    async get(key, defaultValue = null, { throwOnError = false } = {}) {
         try {
             if (!this.isAvailable()) {
                 logger.warn('PostgreSQL not available, returning default value');
@@ -656,6 +656,7 @@ class PostgreSQLDatabase {
             return await this.getStructuredData(parsedKey, defaultValue);
         } catch (error) {
             logger.error(`Error getting value for key ${key}:`, error);
+            if (throwOnError) throw error;
             return defaultValue;
         }
     }

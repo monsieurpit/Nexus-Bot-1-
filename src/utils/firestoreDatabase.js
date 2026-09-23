@@ -13,6 +13,7 @@ import {
     where,
     increment as fsIncrement
 } from 'firebase/firestore';
+import { getAuth, signInWithEmailAndPassword } from 'firebase/auth';
 import { createRequire } from 'module';
 import { logger } from './logger.js';
 
@@ -87,6 +88,20 @@ class FirestoreDatabase {
                 }
             }
 
+            // Optional: sign in as a dedicated Firebase Auth user so the Firestore security rules can
+            // require authentication (see firestore.rules) instead of allowing anyone holding the
+            // web config to read or wipe the whole database. Opt-in via environment variables.
+            const authEmail = process.env.FIREBASE_AUTH_EMAIL;
+            const authPassword = process.env.FIREBASE_AUTH_PASSWORD;
+            if (authEmail && authPassword) {
+                try {
+                    await signInWithEmailAndPassword(getAuth(this.app), authEmail, authPassword);
+                    logger.info('🔐 Signed in to Firebase Auth for Firestore access');
+                } catch (authError) {
+                    logger.error(`Firebase Auth sign-in failed (${authError.code || authError.message}) — Firestore rules that require auth will reject requests`);
+                }
+            }
+
             // Connect to specified database instance if available, fallback to default
             if (this.databaseId && this.databaseId !== '(default)') {
                 try {
@@ -152,8 +167,17 @@ class FirestoreDatabase {
     async syncGuildFeatureTables() {
         if (!this.db) return;
         try {
+            // Runs once per database, not on every deploy (it reads every legacy document).
+            const markerRef = doc(this.db, 'system', 'kv_migration_v2');
+            const marker = await getDoc(markerRef).catch(() => null);
+            if (marker?.exists()) return;
+
             const kvSnapshot = await getDocs(collection(this.db, 'kv_data')).catch(() => null);
-            if (!kvSnapshot || kvSnapshot.empty) return;
+            if (!kvSnapshot) return;
+            if (kvSnapshot.empty) {
+                await setDoc(markerRef, { completedAt: new Date().toISOString(), migrated: 0 }).catch(() => null);
+                return;
+            }
 
             let migrated = 0;
             for (const kvDoc of kvSnapshot.docs) {
@@ -177,6 +201,7 @@ class FirestoreDatabase {
             if (migrated > 0) {
                 logger.info(`✅ Migrated ${migrated} legacy kv_data record(s) into dedicated collections`);
             }
+            await setDoc(markerRef, { completedAt: new Date().toISOString(), migrated }).catch(() => null);
         } catch (err) {
             logger.warn('Legacy kv_data migration warning:', err.message);
         }
@@ -422,7 +447,7 @@ class FirestoreDatabase {
         return null;
     }
 
-    async get(key, defaultValue = null) {
+    async get(key, defaultValue = null, { throwOnError = false } = {}) {
         if (!this.isAvailable() || !key) return defaultValue;
         try {
             const docRef = this.getDocRef(key);
@@ -501,6 +526,9 @@ class FirestoreDatabase {
             return defaultValue;
         } catch (error) {
             logger.error(`Firestore get error for key ${key}:`, error);
+            // The database wrapper asks for errors to be thrown so a FAILED read is never cached
+            // (or mistaken for "this key doesn't exist").
+            if (throwOnError) throw error;
             return defaultValue;
         }
     }
@@ -513,7 +541,8 @@ class FirestoreDatabase {
 
             const payload = {
                 key,
-                value,
+                // Never undefined: every field listed in VALUE_FIELDS must be present for mergeFields.
+                value: value === undefined ? null : value,
                 updatedAt: new Date().toISOString(),
                 // Always written (null when there's no TTL) so re-saving a key that previously had
                 // a TTL clears the old expiry instead of letting the fresh value "expire".

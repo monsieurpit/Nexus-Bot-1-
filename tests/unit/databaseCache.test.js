@@ -69,3 +69,20 @@ test('invalidateCache supports prefixes', async () => {
   assert.equal(await wrapper.get('guild:1:ticket:a'), 5);
   assert.equal(reads(), 2);
 });
+
+test('a failed backend read is not cached as "missing"', async () => {
+  const { wrapper, store } = makeWrapper();
+  await store.set('k', 'real');
+  let fail = true;
+  const realGet = store.get.bind(store);
+  store.get = async (key, def, opts) => {
+    if (fail) {
+      if (opts?.throwOnError) throw new Error('network blip');
+      return def;
+    }
+    return realGet(key, def);
+  };
+  assert.equal(await wrapper.get('k', 'default'), 'default');
+  fail = false;
+  assert.equal(await wrapper.get('k', 'default'), 'real');
+});

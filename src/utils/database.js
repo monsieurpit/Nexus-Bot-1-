@@ -131,7 +131,14 @@ class DatabaseWrapper {
             }
         }
 
-        const value = await this.db.get(key, MISSING);
+        let value;
+        try {
+            value = await this.db.get(key, MISSING, { throwOnError: true });
+        } catch {
+            // A failed read is reported to the caller as "not found" (as before) but is NOT
+            // cached — otherwise a network blip would pin a missing value for the whole TTL.
+            return defaultValue;
+        }
         const found = value !== MISSING && value !== undefined;
 
         if (DB_CACHE_TTL_MS > 0 && !this.ttlKeys.has(key)) {

@@ -1,6 +1,6 @@
 # 🤖 Nexus Custom Bot
 
-A highly customized, bilingual (English/Spanish), premium Discord bot built for server management, advanced utilities, and automated data recovery. This version is optimized for hosting on **Railway** with a **PostgreSQL** database backend.
+A highly customized, bilingual (English/Spanish), premium Discord bot built for server management, advanced utilities, and automated data recovery. This version is optimized for hosting on **Railway** with **Firebase Firestore** as its database (PostgreSQL as a fallback).
 
 ---
 
@@ -18,22 +18,30 @@ A highly customized, bilingual (English/Spanish), premium Discord bot built for 
 
 ## 🛠️ Infrastructure & Technologies
 
-*   **Language:** JavaScript (Node.js)
+*   **Language:** JavaScript (Node.js 20)
 *   **Library:** Discord.js (v14+)
-*   **Database:** PostgreSQL (for permanent data persistence across bot restarts)
-*   **Hosting Platform:** Railway
+*   **Database:** Firebase Firestore (primary), PostgreSQL (fallback), in-memory (last resort — data is lost on restart)
+*   **AI:** the Nexus AI engine (`Nexus-AI-` repo), reached through `nexus-ai.js`
+*   **Hosting Platform:** Railway (Dockerfile — one process runs the dashboard **and** the bot)
 
 ---
 
 ## ⚙️ Deployment & Environment Variables
 
-To run this bot successfully on your own Railway instance, you must configure the following **Environment Variables** (Variables tab in Railway):
+Set these in Railway → your service → **Variables**:
 
-| Variable | Description |
-| :--- | :--- |
-| `DISCORD_TOKEN` | Your Discord Bot token from the Developer Portal. |
-| `CLIENT_ID` | Your Discord application's Client ID. |
-| `DATABASE_URL` | Your connection string for the PostgreSQL database instance. |
+| Variable | Required | Description |
+| :--- | :---: | :--- |
+| `DISCORD_TOKEN` | ✅ | Bot token from the Discord Developer Portal. |
+| `CLIENT_ID` | recommended | Application (client) ID — detected automatically if missing. |
+| `DASHBOARD_PASSWORD` | ✅ | Password for the web dashboard. If unset, a temporary one is generated at each start and printed in the deploy logs. |
+| `NEXUS_API_URL` / `NEXUS_API_KEY` | ✅ | Where the Nexus AI engine runs and its API key. |
+| `GUILD_ID` | optional | Your main/test server (guild-only tools like `/benchmark`, crash reports). |
+| `DATABASE_URL` | optional | PostgreSQL fallback if Firestore is unreachable. |
+| `FIREBASE_AUTH_EMAIL` / `FIREBASE_AUTH_PASSWORD` | optional | Lets you lock the Firestore rules down — see `firestore.rules`. |
+| `DASHBOARD_URL` | optional | Public dashboard URL used by `/editrepo` (Railway's domain is used otherwise). |
+| `LOG_LEVEL` / `LOG_TO_FILE` | optional | `info` by default in production; `LOG_TO_FILE=false` disables log files. |
+| `DB_CACHE_TTL_MS` | optional | Read-cache duration (default `30000`, `0` disables it). |
 
 ---
 
