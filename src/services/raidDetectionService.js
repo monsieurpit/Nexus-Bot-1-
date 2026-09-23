@@ -183,6 +183,91 @@ function setQuarantineLock(guildId, locked) {
   guildQuarantineLock.set(guildId, locked);
 }
 
+// ─── Raid lockdown follow-up ─────────────────────────────────────────────────────────────────────
+// Once a join-based raid fires, the shared quarantine lock blocks every check above for 5 minutes
+// (so one raid doesn't produce a dozen overlapping quarantines). But that also meant every raider
+// who joined AFTER the first trigger — often most of them — walked in untouched. During that
+// lockdown window, later joins that look like the raid (suspicious account, or joined through the
+// raid's dominant invite) are now collected and quarantined together, one batch every few seconds.
+const RAID_LOCKDOWN_MS = 300000;
+const RAID_FOLLOWUP_FLUSH_MS = 5000;
+const guildRaidLockdowns = new Map(); // guildId -> { until, inviteCode, reason }
+const guildRaidFollowups = new Map(); // guildId -> { members: Map<id, member>, timer }
+
+function startRaidLockdown(guildId, { inviteCode = null, reason }) {
+  guildRaidLockdowns.set(guildId, { until: Date.now() + RAID_LOCKDOWN_MS, inviteCode, reason });
+}
+
+function getActiveRaidLockdown(guildId) {
+  const lockdown = guildRaidLockdowns.get(guildId);
+  if (!lockdown) return null;
+  if (Date.now() > lockdown.until) {
+    guildRaidLockdowns.delete(guildId);
+    return null;
+  }
+  return lockdown;
+}
+
+function queueRaidFollowup(member, client, lockdown) {
+  const guildId = member.guild.id;
+  let pending = guildRaidFollowups.get(guildId);
+  if (!pending) {
+    pending = { members: new Map(), timer: null };
+    guildRaidFollowups.set(guildId, pending);
+  }
+  pending.members.set(member.id, member);
+  if (pending.timer) return;
+
+  pending.timer = setTimeout(async () => {
+    guildRaidFollowups.delete(guildId);
+    const suspects = [...pending.members.values()];
+    if (suspects.length === 0) return;
+    logger.warn(`Raid lockdown follow-up: quarantining ${suspects.length} later joiner(s) in guild ${guildId}`, {
+      event: 'raid.lockdown_followup',
+      guildId,
+      count: suspects.length
+    });
+    try {
+      await QuarantineService.triggerQuarantine({
+        guild: member.guild,
+        client,
+        suspects,
+        reason: 'raid_lockdown_followup',
+        metadata: {
+          originalReason: lockdown.reason,
+          dominantInvite: lockdown.inviteCode || null,
+          detectedAt: new Date().toISOString(),
+          tripReasons: ['raid_lockdown_followup']
+        }
+      });
+    } catch (error) {
+      logger.error('Raid lockdown follow-up quarantine failed:', error);
+    }
+  }, RAID_FOLLOWUP_FLUSH_MS);
+  pending.timer.unref?.();
+}
+
+function releaseLocksLater(guildId, { namePattern = false } = {}) {
+  const timer = setTimeout(() => {
+    setQuarantineLock(guildId, false);
+    if (namePattern) guildNamePatternLock.set(guildId, false);
+  }, RAID_LOCKDOWN_MS);
+  timer.unref?.();
+}
+
+function isModerator(member, guild) {
+  if (!member) return false;
+  if (member.id === guild.ownerId) return true;
+  const perms = member.permissions;
+  return Boolean(perms && (
+    perms.has(PermissionsBitField.Flags.Administrator) ||
+    perms.has(PermissionsBitField.Flags.ManageGuild) ||
+    perms.has(PermissionsBitField.Flags.ManageMessages) ||
+    perms.has(PermissionsBitField.Flags.BanMembers) ||
+    perms.has(PermissionsBitField.Flags.KickMembers)
+  ));
+}
+
 function isUsingDefaultAvatar(user) {
   if (!user.avatar) return true;
   const avatarUrl = user.displayAvatarURL();
@@ -385,6 +470,15 @@ export class RaidDetectionService {
 
       const activeJoins = cleanupOldJoins(guildId);
 
+      const lockdown = getActiveRaidLockdown(guildId);
+      if (lockdown && isQuarantineLocked(guildId)) {
+        const matchesRaidInvite = Boolean(lockdown.inviteCode && inviteCode === lockdown.inviteCode);
+        if (suspiciousCheck.isFlagged || matchesRaidInvite) {
+          queueRaidFollowup(member, client, lockdown);
+        }
+        return;
+      }
+
       // Check 1: Suspicious subset (young accounts or default avatars)
       const { flagged } = getSuspiciousSubset(activeJoins);
       if (flagged.length >= SUSPICIOUS_SUBSET_THRESHOLD && !isQuarantineLocked(guildId)) {
@@ -416,11 +510,14 @@ export class RaidDetectionService {
           }
         });
 
-        if (dominant.code && dominant.ratio >= INVITE_DOMINANCE_THRESHOLD) {
-          await QuarantineService.deleteInvite(member.guild, dominant.code);
+        try {
+          if (dominant.code && dominant.ratio >= INVITE_DOMINANCE_THRESHOLD) {
+            await QuarantineService.deleteInvite(member.guild, dominant.code);
+          }
+        } finally {
+          startRaidLockdown(guildId, { inviteCode: dominant.code, reason: 'raid_suspicious_subset' });
+          releaseLocksLater(guildId);
         }
-
-        setTimeout(() => setQuarantineLock(guildId, false), 300000);
         return;
       }
 
@@ -460,14 +557,14 @@ export class RaidDetectionService {
           }
         });
 
-        if (dominant.code && dominant.ratio >= INVITE_DOMINANCE_THRESHOLD) {
-          await QuarantineService.deleteInvite(member.guild, dominant.code);
+        try {
+          if (dominant.code && dominant.ratio >= INVITE_DOMINANCE_THRESHOLD) {
+            await QuarantineService.deleteInvite(member.guild, dominant.code);
+          }
+        } finally {
+          startRaidLockdown(guildId, { inviteCode: dominant.code, reason: 'raid_name_pattern' });
+          releaseLocksLater(guildId, { namePattern: true });
         }
-
-        setTimeout(() => {
-          setQuarantineLock(guildId, false);
-          guildNamePatternLock.set(guildId, false);
-        }, 300000);
         return;
       }
 
@@ -503,14 +600,14 @@ export class RaidDetectionService {
           }
         });
 
-        if (dominant.code && dominant.ratio >= INVITE_DOMINANCE_THRESHOLD) {
-          await QuarantineService.deleteInvite(member.guild, dominant.code);
+        try {
+          if (dominant.code && dominant.ratio >= INVITE_DOMINANCE_THRESHOLD) {
+            await QuarantineService.deleteInvite(member.guild, dominant.code);
+          }
+        } finally {
+          startRaidLockdown(guildId, { inviteCode: dominant.code, reason: 'raid_name_similarity' });
+          releaseLocksLater(guildId, { namePattern: true });
         }
-
-        setTimeout(() => {
-          setQuarantineLock(guildId, false);
-          guildNamePatternLock.set(guildId, false);
-        }, 300000);
         return;
       }
 
@@ -560,9 +657,10 @@ export class RaidDetectionService {
             if (dominant.code && dominant.ratio >= INVITE_DOMINANCE_THRESHOLD) {
               await QuarantineService.deleteInvite(member.guild, dominant.code);
             }
+            startRaidLockdown(guildId, { inviteCode: dominant.code, reason: 'raid_join_burst' });
           }
         } finally {
-          setTimeout(() => setQuarantineLock(guildId, false), 300000);
+          releaseLocksLater(guildId);
         }
       }
     } catch (error) {
@@ -608,9 +706,11 @@ export class RaidDetectionService {
       const uniqueChannels = new Set(entries.map(e => e.channelId));
       if (uniqueChannels.size >= SPAM_CHANNEL_THRESHOLD && !isQuarantineLocked(guildId)) {
         const uniqueUserIds = [...new Set(entries.map(e => e.userId))];
+        // Staff cross-posting an announcement to several channels is not a raid.
         const suspects = uniqueUserIds
           .map(id => message.guild.members.cache.get(id))
-          .filter(Boolean);
+          .filter(Boolean)
+          .filter(m => !isModerator(m, message.guild));
 
         if (suspects.length > 0) {
           setQuarantineLock(guildId, true);
@@ -635,9 +735,7 @@ export class RaidDetectionService {
               detectedAt: new Date().toISOString(),
               tripReasons: ['cross_channel_spam']
             }
-          });
-
-          setTimeout(() => setQuarantineLock(guildId, false), 300000);
+          }).finally(() => releaseLocksLater(guildId));
         }
       }
     } catch (error) {

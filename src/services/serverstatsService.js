@@ -117,6 +117,36 @@ function sanitizeCounters(counters, guildId) {
     .map(counter => normalizeCounter(counter, guildId));
 }
 
+const MIN_RENAME_INTERVAL_MS = 5 * 60 * 1000 + 5000;
+const lastRenameAt = new Map();
+
+const COUNTER_REFRESH_DEBOUNCE_MS = 30 * 1000;
+const pendingRefreshes = new Map();
+
+/**
+ * Debounced counter refresh for member join/leave: collapses a burst of joins (a raid, a big
+ * invite wave) into a single refresh per guild instead of one rename attempt per member, and never
+ * makes the event handler wait on it.
+ */
+export function scheduleCounterRefresh(client, guild) {
+  if (!guild?.id || pendingRefreshes.has(guild.id)) return;
+  const timer = setTimeout(async () => {
+    pendingRefreshes.delete(guild.id);
+    try {
+      const counters = await getServerCounters(client, guild.id);
+      for (const counter of counters) {
+        if (counter && counter.type && counter.channelId && counter.enabled !== false) {
+          await updateCounter(client, guild, counter);
+        }
+      }
+    } catch (error) {
+      logger.debug(`Debounced counter refresh failed for guild ${guild.id}:`, error);
+    }
+  }, COUNTER_REFRESH_DEBOUNCE_MS);
+  timer.unref?.();
+  pendingRefreshes.set(guild.id, timer);
+}
+
 export async function updateCounter(client, guild, counter) {
   try {
     if (!counter || !counter.type || !counter.channelId) {
@@ -148,6 +178,15 @@ export async function updateCounter(client, guild, counter) {
     }
     
     if (channel.name !== newName) {
+      // Discord only allows 2 renames per channel per 10 minutes, and discord.js silently WAITS
+      // out that limit — so a rename attempted too soon could stall the caller for up to 10
+      // minutes. Renames are spaced out here instead; a skipped update is picked up by the next
+      // debounced refresh or the 15-minute cron.
+      const lastRename = lastRenameAt.get(channel.id) || 0;
+      if (Date.now() - lastRename < MIN_RENAME_INTERVAL_MS) {
+        return true;
+      }
+      lastRenameAt.set(channel.id, Date.now());
       try {
         await channel.setName(newName);
         if (process.env.NODE_ENV !== 'production') {

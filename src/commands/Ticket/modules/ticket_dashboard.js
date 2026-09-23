@@ -1003,6 +1003,7 @@ async function handleDeleteSystem(btnInteraction, rootInteraction, guildConfig, 
                 `DELETE FROM ${pgConfig.tables.tickets} WHERE guild_id = $1`,
                 [guildId]
             );
+            client.db.invalidateCache?.(`guild:${guildId}:ticket*`);
         }
     } catch (ticketDeleteError) {
         logger.warn('Could not clear ticket records from database:', ticketDeleteError.message);

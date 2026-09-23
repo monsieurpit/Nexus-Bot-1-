@@ -76,11 +76,17 @@ export function categorizeError(error) {
         return ErrorTypes.DISCORD_API;
     }
 
-    if (message.includes('rate limit') || code === 50001) {
+    // 429 / RateLimitError is a rate limit. (50001 is "Missing Access" — a permission problem,
+    // which this used to report as "You're doing that too much".)
+    if (message.includes('rate limit') || error.status === 429 || error.name === 'RateLimitError') {
         return ErrorTypes.RATE_LIMIT;
     }
 
-    if (message.includes('permission') || message.includes('missing') || code === 50013) {
+    if (
+        code === 50013 || code === 50001 ||
+        message.includes('permission') ||
+        message.includes('missing access')
+    ) {
         return ErrorTypes.PERMISSION;
     }
 
@@ -281,14 +287,19 @@ export async function handleInteractionError(interaction, error, context = {}) {
             embeds: [embed]
         };
         
+        // - Nothing sent yet → ephemeral reply.
+        // - A slash command that was deferred → fill in its "thinking…" placeholder.
+        // - Anything already replied, or a button/menu that was deferUpdate()'d → ephemeral
+        //   follow-up. editReply there used to overwrite the user's visible reply, or the panel
+        //   message the button lives on, with the error embed.
+        // discord.js leaves `ephemeral` null after deferUpdate() and sets it on deferReply().
+        const wasDeferredUpdate = interaction.deferred && (interaction.ephemeral === null || interaction.ephemeral === undefined);
         if (!interaction.deferred && !interaction.replied) {
-            errorMessage.flags = MessageFlags.Ephemeral;
-        }
-        
-        if (interaction.deferred || interaction.replied) {
+            await interaction.reply({ ...errorMessage, flags: MessageFlags.Ephemeral });
+        } else if (interaction.deferred && !interaction.replied && !wasDeferredUpdate) {
             await interaction.editReply(errorMessage);
         } else {
-            await interaction.reply(errorMessage);
+            await interaction.followUp({ ...errorMessage, flags: MessageFlags.Ephemeral });
         }
     } catch (replyError) {
         

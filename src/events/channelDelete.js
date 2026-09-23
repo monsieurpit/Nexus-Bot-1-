@@ -49,10 +49,7 @@ export default {
             }
         }
 
-if (channel.type !== 2 && channel.type !== 4) {
-            return;
-        }
-
+        if (!channel.guild) return;
         const guildId = channel.guild.id;
 
         try {
@@ -73,13 +70,16 @@ if (channel.type !== 2 && channel.type !== 4) {
                 }
             }
 
-            const config = await getJoinToCreateConfig(client, guildId);
-
-            if (!config.enabled) {
+            // Join-to-Create bookkeeping only concerns voice channels and categories.
+            if (channel.type !== 2 && channel.type !== 4) {
                 return;
             }
 
-            if (config.triggerChannels.includes(channel.id)) {
+            // Cleanup runs whether or not Join-to-Create is currently enabled — stale trigger /
+            // temporary-channel records must not survive just because the feature is switched off.
+            const config = await getJoinToCreateConfig(client, guildId);
+
+            if (config.triggerChannels?.includes(channel.id)) {
                 logger.info(`Join to Create trigger channel ${channel.name} (${channel.id}) was deleted, removing from configuration`);
                 
                 const success = await removeJoinToCreateTrigger(client, guildId, channel.id);
@@ -90,7 +90,7 @@ if (channel.type !== 2 && channel.type !== 4) {
                 }
             }
 
-            if (config.temporaryChannels[channel.id]) {
+            if (config.temporaryChannels?.[channel.id]) {
                 logger.info(`Join to Create temporary channel ${channel.name} (${channel.id}) was deleted, cleaning up database`);
                 
                 const success = await unregisterTemporaryChannel(client, guildId, channel.id);

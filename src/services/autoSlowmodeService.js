@@ -50,7 +50,9 @@ const state = new Map();
 
 function getChannelState(channelId) {
   if (!state.has(channelId)) {
-    state.set(channelId, { timestamps: [], currentSlowmode: 0, timer: null });
+    // baseline: the channel's own (manual) slowmode before auto-slowmode touched it, so it can be
+    // restored afterwards instead of being wiped to 0.
+    state.set(channelId, { timestamps: [], currentSlowmode: 0, timer: null, baseline: null, guildId: null });
   }
   return state.get(channelId);
 }
@@ -110,10 +112,12 @@ function scheduleCalmdown(ch, channel) {
     ch.timer = null;
     const fresh = pruneWindow(ch.timestamps);
     if (getTier(fresh.length) === 0) {
-      // Still calm — remove slowmode
+      // Still calm — restore the channel's own slowmode (0 if it had none)
+      const restoreTo = ch.baseline ?? 0;
       ch.currentSlowmode = 0;
+      ch.baseline        = null;
       ch.timestamps      = fresh;
-      await applySlowmode(channel, 0, 'AutoSlowmode: activity normalized');
+      await applySlowmode(channel, restoreTo, 'AutoSlowmode: activity normalized');
       await channel.send({
         content: '✅ **Slowmode removed** — activity has returned to normal.'
       }).catch(() => null);
@@ -146,6 +150,15 @@ export async function handleAutoSlowmode(message) {
 
   // ── Spike: raise (or escalate) slowmode ──────────────────────────────────
   if (targetSlowmode > ch.currentSlowmode) {
+    // A channel whose own slowmode is already at least this strict needs nothing — and must never
+    // have its manual setting lowered (or later wiped to 0) by auto-slowmode.
+    const manualSlowmode = ch.currentSlowmode > 0 ? (ch.baseline ?? 0) : (channel.rateLimitPerUser || 0);
+    if (manualSlowmode >= targetSlowmode) return;
+    if (ch.currentSlowmode === 0) {
+      ch.baseline = channel.rateLimitPerUser || 0;
+    }
+    ch.guildId = message.guild.id;
+
     // Cancel any pending calm-down timer — we're spiking again
     if (ch.timer) { clearTimeout(ch.timer); ch.timer = null; }
 
@@ -191,7 +204,7 @@ export async function disableAutoSlowmode(guildId) {
     enabledCache.set(guildId, false);  // keep cache in sync immediately
     // Clean up any active slowmodes for this guild — best-effort
     state.forEach((ch) => {
-      if (ch.timer) { clearTimeout(ch.timer); ch.timer = null; }
+      if (ch.guildId === guildId && ch.timer) { clearTimeout(ch.timer); ch.timer = null; }
     });
     return true;
   } catch {

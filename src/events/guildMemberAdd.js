@@ -4,7 +4,7 @@ import { getGuildConfig } from '../services/guildConfig.js';
 import { getWelcomeConfig } from '../utils/database.js';
 import { formatWelcomeMessage } from '../utils/welcome.js';
 import { logEvent, EVENT_TYPES } from '../services/loggingService.js';
-import { getServerCounters, updateCounter } from '../services/serverstatsService.js';
+import { scheduleCounterRefresh } from '../services/serverstatsService.js';
 import { logger } from '../utils/logger.js';
 import { checkAndAnnounceMilestone } from '../services/milestoneService.js';
 import { RaidDetectionService } from '../services/raidDetectionService.js';
@@ -15,167 +15,148 @@ export default {
   once: false,
   
   async execute(member) {
-    try {
-        const { guild, user } = member;
-        
-        recordWeeklyStat(member.client, guild.id, 'joins').catch(() => null);
-        
-        const config = await getGuildConfig(member.client, guild.id);
-        
-        const welcomeConfig = await getWelcomeConfig(member.client, guild.id);
-        
-        const welcomeChannelId = welcomeConfig?.channelId;
+    const { guild, user } = member;
+    const client = member.client;
 
-        if (welcomeConfig?.enabled && welcomeChannelId) {
-            const channel = guild.channels.cache.get(welcomeChannelId);
-            if (channel?.isTextBased?.()) {
-                const me = guild.members.me;
-                const permissions = me ? channel.permissionsFor(me) : null;
-                if (!permissions?.has([PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages])) {
-                    return;
-                }
+    recordWeeklyStat(client, guild.id, 'joins').catch(() => null);
 
-                const formatData = { user, guild, member };
-                const welcomeMessage = formatWelcomeMessage(
-                    welcomeConfig.welcomeMessage || welcomeConfig.welcomeEmbed?.description || 'Welcome {user} to {server}!',
-                    formatData
-                );
+    // Every step below is isolated: one failing (a welcome channel the bot lost access to, a bad
+    // welcome image URL, a missing role…) must never skip the steps after it. Previously a missing
+    // welcome-channel permission `return`ed out of the whole handler, silently skipping auto-roles,
+    // verification, join logging, milestones — and raid detection.
+    const config = await getGuildConfig(client, guild.id).catch(() => null);
+    const welcomeConfig = await getWelcomeConfig(client, guild.id).catch(() => null);
 
-                const messageContent = welcomeConfig.welcomePing ? user.toString() : null;
+    await runStep('welcome message', () => sendWelcomeMessage(member, welcomeConfig));
+    await runStep('auto roles', () => assignAutoRoles(member, welcomeConfig));
 
-                const embedTitle = formatWelcomeMessage(
-                    welcomeConfig.welcomeEmbed?.title || '🎉 Welcome!',
-                    formatData
-                );
-                const embedFooter = welcomeConfig.welcomeEmbed?.footer
-                    ? formatWelcomeMessage(welcomeConfig.welcomeEmbed.footer, formatData)
-                    : `Welcome to ${guild.name}!`;
-
-                const canEmbed = permissions.has(PermissionFlagsBits.EmbedLinks);
-
-                if (!canEmbed) {
-                    await channel.send({
-                        content: messageContent || welcomeMessage
-                    });
-                } else {
-                    const embed = new EmbedBuilder()
-                        .setColor(welcomeConfig.welcomeEmbed?.color || getColor('success'))
-                        .setTitle(embedTitle)
-                        .setDescription(welcomeMessage)
-                        .setThumbnail(user.displayAvatarURL())
-                        .addFields(
-                            { name: 'User', value: `${user.tag} (${user.id})`, inline: true },
-                            { name: 'Member Count', value: guild.memberCount.toString(), inline: true }
-                        )
-                        .setTimestamp()
-                        .setFooter({ text: embedFooter });
-                    
-                    if (welcomeConfig.welcomeImage) {
-                        embed.setImage(welcomeConfig.welcomeImage);
-                    } else if (welcomeConfig.welcomeEmbed?.image?.url) {
-                        embed.setImage(welcomeConfig.welcomeEmbed.image.url);
-                    }
-                    
-                    await channel.send({ 
-                        content: messageContent,
-                        embeds: [embed] 
-                    });
-                }
-            }
-        }
-        
-        if (welcomeConfig?.roleIds && welcomeConfig.roleIds.length > 0) {
-            const delay = welcomeConfig.autoRoleDelay || 0;
-            const roleIds = welcomeConfig.roleIds.slice(0, 5);
-
-            if (delay > 0) {
-                const timeout = setTimeout(async () => {
-                    for (const roleId of roleIds) {
-                        const role = guild.roles.cache.get(roleId);
-                        if (role) await assignRoleSafely(member, role);
-                    }
-                }, delay * 1000);
-                if (typeof timeout.unref === 'function') {
-                    timeout.unref();
-                }
-            } else {
-                for (const roleId of roleIds) {
-                    const role = guild.roles.cache.get(roleId);
-                    if (role) await assignRoleSafely(member, role);
-                }
-            }
-        }
-        
-        if (config?.verification?.enabled || config?.verification?.autoVerify?.enabled) {
-            await handleVerification(member, guild, config.verification, member.client);
-        }
-
-        
-        try {
-            await logEvent({
-                client: member.client,
-                guildId: guild.id,
-                eventType: EVENT_TYPES.MEMBER_JOIN,
-                data: {
-                    description: `${user.tag} joined the server`,
-                    userId: user.id,
-                    fields: [
-                        {
-                            name: '👤 Member',
-                            value: `${user.tag} (${user.id})`,
-                            inline: true
-                        },
-                        {
-                            name: '👥 Member Count',
-                            value: guild.memberCount.toString(),
-                            inline: true
-                        },
-                        {
-                            name: '📅 Account Created',
-                            value: `<t:${Math.floor(user.createdTimestamp / 1000)}:R>`,
-                            inline: true
-                        }
-                    ]
-                }
-            });
-        } catch (error) {
-            logger.debug('Error logging member join:', error);
-        }
-        
-        
-        try {
-            const counters = await getServerCounters(member.client, guild.id);
-            for (const counter of counters) {
-                if (counter && counter.type && counter.channelId && counter.enabled !== false) {
-                    await updateCounter(member.client, guild, counter);
-                }
-            }
-        } catch (error) {
-            logger.debug('Error updating counters on member join:', error);
-        }
-        
-        // Check for milestone announcements
-        try {
-            const milestoneResult = await checkAndAnnounceMilestone(member.client, guild, member, guild.memberCount);
-            if (milestoneResult.announced) {
-                logger.info(`Milestone ${milestoneResult.milestone} announced in ${guild.name}`);
-            }
-        } catch (error) {
-            logger.debug('Error checking milestones on member join:', error);
-        }
-
-        // Raid detection — run after all onboarding so roles are stable
-        try {
-            await RaidDetectionService.processMemberJoin(member, member.client);
-        } catch (error) {
-            logger.debug('Error in raid detection for member join:', error);
-        }
-
-    } catch (error) {
-        logger.error('Error in guildMemberAdd event:', error);
+    if (config?.verification?.enabled || config?.verification?.autoVerify?.enabled) {
+        await runStep('verification', () => handleVerification(member, guild, config.verification, client));
     }
+
+    // Raid detection runs after onboarding (so a quarantine isn't undone by the auto-roles above)
+    // but before the slower, purely informational steps below.
+    await runStep('raid detection', () => RaidDetectionService.processMemberJoin(member, client));
+
+    await runStep('join log', () => logEvent({
+        client,
+        guildId: guild.id,
+        eventType: EVENT_TYPES.MEMBER_JOIN,
+        data: {
+            description: `${user.tag} joined the server`,
+            userId: user.id,
+            fields: [
+                { name: '👤 Member', value: `${user.tag} (${user.id})`, inline: true },
+                { name: '👥 Member Count', value: guild.memberCount.toString(), inline: true },
+                { name: '📅 Account Created', value: `<t:${Math.floor(user.createdTimestamp / 1000)}:R>`, inline: true }
+            ]
+        }
+    }));
+
+    // Debounced + never awaited: a counter-channel rename can be rate limited by Discord for
+    // minutes, and a join burst should collapse into a single refresh.
+    scheduleCounterRefresh(client, guild);
+
+    await runStep('milestones', async () => {
+        const milestoneResult = await checkAndAnnounceMilestone(client, guild, member, guild.memberCount);
+        if (milestoneResult?.announced) {
+            logger.info(`Milestone ${milestoneResult.milestone} announced in ${guild.name}`);
+        }
+    });
   }
 };
+
+async function runStep(name, fn) {
+    try {
+        await fn();
+    } catch (error) {
+        logger.warn(`guildMemberAdd: ${name} failed:`, error);
+    }
+}
+
+async function sendWelcomeMessage(member, welcomeConfig) {
+    const { guild, user } = member;
+    const welcomeChannelId = welcomeConfig?.channelId;
+    if (!welcomeConfig?.enabled || !welcomeChannelId) return;
+
+    const channel = guild.channels.cache.get(welcomeChannelId);
+    if (!channel?.isTextBased?.()) return;
+
+    const me = guild.members.me;
+    const permissions = me ? channel.permissionsFor(me) : null;
+    if (!permissions?.has([PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages])) {
+        logger.warn(`Welcome message skipped in guild ${guild.id}: missing View/Send permission in channel ${welcomeChannelId}`);
+        return;
+    }
+
+    const formatData = { user, guild, member };
+    const welcomeMessage = formatWelcomeMessage(
+        welcomeConfig.welcomeMessage || welcomeConfig.welcomeEmbed?.description || 'Welcome {user} to {server}!',
+        formatData
+    );
+
+    const messageContent = welcomeConfig.welcomePing ? user.toString() : null;
+    // Only the new member may be pinged — never @everyone/@here or roles typed into the template.
+    const allowedMentions = { parse: [], users: welcomeConfig.welcomePing ? [user.id] : [] };
+
+    const embedTitle = formatWelcomeMessage(welcomeConfig.welcomeEmbed?.title || '🎉 Welcome!', formatData);
+    const embedFooter = welcomeConfig.welcomeEmbed?.footer
+        ? formatWelcomeMessage(welcomeConfig.welcomeEmbed.footer, formatData)
+        : `Welcome to ${guild.name}!`;
+
+    if (!permissions.has(PermissionFlagsBits.EmbedLinks)) {
+        const text = messageContent ? `${messageContent} ${welcomeMessage}` : welcomeMessage;
+        await channel.send({ content: text.slice(0, 2000), allowedMentions });
+        return;
+    }
+
+    const embed = new EmbedBuilder()
+        .setColor(welcomeConfig.welcomeEmbed?.color || getColor('success'))
+        .setTitle(embedTitle.slice(0, 256))
+        .setDescription(welcomeMessage.slice(0, 4096))
+        .setThumbnail(user.displayAvatarURL())
+        .addFields(
+            { name: 'User', value: `${user.tag} (${user.id})`, inline: true },
+            { name: 'Member Count', value: guild.memberCount.toString(), inline: true }
+        )
+        .setTimestamp()
+        .setFooter({ text: embedFooter.slice(0, 2048) });
+
+    const imageUrl = welcomeConfig.welcomeImage || welcomeConfig.welcomeEmbed?.image?.url;
+    if (typeof imageUrl === 'string' && /^https?:\/\//i.test(imageUrl)) {
+        embed.setImage(imageUrl);
+    }
+
+    await channel.send({ content: messageContent, embeds: [embed], allowedMentions });
+}
+
+async function assignAutoRoles(member, welcomeConfig) {
+    const roleIds = Array.isArray(welcomeConfig?.roleIds) ? welcomeConfig.roleIds.slice(0, 5) : [];
+    if (roleIds.length === 0) return;
+
+    const assign = async () => {
+        // Re-check the member is still here (a delayed assignment may fire after they left or
+        // after raid detection quarantined/kicked them).
+        const fresh = await member.guild.members.fetch(member.id).catch(() => null);
+        if (!fresh) return;
+        // RaidShield quarantine applies a 28-day timeout — never hand roles back to a suspect.
+        if (fresh.isCommunicationDisabled?.()) return;
+        for (const roleId of roleIds) {
+            const role = member.guild.roles.cache.get(roleId);
+            if (role) await assignRoleSafely(fresh, role);
+        }
+    };
+
+    const delay = Number(welcomeConfig.autoRoleDelay) || 0;
+    if (delay > 0) {
+        const timeout = setTimeout(() => {
+            assign().catch(error => logger.warn(`Delayed auto-role failed for ${member.id}:`, error));
+        }, delay * 1000);
+        timeout.unref?.();
+    } else {
+        await assign();
+    }
+}
 
 async function handleVerification(member, guild, verificationConfig, client) {
     const { autoVerifyOnJoin } = await import('../services/verificationService.js');

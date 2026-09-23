@@ -21,21 +21,26 @@ const MAX_TRACKED_COOLDOWNS = 10000;
 export default {
     name: 'voiceStateUpdate',
     async execute(oldState, newState, client) {
-        if (newState.member.user.bot) return;
+        const stateMember = newState.member || oldState.member;
+        if (!stateMember || stateMember.user?.bot) return;
 
         const guildId = newState.guild.id;
-        const userId = newState.member.id;
+        const userId = stateMember.id;
         const cooldownKey = `${guildId}-${userId}`;
         cleanupCooldownEntries();
 
         try {
             const config = await getJoinToCreateConfig(client, guildId);
+            const hasTempChannels = Object.keys(config.temporaryChannels || {}).length > 0;
 
-            if (!config.enabled || config.triggerChannels.length === 0) {
+            // Empty temporary rooms are still cleaned up after Join-to-Create gets disabled (or its
+            // last trigger removed) — previously they were orphaned forever.
+            if ((!config.enabled || config.triggerChannels.length === 0) && !hasTempChannels) {
                 return;
             }
+            const creationEnabled = config.enabled && config.triggerChannels.length > 0;
 
-            if (!oldState.channel && newState.channel) {
+            if (!oldState.channel && newState.channel && creationEnabled) {
                 await handleVoiceJoin(client, newState, config);
             }
 
@@ -44,7 +49,7 @@ export default {
             }
 
             if (oldState.channel && newState.channel && oldState.channel.id !== newState.channel.id) {
-                await handleVoiceMove(client, oldState, newState, config);
+                await handleVoiceMove(client, oldState, newState, config, creationEnabled);
             }
 
         } catch (error) {
@@ -115,7 +120,7 @@ if (now - lastCreation < VOICE_CREATE_COOLDOWN_MS) {
             }
         }
 
-        async function handleVoiceMove(client, oldState, newState, config) {
+        async function handleVoiceMove(client, oldState, newState, config, creationEnabled) {
             if (oldState.channel) {
                 const tempChannelInfo = await getTemporaryChannelInfo(client, oldState.guild.id, oldState.channel.id);
                 
@@ -131,7 +136,7 @@ if (now - lastCreation < VOICE_CREATE_COOLDOWN_MS) {
                 }
             }
 
-            if (config.triggerChannels.includes(newState.channel.id) && 
+            if (creationEnabled && config.triggerChannels.includes(newState.channel.id) && 
                 !config.triggerChannels.includes(oldState.channel?.id)) {
                 await handleVoiceJoin(client, newState, config);
             }
@@ -159,7 +164,12 @@ if (now - lastCreation < VOICE_CREATE_COOLDOWN_MS) {
                 const nameTemplate = channelOptions.nameTemplate || config.channelNameTemplate || "{username}'s Room";
                 
                 let userLimit = channelOptions.userLimit ?? config.userLimit ?? 0;
-                const bitrate = clampVoiceBitrate(channelOptions.bitrate ?? config.bitrate ?? DEFAULT_VOICE_BITRATE);
+                // Clamped to what THIS server's boost level allows — asking for more (e.g. 384kbps on
+                // an unboosted server) made Discord reject the whole channel creation.
+                const bitrate = Math.min(
+                    clampVoiceBitrate(channelOptions.bitrate ?? config.bitrate ?? DEFAULT_VOICE_BITRATE),
+                    guild.maximumBitrate || DEFAULT_VOICE_BITRATE
+                );
 
                 userLimit = Math.max(0, Math.min(99, userLimit || 0));
 

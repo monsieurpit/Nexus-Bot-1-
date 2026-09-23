@@ -6,8 +6,33 @@ import { BotConfig } from '../config/bot.js';
 import { normalizeGuildConfig, validateGuildConfigOrThrow } from './schemas.js';
 import { DEFAULT_GUILD_CONFIG } from './constants.js';
 
+// Short-lived read cache. Every message used to trigger ~8 database reads (sticky note, ticket,
+// raid config, AI moderation config, leveling config, economy…), and on Firestore a MISSING key
+// costs up to four document reads (dedicated doc → kv_data → guild doc → legacy doc) — the common
+// case, since most channels have no sticky note and most messages aren't in tickets. This burned
+// through Firestore's daily read quota and added latency to every message.
+//
+// Safe because this process is the only writer: the bot and the dashboard share this wrapper, and
+// every write/delete/increment below invalidates the key. Values are deep-copied in and out so a
+// caller mutating a returned object can't corrupt the cache. Keys written with a TTL are never
+// cached. DB_CACHE_TTL_MS=0 disables the cache entirely.
+const DB_CACHE_TTL_MS = Number(process.env.DB_CACHE_TTL_MS ?? 30000);
+const DB_CACHE_MAX_ENTRIES = 5000;
+const MISSING = Symbol('missing');
+
+function cloneValue(value) {
+    if (value === null || typeof value !== 'object') return value;
+    try {
+        return structuredClone(value);
+    } catch {
+        return JSON.parse(JSON.stringify(value));
+    }
+}
+
 class DatabaseWrapper {
     constructor() {
+        this.cache = new Map();
+        this.ttlKeys = new Set();
         this.initialized = false;
         this.db = null;
         this.useFallback = false;
@@ -87,18 +112,74 @@ class DatabaseWrapper {
             });
         }
 
-        return this.db.set(key, value, ttl);
+        this.invalidateCache(key);
+        if (ttl) {
+            this.ttlKeys.add(key);
+        }
+        const result = await this.db.set(key, value, ttl);
+        // Invalidate again: a read that started before the write finished may have re-cached
+        // the old value in between.
+        this.invalidateCache(key);
+        return result;
     }
 
     async get(key, defaultValue = null) {
-        return this.db.get(key, defaultValue);
+        if (DB_CACHE_TTL_MS > 0 && !this.ttlKeys.has(key)) {
+            const cached = this.cache.get(key);
+            if (cached && cached.expiresAt > Date.now()) {
+                return cached.value === MISSING ? defaultValue : cloneValue(cached.value);
+            }
+        }
+
+        const value = await this.db.get(key, MISSING);
+        const found = value !== MISSING && value !== undefined;
+
+        if (DB_CACHE_TTL_MS > 0 && !this.ttlKeys.has(key)) {
+            if (this.cache.size >= DB_CACHE_MAX_ENTRIES) {
+                // Drop the oldest ~10% (Map iteration order is insertion order).
+                let toDrop = Math.ceil(DB_CACHE_MAX_ENTRIES / 10);
+                for (const cacheKey of this.cache.keys()) {
+                    this.cache.delete(cacheKey);
+                    if (--toDrop <= 0) break;
+                }
+            }
+            this.cache.set(key, {
+                value: found ? cloneValue(value) : MISSING,
+                expiresAt: Date.now() + DB_CACHE_TTL_MS
+            });
+        }
+
+        return found ? value : defaultValue;
+    }
+
+    /**
+     * Drops cached reads — one key, every key starting with a prefix (`prefix*`), or everything.
+     * Must be called by any code that writes to the underlying store without going through this
+     * wrapper (a few raw PostgreSQL queries do).
+     */
+    invalidateCache(keyOrPrefix = null) {
+        if (!keyOrPrefix) {
+            this.cache.clear();
+            return;
+        }
+        if (keyOrPrefix.endsWith('*')) {
+            const prefix = keyOrPrefix.slice(0, -1);
+            for (const cacheKey of this.cache.keys()) {
+                if (cacheKey.startsWith(prefix)) this.cache.delete(cacheKey);
+            }
+            return;
+        }
+        this.cache.delete(keyOrPrefix);
     }
 
     async delete(key) {
         if (this.useFallback) {
             logger.debug(`[DEGRADED] Deleting from memory: ${key}`);
         }
-        return this.db.delete(key);
+        this.invalidateCache(key);
+        const result = await this.db.delete(key);
+        this.invalidateCache(key);
+        return result;
     }
 
     async list(prefix) {
@@ -117,12 +198,16 @@ class DatabaseWrapper {
         if (this.useFallback) {
             logger.debug(`[DEGRADED] Incrementing in memory: ${key}`);
         }
+        this.invalidateCache(key);
         if (this.db.increment) {
-            return this.db.increment(key, amount);
+            const result = await this.db.increment(key, amount);
+            this.invalidateCache(key);
+            return result;
         }
         const current = await this.db.get(key, 0);
         const newValue = current + amount;
         await this.db.set(key, newValue);
+        this.invalidateCache(key);
         return newValue;
     }
 
@@ -130,12 +215,16 @@ class DatabaseWrapper {
         if (this.useFallback) {
             logger.debug(`[DEGRADED] Decrementing in memory: ${key}`);
         }
+        this.invalidateCache(key);
         if (this.db.decrement) {
-            return this.db.decrement(key, amount);
+            const result = await this.db.decrement(key, amount);
+            this.invalidateCache(key);
+            return result;
         }
         const current = await this.db.get(key, 0);
         const newValue = current - amount;
         await this.db.set(key, newValue);
+        this.invalidateCache(key);
         return newValue;
     }
 
@@ -205,8 +294,10 @@ export async function getFromDb(key, defaultValue = null) {
 
 export async function setInDb(key, value, ttl = null) {
     try {
-        await db.set(key, value, ttl);
-        return true;
+        // The Firestore/PostgreSQL backends report a failed write by returning false rather than
+        // throwing — this used to report success regardless, so callers never knew a save failed.
+        const result = await db.set(key, value, ttl);
+        return result !== false;
     } catch (error) {
         logger.error(`Error setting value for key ${key}:`, error);
         return false;
@@ -498,6 +589,7 @@ export async function markGiveawayEnded(client, giveawayId, endedData) {
              WHERE id = $2`,
             [endedData, giveawayId]
         );
+        db.invalidateCache();
 
         return true;
     } catch (error) {

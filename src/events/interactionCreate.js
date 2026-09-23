@@ -131,7 +131,7 @@ export default {
                 guildId: interaction.guildId,
                 commandName: interaction.commandName
               });
-              await interaction.respond([]);
+              await interaction.respond([]).catch(() => {});
             }
           } else if (interaction.commandName === 'app-admin' && focusedOption.name === 'application') {
             try {
@@ -156,78 +156,43 @@ export default {
                 guildId: interaction.guildId,
                 commandName: interaction.commandName
               });
-              await interaction.respond([]);
+              await interaction.respond([]).catch(() => {});
             }
           } else if (interaction.commandName === 'reactroles' && focusedOption.name === 'panel') {
             try {
-              const { getAllReactionRoleMessages, deleteReactionRoleMessage } = await import('../services/reactionRoleService.js');
-              const guildId = interaction.guildId;
+              const { getAllReactionRoleMessages } = await import('../services/reactionRoleService.js');
               const guild = interaction.guild;
-              
-              let panels = await getAllReactionRoleMessages(client, guildId);
-              
-              if (!panels || panels.length === 0) {
-                await interaction.respond([]);
-                return;
-              }
-              
-              // Filter out panels whose messages no longer exist
-              const validPanels = [];
-              for (const panel of panels) {
-                if (!panel.messageId || !panel.channelId) {
-                  continue;
-                }
-                
-                const channel = guild.channels.cache.get(panel.channelId);
-                if (!channel) {
-                  await deleteReactionRoleMessage(client, guildId, panel.messageId).catch(() => {});
-                  continue;
-                }
-                
-                const msg = await channel.messages.fetch(panel.messageId).catch(() => null);
-                if (!msg) {
-                  await deleteReactionRoleMessage(client, guildId, panel.messageId).catch(() => {});
-                  continue;
-                }
-                validPanels.push(panel);
-              }
-              
-              if (validPanels.length === 0) {
-                await interaction.respond([]);
-                return;
-              }
-              
-              const choices = await Promise.all(
-                validPanels.slice(0, 25).map(async panel => {
-                  try {
-                    const channel = guild.channels.cache.get(panel.channelId);
-                    if (!channel) return null;
-                    
-                    const msg = await channel.messages.fetch(panel.messageId).catch(() => null);
-                    if (!msg) return null;
-                    
-                    const title = msg?.embeds?.[0]?.title ?? 'Untitled Panel';
-                    const channelName = channel?.name ?? 'unknown';
-                    
-                    return {
-                      name: `${title} (${channelName})`.substring(0, 100),
-                      value: panel.messageId
-                    };
-                  } catch (e) {
-                    return null;
-                  }
+              const focused = String(focusedOption.value || '').toLowerCase();
+
+              const panels = await getAllReactionRoleMessages(client, interaction.guildId);
+
+              // Autocomplete must answer within 3 seconds, so this only uses cached data — it no
+              // longer fetches every panel message (twice) from Discord, and it NEVER deletes
+              // panels: a single failed fetch (a hiccup, a missing permission) used to wipe a real
+              // panel's data from the database. Stale panels are cleaned up on messageDelete and
+              // by the startup reconciliation instead.
+              const choices = (panels || [])
+                .filter(panel => panel?.messageId && panel?.channelId && guild.channels.cache.has(panel.channelId))
+                .map(panel => {
+                  const channel = guild.channels.cache.get(panel.channelId);
+                  const cachedMessage = channel?.messages?.cache?.get(panel.messageId);
+                  const title = cachedMessage?.embeds?.[0]?.title || panel.title || `Panel ${panel.messageId}`;
+                  return {
+                    name: `${title} (#${channel?.name ?? 'unknown'})`.substring(0, 100),
+                    value: panel.messageId
+                  };
                 })
-              );
-              
-              const validChoices = choices.filter(c => c !== null);
-              await interaction.respond(validChoices);
+                .filter(choice => !focused || choice.name.toLowerCase().includes(focused) || choice.value.includes(focused))
+                .slice(0, 25);
+
+              await interaction.respond(choices);
             } catch (error) {
               logger.error('Error handling reactroles autocomplete:', {
                 error: error.message,
                 guildId: interaction.guildId,
                 commandName: interaction.commandName
               });
-              await interaction.respond([]);
+              await interaction.respond([]).catch(() => {});
             }
           } else {
             const command = client.commands.get(interaction.commandName);
@@ -239,7 +204,7 @@ export default {
                   error: error.message,
                   commandName: interaction.commandName,
                 });
-                await interaction.respond([]);
+                await interaction.respond([]).catch(() => {});
               }
             }
           }

@@ -41,6 +41,8 @@ const EVENT_TYPES = {
   MEMBER_JOIN: 'member.join',
   MEMBER_LEAVE: 'member.leave',
   MEMBER_NAME_CHANGE: 'member.namechange',
+  MEMBER_ROLE_UPDATE: 'member.roleupdate',
+  MEMBER_TIMEOUT: 'member.timeout',
   
   
   REACTION_ROLE_ADD: 'reactionrole.add',
@@ -117,6 +119,8 @@ const EVENT_ICONS = {
   'member.join': '👋',
   'member.leave': '👋',
   'member.namechange': '🏷️',
+  'member.roleupdate': '🎭',
+  'member.timeout': '⏳',
   'reactionrole.add': '✅',
   'reactionrole.remove': '❌',
   'reactionrole.create': '🎭',
@@ -200,7 +204,7 @@ export async function logEvent({
     }
 
     await channel.send(messageOptions);
-    logger.info(`Event logged: ${eventType} in guild ${guildId}`);
+    logger.debug(`Event logged: ${eventType} in guild ${guildId}`);
 
   } catch (error) {
     logger.error(`Error in logEvent:`, error);
@@ -280,25 +284,37 @@ function createLogEmbed(guild, eventType, data) {
   embed.setColor(color);
   embed.setTimestamp();
   embed.setFooter({ 
-    text: `Guild: ${guild.name}`,
-    iconURL: guild.iconURL()
+    text: `Guild: ${guild.name}`.slice(0, 2048),
+    iconURL: guild.iconURL() || undefined
   });
 
-  
+  // Every piece is clamped to Discord's embed limits — one over-long field (a huge edited message,
+  // a long role list) used to make Discord reject the whole log entry, so it was silently lost.
   const title = data.title || `${icon} ${formatEventType(eventType)}`;
-  embed.setTitle(title);
+  embed.setTitle(clampText(title, 256));
 
-  
   if (data.description) {
-    embed.setDescription(data.description);
+    embed.setDescription(clampText(data.description, 4096));
   }
 
-  
   if (data.fields && Array.isArray(data.fields)) {
-    embed.addFields(data.fields);
+    const fields = data.fields
+      .filter(field => field && field.name)
+      .slice(0, 25)
+      .map(field => ({
+        name: clampText(field.name, 256),
+        value: clampText(field.value, 1024) || '\u200b',
+        inline: Boolean(field.inline)
+      }));
+    if (fields.length > 0) embed.addFields(fields);
   }
 
   return embed;
+}
+
+function clampText(value, max) {
+  const text = value === null || value === undefined ? '' : String(value);
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
 
