@@ -29,6 +29,8 @@ const pendingInvalidLevelWarning = requestedLogLevel && !validLogLevels.has(requ
   ? `[logger] Invalid LOG_LEVEL "${process.env.LOG_LEVEL}". Falling back to "${defaultLogLevel}".`
   : null;
 
+const FILE_LOGGING_ENABLED = String(process.env.LOG_TO_FILE ?? 'true').toLowerCase() !== 'false';
+
 const shouldPromoteUserFacingLogs = process.env.NODE_ENV === 'production' && resolvedLogLevel === 'warn';
 
 const LOG_SCHEMA_DEFAULTS = Object.freeze({
@@ -40,10 +42,47 @@ const LOG_SCHEMA_DEFAULTS = Object.freeze({
   traceId: null,
 });
 
-const logFormat = printf(({ level, message, timestamp, stack, displayLevel }) => {
+// Keys that are part of every log line's schema, not worth repeating on the console.
+const CONSOLE_HIDDEN_KEYS = new Set([
+  'level', 'message', 'timestamp', 'stack', 'displayLevel', 'service', 'event', 'splat',
+]);
+
+function safeStringify(value, maxLength = 1200) {
+  const seen = new WeakSet();
+  let text;
+  try {
+    text = JSON.stringify(value, (key, val) => {
+      if (val instanceof Error) return { message: val.message, code: val.code, stack: val.stack };
+      if (typeof val === 'bigint') return val.toString();
+      if (val && typeof val === 'object') {
+        if (seen.has(val)) return '[Circular]';
+        seen.add(val);
+      }
+      return val;
+    });
+  } catch {
+    text = String(value);
+  }
+  return text && text.length > maxLength ? `${text.slice(0, maxLength)}…` : text;
+}
+
+// The console is all Railway shows. It used to print only the message, silently dropping every
+// detail passed alongside it — logger.error('Ticket setup error', { error, guildId }) printed just
+// "Ticket setup error". Non-empty extra fields are now appended as compact JSON.
+const logFormat = printf((info) => {
+  const { level, message, timestamp, stack, displayLevel } = info;
   const visibleLevel = displayLevel || level;
-  const logMessage = `[${timestamp}] [${visibleLevel}]: ${stack || message}`;
-  return logMessage;
+  const extras = {};
+  for (const [key, value] of Object.entries(info)) {
+    if (CONSOLE_HIDDEN_KEYS.has(key) || value === null || value === undefined) continue;
+    extras[key] = value;
+  }
+  const extraText = Object.keys(extras).length > 0 ? ` ${safeStringify(extras)}` : '';
+  // logger.error('Context:', err) — keep the context text, which the stack alone doesn't contain.
+  const body = stack
+    ? (String(stack).includes(String(message)) ? stack : `${message}\n${stack}`)
+    : message;
+  return `[${timestamp}] [${visibleLevel}]: ${body}${extraText}`;
 });
 
 const attachTraceContext = format((info) => {
@@ -118,7 +157,13 @@ const logger = createLogger({
     format.json()
   ),
   defaultMeta: { service: 'nexus-bot' },
-  transports: [
+  // The process has its own uncaughtException/unhandledRejection handlers ("Railway Shield" in
+  // src/app.js) meant to keep the bot online; winston's default exitOnError=true killed the process
+  // on the very first uncaught exception anyway.
+  exitOnError: false,
+  // LOG_TO_FILE=false turns off the rotating log files (the console is what Railway shows; files
+  // in the container are lost on every redeploy anyway).
+  transports: FILE_LOGGING_ENABLED ? [
     new transports.DailyRotateFile({
       filename: path.join(__dirname, '../../logs/error-%DATE%.log'),
       level: 'error',
@@ -132,46 +177,34 @@ const logger = createLogger({
       maxFiles: '7d',
       zippedArchive: true,
     }),
-  ],
-  exceptionHandlers: [
+  ] : [],
+  exceptionHandlers: FILE_LOGGING_ENABLED ? [
     new transports.DailyRotateFile({
       filename: path.join(__dirname, '../../logs/exceptions-%DATE%.log'),
       maxSize: '20m',
       maxFiles: '14d',
       zippedArchive: true,
     }),
-  ],
-  rejectionHandlers: [
+  ] : [],
+  rejectionHandlers: FILE_LOGGING_ENABLED ? [
     new transports.DailyRotateFile({
       filename: path.join(__dirname, '../../logs/rejections-%DATE%.log'),
       maxSize: '20m',
       maxFiles: '14d',
       zippedArchive: true,
     }),
-  ],
+  ] : [],
 });
 
-if (process.env.NODE_ENV !== 'production') {
-  logger.add(new transports.Console({
-    format: combine(
-      colorize(),
-      timestamp({ format: 'HH:mm:ss' }),
-      errors({ stack: true }),
-      logFormat
-    ),
-    level: resolvedLogLevel,
-  }));
-} else {
-  logger.add(new transports.Console({
-    format: combine(
-      colorize(),
-      timestamp({ format: 'HH:mm:ss' }),
-      errors({ stack: true }),
-      logFormat
-    ),
-    level: resolvedLogLevel,
-  }));
-}
+logger.add(new transports.Console({
+  format: combine(
+    colorize(),
+    timestamp({ format: 'HH:mm:ss' }),
+    errors({ stack: true }),
+    logFormat
+  ),
+  level: resolvedLogLevel,
+}));
 
 logger.stream = {
   write: (message) => {

@@ -6,10 +6,10 @@
 // single global concurrency lock — see acquireLock() below for why this must be bot-wide, not
 // just a per-session guard.
 import { randomUUID } from 'crypto';
-import { mkdtemp, readFile as fsReadFile, writeFile, rm } from 'fs/promises';
+import { mkdtemp, readFile as fsReadFile, writeFile, rm, realpath, lstat } from 'fs/promises';
 import { existsSync } from 'fs';
 import { tmpdir } from 'os';
-import { join, normalize, isAbsolute } from 'path';
+import { join, normalize, isAbsolute, sep } from 'path';
 import simpleGit from 'simple-git';
 import { createTwoFilesPatch, diffLines } from 'diff';
 import { logger } from '../../../src/utils/logger.js';
@@ -83,6 +83,22 @@ export function validateFilePath(filePath) {
  * Clones the repo (shallow) into a fresh temp dir and reads the target file.
  * Throws on any failure — caller is responsible for cleanup on the request id it already has.
  */
+/**
+ * The file must be a regular file that really lives inside the clone. A repository can contain
+ * symlinks (to a file, or a directory on the way to it) pointing anywhere on THIS server — e.g.
+ * `/proc/self/environ`, which holds every secret (bot token, API keys, database URLs). Following
+ * one would have returned that content in the "diff", and the apply step would have WRITTEN
+ * through it (overwriting the bot's own files). realpath() resolves every link on the path.
+ */
+export async function isSafeRepoFile(dir, absoluteFilePath) {
+  try {
+    const [realDir, realFile, info] = await Promise.all([realpath(dir), realpath(absoluteFilePath), lstat(absoluteFilePath)]);
+    return info.isFile() && !info.isSymbolicLink() && realFile.startsWith(realDir + sep);
+  } catch {
+    return false;
+  }
+}
+
 async function cloneAndReadFile({ repoUrl, filePath, githubToken }) {
   const { clean } = validateRepoUrl(repoUrl);
   const safeFilePath = validateFilePath(filePath);
@@ -108,13 +124,13 @@ async function cloneAndReadFile({ repoUrl, filePath, githubToken }) {
   }
 
   const absoluteFilePath = join(dir, safeFilePath);
-  if (!absoluteFilePath.startsWith(dir)) {
-    await rm(dir, { recursive: true, force: true }).catch(() => {});
-    throw new Error('Invalid file path.');
-  }
   if (!existsSync(absoluteFilePath)) {
     await rm(dir, { recursive: true, force: true }).catch(() => {});
     throw new Error(`File "${safeFilePath}" was not found in this repo.`);
+  }
+  if (!(await isSafeRepoFile(dir, absoluteFilePath))) {
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
+    throw new Error('Invalid file path.');
   }
 
   const stat = await fsReadFile(absoluteFilePath).catch(() => null);
@@ -212,7 +228,11 @@ export async function applyEdit({ requestId, githubToken }) {
   }
 
   try {
-    await writeFile(join(req.dir, req.filePath), req.newContent, 'utf8');
+    const targetPath = join(req.dir, req.filePath);
+    if (!(await isSafeRepoFile(req.dir, targetPath))) {
+      throw new Error('Invalid file path.');
+    }
+    await writeFile(targetPath, req.newContent, 'utf8');
 
     const git = simpleGit({ baseDir: req.dir, timeout: { block: CLONE_TIMEOUT_MS } });
     await git.addConfig('user.name', 'Nexus Code');

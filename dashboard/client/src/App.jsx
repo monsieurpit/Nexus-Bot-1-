@@ -16,10 +16,12 @@ import RaidShield from './pages/RaidShield.jsx'
 import Economy from './pages/Economy.jsx'
 import Football from './pages/Football.jsx'
 import NexusCode from './pages/NexusCode.jsx'
+import LoginGate from './components/LoginGate.jsx'
 
 export default function App() {
   return (
     <GuildProvider>
+      <LoginGate />
       <div className="flex min-h-screen bg-[#0f1117] text-white">
         <Sidebar />
         <div className="flex-1 flex flex-col min-w-0">

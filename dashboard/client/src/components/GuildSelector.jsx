@@ -28,7 +28,7 @@ export default function GuildSelector() {
     >
       {guilds.map(g => (
         <option key={g.id} value={g.id}>
-          Server ID: {g.id}
+          {g.name ? `${g.name} (${g.id})` : `Server ID: ${g.id}`}
         </option>
       ))}
     </select>

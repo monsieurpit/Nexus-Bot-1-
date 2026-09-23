@@ -7,6 +7,7 @@ import { existsSync } from 'fs'
 import guildsRouter from './routes/guilds.js'
 import v1Router from './routes/v1.js'
 import codeeditRouter from './routes/codeedit.js'
+import { requireDashboardAuth, handleLogin, handleSessionCheck } from './auth.js'
 
 // Anti-crash handlers for Railway
 process.on('unhandledRejection', (reason, promise) => {
@@ -26,8 +27,20 @@ if (!process.env.DATABASE_PUBLIC_URL && !process.env.DATABASE_URL && !process.en
   console.info('ℹ️ Persistent storage active via Firebase Firestore.')
 }
 
-app.use(cors({ origin: '*' }))
-app.use(express.json())
+// Railway (and most hosts) put a proxy in front of the app — needed for the real client IP
+// (login rate limiting).
+app.set('trust proxy', 1)
+app.disable('x-powered-by')
+app.use((_req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff')
+  res.setHeader('X-Frame-Options', 'DENY')
+  res.setHeader('Referrer-Policy', 'same-origin')
+  next()
+})
+// The dashboard itself is same-origin; only the programmatic /api/v1 relay is callable from other
+// origins (with the real API key). A blanket `origin: '*'` used to apply to every route.
+app.use('/api/v1', cors({ origin: '*' }))
+app.use(express.json({ limit: '1mb' }))
 
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() })
@@ -36,6 +49,10 @@ app.get('/health', (_req, res) => {
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() })
 })
+
+app.post('/api/auth/login', handleLogin)
+app.get('/api/auth/session', handleSessionCheck)
+app.use(requireDashboardAuth)
 
 app.use('/api/guilds', guildsRouter)
 app.use('/api/v1', v1Router)

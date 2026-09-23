@@ -66,3 +66,25 @@ test('lockStatus reports unlocked when nothing is in flight', () => {
   assert.equal(status.locked, false);
   assert.equal(status.since, null);
 });
+
+test('isSafeRepoFile rejects symlinks and files outside the clone', async () => {
+  const { mkdtemp, writeFile: write, symlink, mkdir } = await import('fs/promises');
+  const { tmpdir } = await import('os');
+  const { join } = await import('path');
+  const { isSafeRepoFile } = await import('../../dashboard/server/services/repoEditService.js');
+
+  const dir = await mkdtemp(join(tmpdir(), 'safe-file-test-'));
+  const outside = await mkdtemp(join(tmpdir(), 'outside-'));
+  await write(join(dir, 'ok.txt'), 'fine');
+  await write(join(outside, 'secret.txt'), 'secret');
+  await symlink(join(outside, 'secret.txt'), join(dir, 'link.txt'));
+  await symlink(outside, join(dir, 'linkdir'));
+  await mkdir(join(dir, 'sub'));
+  await write(join(dir, 'sub', 'real.txt'), 'x');
+
+  assert.equal(await isSafeRepoFile(dir, join(dir, 'ok.txt')), true);
+  assert.equal(await isSafeRepoFile(dir, join(dir, 'sub', 'real.txt')), true);
+  assert.equal(await isSafeRepoFile(dir, join(dir, 'link.txt')), false);
+  assert.equal(await isSafeRepoFile(dir, join(dir, 'linkdir', 'secret.txt')), false);
+  assert.equal(await isSafeRepoFile(dir, join(dir, 'missing.txt')), false);
+});
