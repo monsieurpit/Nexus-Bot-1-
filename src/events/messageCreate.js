@@ -12,7 +12,7 @@ import { getAfk, clearAfk } from '../services/afkService.js';
 import { handleAutoSlowmode } from '../services/autoSlowmodeService.js';
 import { handleChaosTriggers } from '../services/chaosTriggerService.js';
 import { handleStickyNote } from '../services/stickyNoteService.js';
-import { handleNexusAiMessage } from '../services/nexusAiService.js';
+import { handleNexusAiMessage, parseNexusTrigger } from '../services/nexusAiService.js';
 import { recordChannelMessage } from '../services/channelHistoryService.js';
 import { recordWeeklyStat } from '../services/weeklySummaryService.js';
 import { handleDirectMessage } from '../services/dmService.js';
@@ -24,10 +24,6 @@ const MESSAGE_XP_RATE_LIMIT_WINDOW_MS = 10000;
 export default {
   name: Events.MessageCreate,
   async execute(message, client) {
-    // Declared here, outside the try block, so the finally clause below can see it regardless
-    // of which of the try body's early returns (bot author, DM) fires before the patch below is
-    // even reached — a `const` declared inside try{} isn't visible from a sibling finally{}.
-    let originalReply;
     try {
       if (message.author.bot) return;
 
@@ -40,38 +36,36 @@ export default {
 
       recordWeeklyStat(client, message.guild.id, 'messagesSent').catch(() => null);
 
-      // Ensure only one reply is ever sent per message across all services.
-      // Monkey-patch message.reply so the first call wins and subsequent ones are no-ops.
-      // The flag is set synchronously before the async Discord API call so that any
-      // concurrent callers see hasReplied = true immediately, eliminating race conditions.
-      //
-      // Found by a code review: this used to never be undone, permanently overwriting .reply on
-      // the actual, Discord.js-cached Message object (not a local copy) - after this handler ran
-      // once, ANY future code that fetched this exact message from `channel.messages.cache` by
-      // id and called .reply() on it would get a silent no-op forever, since the closure's own
-      // repliedMessages WeakMap already had this message flagged. Restored in the finally clause
-      // below instead, so the patch only lives for the duration of this one invocation - real
-      // dedup while this handler's async work is in flight, no permanent mutation of a shared
-      // object afterward.
-      const repliedMessages = new WeakMap();
-      originalReply = message.reply.bind(message);
-      message.reply = (...args) => {
-        if (repliedMessages.has(message)) return Promise.resolve(null);
-        repliedMessages.set(message, true);
-        return originalReply(...args);
-      };
-
-      // Check if message is a Nexus AI question prompt (e.g. "Nexus what is...")
-      const wasNexusAiQuery = await handleNexusAiMessage(message).catch(err => {
-        logger.error('Error in Nexus AI message handler:', err);
-        return false;
+      // Nexus's "brain" — every real message goes into its channel's rolling history (ambient
+      // awareness of the channel, not just its own Q&A turns). Recorded first, synchronously, so
+      // the history stays in real chronological order (question before Nexus's answer); the Nexus
+      // handler excludes this exact message from the context it sends, so it is never handed its
+      // own current question as if it were prior context.
+      recordChannelMessage(message.channel.id, {
+        messageId: message.id,
+        authorId: message.author.id,
+        username: message.author.username,
+        content: message.content,
+        isBot: false,
       });
 
+      const isNexusQuery = Boolean(parseNexusTrigger(message.content, client.user?.id));
+
       // Resolve ticket status ONCE — reused by all services that must stay
-      // silent in ticket channels (scam detection, AI mod, swear roasts, etc.)
+      // silent in ticket channels (scam detection, AI mod, chaos roasts, etc.)
       const isTicketChannel = !!(await getTicketData(message.guild.id, message.channel.id).catch(() => null));
 
-      // Non-reply services run in parallel (leveling, moderation, slowmode)
+      // The Nexus AI answer can take a long time (the engine may need minutes under load), so it
+      // runs concurrently instead of blocking every other service. Security checks ALWAYS run,
+      // even on messages addressed to Nexus — otherwise prefixing a scam with "nexus" bypassed
+      // scam detection and AI moderation entirely.
+      const nexusTask = isNexusQuery
+        ? handleNexusAiMessage(message).catch(err => {
+            logger.error('Error in Nexus AI message handler:', err);
+            return false;
+          })
+        : Promise.resolve(false);
+
       await Promise.all([
         handleLeveling(message, client),
         handleMessageCoins(message).catch(err =>
@@ -80,13 +74,11 @@ export default {
         RaidDetectionService.processMessage(message, client).catch(err =>
           logger.debug('Error in raid detection message processing:', err)
         ),
-        // Scam detection — skip in ticket channels or if it was a Nexus AI query
-        (isTicketChannel || wasNexusAiQuery) ? Promise.resolve() :
+        isTicketChannel ? Promise.resolve() :
           handleScamDetection(message, client).catch(err =>
             logger.debug('Error in scam detection:', err)
           ),
-        // AI moderation — skip in ticket channels or if it was a Nexus AI query
-        (isTicketChannel || wasNexusAiQuery) ? Promise.resolve() :
+        isTicketChannel ? Promise.resolve() :
           AiModerationService.processMessage(message, client).catch(err =>
             logger.debug('Error in AI moderation:', err)
           ),
@@ -102,38 +94,23 @@ export default {
       ]);
 
       // AFK runs everywhere — useful even inside tickets
-      await handleAfk(message, client).catch(err =>
-        logger.debug('Error in AFK handling:', err)
-      );
+      const afkReplied = await handleAfk(message, client).catch(err => {
+        logger.debug('Error in AFK handling:', err);
+        return false;
+      });
 
-      // Reply-based personality services — silent in ticket channels and if Nexus AI already responded
-      if (!isTicketChannel && !wasNexusAiQuery) {
+      // Reply-based personality triggers — silent in ticket channels, on messages addressed to
+      // Nexus (Nexus answers those itself), and when the AFK handler already replied, so a single
+      // message never gets a pile of different bot replies.
+      if (!isTicketChannel && !isNexusQuery && !afkReplied) {
         await handleChaosTriggers(message).catch(err =>
           logger.debug('Error in chaos trigger handler:', err)
         );
       }
 
-      // Nexus's "brain" — record this message into its channel's rolling history AFTER
-      // handleNexusAiMessage already ran above, not before: that ordering means a message that
-      // itself triggers Nexus sees the channel's history as it stood BEFORE this message (so
-      // it isn't handed its own current question as if it were prior context), while still
-      // being available to every message that comes after it. Every real message counts, not
-      // just ones addressed to Nexus — that's the whole point, ambient awareness of the channel
-      // instead of only its own Q&A turns.
-      recordChannelMessage(message.channel.id, {
-        authorId: message.author.id,
-        username: message.author.username,
-        content: message.content,
-        isBot: false,
-      });
+      await nexusTask;
     } catch (error) {
       logger.error('Error in messageCreate event:', error);
-    } finally {
-      // Only restore if the patch actually ran (an early return above the patch point, e.g. a
-      // bot author or a DM, never touched message.reply at all, so there's nothing to undo).
-      if (originalReply) {
-        message.reply = originalReply;
-      }
     }
   }
 };
@@ -202,7 +179,9 @@ async function handleLeveling(message, client) {
   }
 }
 
+// Returns true when it replied to the message (so the caller can skip other reply-based triggers).
 async function handleAfk(message, client) {
+  let replied = false;
   try {
     const guildId = message.guild.id;
 
@@ -216,6 +195,7 @@ async function handleAfk(message, client) {
       }).catch(() => null);
 
       if (backReply) {
+        replied = true;
         setTimeout(() => backReply.delete().catch(() => {}), 10000);
       }
     }
@@ -236,13 +216,15 @@ async function handleAfk(message, client) {
       const lines = (await Promise.all(mentionPromises)).filter(Boolean);
 
       if (lines.length > 0) {
-        await message.reply({
+        const notice = await message.reply({
           content: lines.join('\n').slice(0, 2000),
           allowedMentions: { parse: [] }
         }).catch(() => null);
+        if (notice) replied = true;
       }
     }
   } catch (error) {
     logger.debug('Error handling AFK for message:', error);
   }
+  return replied;
 }

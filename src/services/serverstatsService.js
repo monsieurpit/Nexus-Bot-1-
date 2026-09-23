@@ -210,6 +210,11 @@ export async function getServerCounters(client, guildId) {
     }
     
     let data = await database.get(`counters:${guildId}`);
+    // A config-shaped object ({ enabled, counters: [...] }) may have been stored under the list
+    // key by an older build — unwrap it instead of treating the counters as missing.
+    if (data && !Array.isArray(data) && typeof data === 'object' && Array.isArray(data.counters)) {
+      data = data.counters;
+    }
     if (!data || (Array.isArray(data) && data.length === 0)) {
       data = await database.get(`guild:${guildId}:serverstats:counters`);
     }

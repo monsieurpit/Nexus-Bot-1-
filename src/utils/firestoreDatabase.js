@@ -64,6 +64,9 @@ export function sanitizeForFirestore(obj, seen = new WeakSet()) {
     return clean;
 }
 
+// The fields a key/value write owns on its document — see set().
+const VALUE_FIELDS = ['key', 'value', 'updatedAt', 'expiresAt'];
+
 class FirestoreDatabase {
     constructor() {
         this.app = null;
@@ -130,199 +133,50 @@ class FirestoreDatabase {
         }
     }
 
+    /**
+     * One-way, NON-destructive migration of legacy `kv_data` records into their dedicated
+     * collections (see getDocRef). A record is only copied when its dedicated document does not
+     * exist yet — an existing document is never touched.
+     *
+     * This used to run a full "sync" on every single startup that (a) merged every kv_data value
+     * over the dedicated document even when the dedicated one was newer, and (b) re-seeded a dozen
+     * feature documents from the guild config with placeholder values — `value: config.giveaways
+     * || []`, `value: config.tickets || { enabled: false }`, zeroed weekly stats, an empty server
+     * save list, and a delete of the LaLiga standings doc. Since the guild config almost never
+     * carries those fields, every Railway redeploy silently wiped giveaway lists and server-save
+     * lists, reset weekly stats, and flipped ticket/football/RaidShield/VC-event configs to
+     * disabled.
+     */
     async syncGuildFeatureTables() {
         if (!this.db) return;
         try {
-            const guildsSnapshot = await getDocs(collection(this.db, 'guilds')).catch(() => null);
             const kvSnapshot = await getDocs(collection(this.db, 'kv_data')).catch(() => null);
+            if (!kvSnapshot || kvSnapshot.empty) return;
 
-            const discoveredGuildIds = new Set();
-            if (guildsSnapshot && !guildsSnapshot.empty) {
-                for (const d of guildsSnapshot.docs) discoveredGuildIds.add(d.id);
+            let migrated = 0;
+            for (const kvDoc of kvSnapshot.docs) {
+                const rawKey = kvDoc.data()?.key || this.decodeKey(kvDoc.id);
+                if (!rawKey) continue;
+
+                const targetRef = this.getDocRef(rawKey);
+                if (!targetRef || targetRef.path === kvDoc.ref.path) continue;
+
+                const existing = await getDoc(targetRef).catch(() => null);
+                if (!existing || existing.exists()) continue;
+
+                await setDoc(targetRef, sanitizeForFirestore({
+                    key: rawKey,
+                    value: kvDoc.data()?.value ?? null,
+                    migratedAt: new Date().toISOString()
+                })).catch(() => null);
+                migrated++;
             }
 
-            // 1. Process and migrate any relevant kv_data records to their dedicated collections
-            if (kvSnapshot && !kvSnapshot.empty) {
-                for (const kvDoc of kvSnapshot.docs) {
-                    const rawKey = this.decodeKey(kvDoc.id);
-                    const kvVal = kvDoc.data()?.value;
-                    if (!rawKey) continue;
-
-                    const parts = rawKey.split(':');
-                    if (parts[0] === 'guild' && parts[1]) {
-                        discoveredGuildIds.add(parts[1]);
-                    } else if (parts[0] === 'economy' && parts[1]) {
-                        discoveredGuildIds.add(parts[1]);
-                    }
-
-                    const targetRef = this.getDocRef(rawKey);
-                    if (targetRef && targetRef.path !== kvDoc.ref.path) {
-                        await setDoc(targetRef, sanitizeForFirestore({
-                            key: rawKey,
-                            value: kvVal,
-                            migratedAt: new Date().toISOString()
-                        }), { merge: true }).catch(() => null);
-                    }
-                }
+            if (migrated > 0) {
+                logger.info(`✅ Migrated ${migrated} legacy kv_data record(s) into dedicated collections`);
             }
-
-            // 2. Synchronize all requested standalone feature tables for all active guilds
-            for (const guildId of discoveredGuildIds) {
-                let config = {};
-                if (guildsSnapshot) {
-                    const guildDoc = guildsSnapshot.docs.find(d => d.id === guildId);
-                    if (guildDoc) {
-                        const data = guildDoc.data();
-                        config = data?.value || data || {};
-                    }
-                }
-
-                // A. Embeds System (/embeds)
-                if (config.embeds && typeof config.embeds === 'object') {
-                    for (const [embedId, embedData] of Object.entries(config.embeds)) {
-                        await setDoc(doc(this.db, 'embeds', `${guildId}_${embedId}`), sanitizeForFirestore({
-                            key: `guild:${guildId}:embeds:${embedId}`,
-                            value: embedData,
-                            guildId,
-                            embedId,
-                            updatedAt: new Date().toISOString()
-                        }), { merge: true }).catch(() => null);
-                    }
-                }
-
-                // B. Football System (/football_configs, /football)
-                await setDoc(doc(this.db, 'football_configs', guildId), sanitizeForFirestore({
-                    key: `guild:${guildId}:football:config`,
-                    value: config.football || { enabled: false },
-                    guildId,
-                    updatedAt: new Date().toISOString()
-                }), { merge: true }).catch(() => null);
-
-                // C. Giveaway System (/giveaways)
-                await setDoc(doc(this.db, 'giveaways', guildId), sanitizeForFirestore({
-                    key: `guild:${guildId}:giveaways`,
-                    value: config.giveaways || [],
-                    guildId,
-                    updatedAt: new Date().toISOString()
-                }), { merge: true }).catch(() => null);
-
-                // D. Economy System (/economy_configs, /economy_shops, /economy_participants)
-                await setDoc(doc(this.db, 'economy_configs', guildId), sanitizeForFirestore({
-                    key: `economy:${guildId}:config`,
-                    value: config.economy || { currencySymbol: '🪙', startingBalance: 100 },
-                    guildId,
-                    updatedAt: new Date().toISOString()
-                }), { merge: true }).catch(() => null);
-
-                await setDoc(doc(this.db, 'economy_shops', guildId), sanitizeForFirestore({
-                    key: `economy:${guildId}:shop`,
-                    value: config.economyShop || [],
-                    guildId,
-                    updatedAt: new Date().toISOString()
-                }), { merge: true }).catch(() => null);
-
-                await setDoc(doc(this.db, 'economy_participants', guildId), sanitizeForFirestore({
-                    key: `economy:${guildId}:participants`,
-                    value: config.economyParticipants || [],
-                    guildId,
-                    updatedAt: new Date().toISOString()
-                }), { merge: true }).catch(() => null);
-
-                // E. Raidshield System & Reports (/raidshield_configs, /reports)
-                await setDoc(doc(this.db, 'raidshield_configs', guildId), sanitizeForFirestore({
-                    key: `guild:${guildId}:raidshield:config`,
-                    value: config.raidShield || { enabled: false },
-                    guildId,
-                    updatedAt: new Date().toISOString()
-                }), { merge: true }).catch(() => null);
-
-                await setDoc(doc(this.db, 'reports', guildId), sanitizeForFirestore({
-                    key: `guild:${guildId}:reports`,
-                    value: config.reports || { enabled: false },
-                    guildId,
-                    updatedAt: new Date().toISOString()
-                }), { merge: true }).catch(() => null);
-
-                // F. Server Save System with Save IDs (/server_saves)
-                await setDoc(doc(this.db, 'server_saves', guildId), sanitizeForFirestore({
-                    key: `guild:${guildId}:server_backup:saves`,
-                    value: config.serverSaves || [],
-                    guildId,
-                    updatedAt: new Date().toISOString()
-                }), { merge: true }).catch(() => null);
-
-                // G. Server Stats System (/serverstats_configs, /serverstats_counters)
-                await setDoc(doc(this.db, 'serverstats_configs', guildId), sanitizeForFirestore({
-                    key: `guild:${guildId}:serverstats:config`,
-                    value: config.serverStats || config.counters || { enabled: false },
-                    guildId,
-                    updatedAt: new Date().toISOString()
-                }), { merge: true }).catch(() => null);
-
-                await setDoc(doc(this.db, 'serverstats_counters', guildId), sanitizeForFirestore({
-                    key: `counters:${guildId}`,
-                    value: config.counters || {},
-                    guildId,
-                    updatedAt: new Date().toISOString()
-                }), { merge: true }).catch(() => null);
-
-                // H. Sticky Notes System (/sticky_notes)
-                await setDoc(doc(this.db, 'sticky_notes', guildId), sanitizeForFirestore({
-                    key: `guild:${guildId}:stickynotes`,
-                    value: config.stickyNotes || {},
-                    guildId,
-                    updatedAt: new Date().toISOString()
-                }), { merge: true }).catch(() => null);
-
-                // I. Weekly Summary System with 3 Last Weekly Summaries History (/weekly_stats, /weekly_stats_history)
-                await setDoc(doc(this.db, 'weekly_stats', guildId), sanitizeForFirestore({
-                    key: `guild:${guildId}:weekly_stats`,
-                    value: config.weeklyStats || { joins: 0, leaves: 0, messagesSent: 0, moderations: 0, ticketsOpened: 0, ticketsClosed: 0 },
-                    guildId,
-                    updatedAt: new Date().toISOString()
-                }), { merge: true }).catch(() => null);
-
-                await setDoc(doc(this.db, 'weekly_stats_history', guildId), sanitizeForFirestore({
-                    key: `guild:${guildId}:weekly_summary:history`,
-                    value: config.weeklyHistory || [],
-                    guildId,
-                    maxHistory: 3,
-                    updatedAt: new Date().toISOString()
-                }), { merge: true }).catch(() => null);
-
-                // J. Ticket System (/ticket_configs)
-                await setDoc(doc(this.db, 'ticket_configs', guildId), sanitizeForFirestore({
-                    key: `guild:${guildId}:ticket:config`,
-                    value: config.tickets || { enabled: false },
-                    guildId,
-                    updatedAt: new Date().toISOString()
-                }), { merge: true }).catch(() => null);
-
-                // K. VC Event System (/vc_event_configs)
-                await setDoc(doc(this.db, 'vc_event_configs', guildId), sanitizeForFirestore({
-                    key: `guild:${guildId}:vc_event`,
-                    value: config.vcEvent || { enabled: false },
-                    guildId,
-                    updatedAt: new Date().toISOString()
-                }), { merge: true }).catch(() => null);
-
-                // L. LaLiga Standings System (/laliga_standings_configs) - only guilds
-                // with hourly auto-refresh currently enabled are kept in this table.
-                if (config.laligaStandings?.enabled) {
-                    await setDoc(doc(this.db, 'laliga_standings_configs', guildId), sanitizeForFirestore({
-                        key: `guild:${guildId}:laliga_standings`,
-                        value: config.laligaStandings,
-                        guildId,
-                        updatedAt: new Date().toISOString()
-                    }), { merge: true }).catch(() => null);
-                } else {
-                    await deleteDoc(doc(this.db, 'laliga_standings_configs', guildId)).catch(() => null);
-                }
-            }
-
-            logger.info(`✅ Synchronized dedicated tables for ${discoveredGuildIds.size} guild(s)`);
         } catch (err) {
-            logger.warn('Guild feature tables sync warning:', err.message);
+            logger.warn('Legacy kv_data migration warning:', err.message);
         }
     }
 
@@ -658,15 +512,21 @@ class FirestoreDatabase {
             const payload = {
                 key,
                 value,
-                updatedAt: new Date().toISOString()
+                updatedAt: new Date().toISOString(),
+                // Always written (null when there's no TTL) so re-saving a key that previously had
+                // a TTL clears the old expiry instead of letting the fresh value "expire".
+                expiresAt: ttl && typeof ttl === 'number' && ttl > 0
+                    ? new Date(Date.now() + ttl * 1000).toISOString()
+                    : null
             };
 
-            if (ttl && typeof ttl === 'number' && ttl > 0) {
-                payload.expiresAt = new Date(Date.now() + ttl * 1000).toISOString();
-            }
-
             const cleanPayload = sanitizeForFirestore(payload);
-            await setDoc(docRef, cleanPayload, { merge: true });
+            // `mergeFields` REPLACES these fields wholesale while keeping any unrelated fields on
+            // the same document (e.g. `counters` on a guild doc). A plain `{ merge: true }` deep-
+            // merges the `value` map instead, so a removed nested key (a deleted sticky note, a
+            // re-enabled command in disabledCommands, a removed reaction-role entry…) was never
+            // actually removed from Firestore and silently came back on the next read.
+            await setDoc(docRef, cleanPayload, { mergeFields: VALUE_FIELDS });
 
             // If updating guild config, also write to dedicated collections
             const parts = key.split(':');
@@ -735,9 +595,14 @@ class FirestoreDatabase {
             }
 
             // If saving server counters directly, also keep guild doc and secondary doc in sync
-            if ((parts[0] === 'counters' && parts[1]) || (parts[0] === 'guild' && parts[1] && (parts[2] === 'serverstats' || parts[2] === 'counters'))) {
+            // Only the counter LIST itself is mirrored — `guild:<id>:serverstats:config` is a
+            // different shape ({ enabled, counters, updatedAt }) and mirroring it here used to
+            // overwrite the counter list with that config object, so counters read back empty.
+            const isCounterListKey = (parts[0] === 'counters' && parts[1]) ||
+                (parts[0] === 'guild' && parts[1] && (parts[2] === 'counters' || (parts[2] === 'serverstats' && parts[3] === 'counters')));
+            if (isCounterListKey && Array.isArray(value)) {
                 const guildId = parts[1];
-                await setDoc(doc(this.db, 'serverstats_counters', guildId), cleanPayload, { merge: true }).catch(() => null);
+                await setDoc(doc(this.db, 'serverstats_counters', guildId), cleanPayload, { mergeFields: VALUE_FIELDS }).catch(() => null);
                 await setDoc(doc(this.db, 'guilds', guildId), sanitizeForFirestore({
                     counters: value,
                     updatedAt: new Date().toISOString()
@@ -747,12 +612,12 @@ class FirestoreDatabase {
             // Synchronize with kv_data and legacy collection so all views stay updated
             const kvRef = this.getKvDocRef(key);
             if (kvRef && kvRef.path !== docRef.path) {
-                await setDoc(kvRef, cleanPayload, { merge: true }).catch(() => null);
+                await setDoc(kvRef, cleanPayload, { mergeFields: VALUE_FIELDS }).catch(() => null);
             }
 
             const legacyRef = this.getLegacyDocRef(key);
             if (legacyRef && legacyRef.path !== docRef.path) {
-                await setDoc(legacyRef, cleanPayload, { merge: true }).catch(() => null);
+                await setDoc(legacyRef, cleanPayload, { mergeFields: VALUE_FIELDS }).catch(() => null);
             }
 
             return true;

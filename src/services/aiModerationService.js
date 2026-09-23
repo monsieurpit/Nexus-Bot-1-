@@ -3,7 +3,6 @@ import { checkRateLimit } from '../utils/rateLimiter.js';
 import { QuarantineService } from './quarantineService.js';
 import { createEmbed } from '../utils/embeds.js';
 import { NexusAI } from '../../nexus-ai.js';
-import axios from 'axios';
 
 // Talks to the same real, deployed Nexus AI RaidShield engine as nexusAiService.js, through the
 // official SDK instead of a duplicated raw fetch + local heuristic classifier - the central
@@ -54,8 +53,6 @@ const IMAGE_CACHE_MAX_SIZE = 100;
 const IMAGE_CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
 const imageCache = new Map();
 
-const CONTEXT_MESSAGES_LIMIT = 5;
-
 function getCachedImage(url) {
   const cached = imageCache.get(url);
   if (!cached) return null;
@@ -72,34 +69,6 @@ function setCachedImage(url, data) {
     if (oldestKey) imageCache.delete(oldestKey);
   }
   imageCache.set(url, { data, timestamp: Date.now() });
-}
-
-async function fetchRecentMessages(channel, beforeMessageId) {
-  try {
-    const messages = await channel.messages.fetch({
-      limit: CONTEXT_MESSAGES_LIMIT,
-      before: beforeMessageId
-    });
-    const formatted = [];
-    for (const msg of messages.values()) {
-      if (msg.author.bot) continue;
-      const content = msg.content?.trim();
-      if (content && content.length >= MIN_CONTENT_LENGTH) {
-        formatted.push({
-          messageId: msg.id,
-          authorId: msg.author.id,
-          username: msg.author.username,
-          displayName: msg.member?.displayName || msg.author.globalName || msg.author.username,
-          content: content.slice(0, 200),
-          timestamp: msg.createdTimestamp
-        });
-      }
-    }
-    return formatted.sort((a, b) => b.timestamp - a.timestamp).slice(0, CONTEXT_MESSAGES_LIMIT);
-  } catch (error) {
-    logger.debug('Failed to fetch recent messages for context:', error.message);
-    return [];
-  }
 }
 
 function formatMessageIdentity(message) {
@@ -129,7 +98,7 @@ async function analyzeContent(text, imageUrls = [], recentMessages = [], current
     }
   }
 
-  logger.info('🔍 Nexus AI RaidShield: Starting threat analysis', {
+  logger.debug('🔍 Nexus AI RaidShield: Starting threat analysis', {
     textLength: text?.length ?? 0,
     imageCount: imageUrls.length,
     contextMessages: recentMessages.length
@@ -139,9 +108,14 @@ async function analyzeContent(text, imageUrls = [], recentMessages = [], current
   // fail open to "safe" rather than duplicating its 21-rule classifier locally - a stale
   // local copy would drift from the real engine's fixes and rules over time.
   try {
+    // authorId is deliberately NOT sent: the engine only echoes it back, but its presence opts
+    // the request into the engine's per-Discord-user rate limit (5 requests / 15s, shared with
+    // that user's Nexus chat budget). A fast spammer — exactly who RaidShield exists to catch —
+    // hit HTTP 429 after 5 messages, every later scan "failed open" as safe, and a normal user
+    // with AI moderation enabled burned their own chat budget just by talking. This bot already
+    // applies its own per-guild scan limits above.
     const result = await nexusClient.checkSecurity({
       messageText: text,
-      authorId: currentMessage?.authorId || '',
       imageUrl
     });
     if (result && result.classification) {
@@ -205,87 +179,96 @@ async function executeAction(action, message, client, aiResult, aiConfig) {
 
   let outcome = { action: 'none', reason: 'unknown_action' };
 
-  switch (action) {
-    case 'quarantine': {
-      const result = await QuarantineService.triggerQuarantine({
-        guild,
-        client,
-        suspects: [member],
-        reason: `ai_${aiResult.classification}`,
-        metadata: {
-          aiClassification: aiResult.classification,
-          aiConfidence: aiResult.confidence,
-          aiReason: aiResult.reason,
-          messageContent: message.content?.slice(0, 500) || '[no text]',
-          messageId: message.id,
-          authorId,
-          authorUsername: message.author.username,
-          channelId: message.channel.id,
-          detectedAt: new Date().toISOString(),
-          tripReasons: [`ai_${aiResult.classification}`]
-        }
-      });
-      if (result?.success) {
-        outcome = { action: 'quarantine' };
-      } else if (result?.reason === 'disabled') {
-        // Quarantine requires the core Raid Shield toggle to be on; AI moderation can be enabled
-        // independently of it. Fall back to a real, always-available action instead of doing
-        // nothing while claiming otherwise.
-        logger.warn(`AI moderation: quarantine unavailable (Raid Shield core is disabled) for ${authorId} in guild ${guild.id}, falling back to timeout`);
-        if (member.moderatable) {
-          await member.timeout(600000, `AI Moderation: ${aiResult.classification} (${aiResult.reason}) — quarantine unavailable, Raid Shield disabled`).catch(() => null);
-          outcome = { action: 'timeout', reason: 'quarantine_disabled_fallback' };
-        } else {
-          outcome = { action: 'failed', reason: 'quarantine_disabled_and_not_moderatable' };
-        }
-      } else {
-        logger.warn(`AI moderation: quarantine failed for ${authorId} in guild ${guild.id}: ${result?.reason}`);
-        outcome = { action: 'failed', reason: result?.reason || 'quarantine_failed' };
-      }
-      break;
-    }
-    case 'kick': {
-      if (member.kickable) {
-        await member.kick(`AI Moderation: ${aiResult.classification} (${aiResult.reason})`);
-        outcome = { action: 'kick' };
-      } else {
-        logger.warn(`AI moderation: cannot kick ${authorId} in guild ${guild.id} — not kickable (role hierarchy or missing permission)`);
-        outcome = { action: 'failed', reason: 'not_kickable' };
-      }
-      break;
-    }
-    case 'ban': {
-      if (member.bannable) {
-        await guild.members.ban(member.id, {
-          reason: `AI Moderation: ${aiResult.classification} (${aiResult.reason})`,
-          deleteMessageSeconds: 86400
+  // A kick/ban/timeout can still be rejected by Discord (a race with a role change, a missing
+  // permission) — that must not abort before the message is deleted and staff are alerted.
+  try {
+    switch (action) {
+      case 'quarantine': {
+        const result = await QuarantineService.triggerQuarantine({
+          guild,
+          client,
+          suspects: [member],
+          reason: `ai_${aiResult.classification}`,
+          metadata: {
+            aiClassification: aiResult.classification,
+            aiConfidence: aiResult.confidence,
+            aiReason: aiResult.reason,
+            messageContent: message.content?.slice(0, 500) || '[no text]',
+            messageId: message.id,
+            authorId,
+            authorUsername: message.author.username,
+            channelId: message.channel.id,
+            detectedAt: new Date().toISOString(),
+            tripReasons: [`ai_${aiResult.classification}`]
+          }
         });
-        outcome = { action: 'ban' };
-      } else {
-        logger.warn(`AI moderation: cannot ban ${authorId} in guild ${guild.id} — not bannable (role hierarchy or missing permission)`);
-        outcome = { action: 'failed', reason: 'not_bannable' };
+        if (result?.success) {
+          outcome = { action: 'quarantine' };
+        } else if (result?.reason === 'disabled') {
+          // Quarantine requires the core Raid Shield toggle to be on; AI moderation can be enabled
+          // independently of it. Fall back to a real, always-available action instead of doing
+          // nothing while claiming otherwise.
+          logger.warn(`AI moderation: quarantine unavailable (Raid Shield core is disabled) for ${authorId} in guild ${guild.id}, falling back to timeout`);
+          if (member.moderatable) {
+            await member.timeout(600000, `AI Moderation: ${aiResult.classification} (${aiResult.reason}) — quarantine unavailable, Raid Shield disabled`).catch(() => null);
+            outcome = { action: 'timeout', reason: 'quarantine_disabled_fallback' };
+          } else {
+            outcome = { action: 'failed', reason: 'quarantine_disabled_and_not_moderatable' };
+          }
+        } else {
+          logger.warn(`AI moderation: quarantine failed for ${authorId} in guild ${guild.id}: ${result?.reason}`);
+          outcome = { action: 'failed', reason: result?.reason || 'quarantine_failed' };
+        }
+        break;
       }
-      break;
-    }
-    case 'delete': {
-      outcome = { action: 'delete' };
-      break;
-    }
-    case 'timeout': {
-      if (member.moderatable) {
-        await member.timeout(600000, `AI Moderation: ${aiResult.classification} (${aiResult.reason})`);
-        outcome = { action: 'timeout' };
-      } else {
-        logger.warn(`AI moderation: cannot timeout ${authorId} in guild ${guild.id} — not moderatable (role hierarchy or missing permission)`);
-        outcome = { action: 'failed', reason: 'not_moderatable' };
+      case 'kick': {
+        if (member.kickable) {
+          await member.kick(`AI Moderation: ${aiResult.classification} (${aiResult.reason})`);
+          outcome = { action: 'kick' };
+        } else {
+          logger.warn(`AI moderation: cannot kick ${authorId} in guild ${guild.id} — not kickable (role hierarchy or missing permission)`);
+          outcome = { action: 'failed', reason: 'not_kickable' };
+        }
+        break;
       }
-      break;
+      case 'ban': {
+        if (member.bannable) {
+          await guild.members.ban(member.id, {
+            reason: `AI Moderation: ${aiResult.classification} (${aiResult.reason})`,
+            deleteMessageSeconds: 86400
+          });
+          outcome = { action: 'ban' };
+        } else {
+          logger.warn(`AI moderation: cannot ban ${authorId} in guild ${guild.id} — not bannable (role hierarchy or missing permission)`);
+          outcome = { action: 'failed', reason: 'not_bannable' };
+        }
+        break;
+      }
+      case 'delete': {
+        outcome = { action: 'delete' };
+        break;
+      }
+      case 'timeout': {
+        if (member.moderatable) {
+          await member.timeout(600000, `AI Moderation: ${aiResult.classification} (${aiResult.reason})`);
+          outcome = { action: 'timeout' };
+        } else {
+          logger.warn(`AI moderation: cannot timeout ${authorId} in guild ${guild.id} — not moderatable (role hierarchy or missing permission)`);
+          outcome = { action: 'failed', reason: 'not_moderatable' };
+        }
+        break;
+      }
+      default:
+        break;
     }
-    default:
-      break;
+  } catch (error) {
+    logger.warn(`AI moderation: action "${action}" failed for ${authorId} in guild ${guild.id}: ${error.message}`);
+    outcome = { action: 'failed', reason: error.message };
   }
 
-  if (outcome.action !== 'delete' && message.deletable) {
+  // The flagged message is removed for EVERY action — including 'delete' itself, which this used to
+  // skip by mistake (`outcome.action !== 'delete'`), so the "delete" action never deleted anything.
+  if (message.deletable) {
     await message.delete().catch(() => null);
   }
 
@@ -440,7 +423,7 @@ export class AiModerationService {
         return;
       }
 
-      logger.info('🎯 AI Moderation: Message received', {
+      logger.debug('🎯 AI Moderation: Message received', {
         guildId: message.guild.id,
         userId: message.author.id,
         contentLength: message.content?.length ?? 0
@@ -527,13 +510,11 @@ export class AiModerationService {
         return;
       }
 
-      let recentMessages = [];
-      if (aiConfig.enableContext) {
-        recentMessages = await fetchRecentMessages(message.channel, message.id);
-      }
-
+      // Recent-channel context used to be fetched here (an extra Discord API call on EVERY
+      // scanned message) but the RaidShield endpoint has no field for it and it was never sent —
+      // pure rate-limit pressure for nothing, so it is no longer fetched.
       const currentMessage = formatMessageIdentity(message);
-      const result = await analyzeContent(text, imageUrls, recentMessages, currentMessage);
+      const result = await analyzeContent(text, imageUrls, [], currentMessage);
 
       if (!result) {
         logger.debug('No analysis result returned');
@@ -588,7 +569,7 @@ export class AiModerationService {
       return;
     }
 
-    logger.info('🔄 AI Moderation: Processing edited message', {
+    logger.debug('🔄 AI Moderation: Processing edited message', {
       guildId: newMessage.guild.id,
       userId: newMessage.author.id,
       oldLength: oldMessage.content?.length ?? 0,

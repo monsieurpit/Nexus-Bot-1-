@@ -66,7 +66,7 @@ if (process.env.NODE_ENV !== 'production') {
 
 app.use((err, _req, res, _next) => {
   console.error('API error:', err.message)
-  res.status(500).json({ error: err.message || 'Internal server error' })
+  res.status(err.status || 500).json({ error: err.message || 'Internal server error' })
 })
 
 app.listen(PORT, '0.0.0.0', () => {

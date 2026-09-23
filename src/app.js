@@ -17,6 +17,7 @@ import { checkVcEvents } from './services/vcEventService.js';
 import { checkLaligaStandingsUpdates } from './services/laligaStandingsService.js';
 import { loadCommands, registerCommands as registerSlashCommands } from './handlers/commandLoader.js';
 import { logCrash } from './services/aiTelemetryService.js';
+import { registerBotClient } from './utils/botRegistry.js';
 
 class NexusBot extends Client {
   constructor() {
@@ -47,6 +48,7 @@ class NexusBot extends Client {
     this.cooldowns = new Collection();
     this.db = null;
     this.rest = new REST({ version: '10' }).setToken(config.bot.token);
+    registerBotClient(this);
   }
 
   async start() {
@@ -189,6 +191,13 @@ class NexusBot extends Client {
       }
       
       const times = requestCounts.get(ip).filter(t => t > windowStart);
+
+      // Periodically drop idle IPs so this map can't grow for the lifetime of the process.
+      if (requestCounts.size > 5000) {
+        for (const [key, stamps] of requestCounts) {
+          if (!stamps.length || stamps[stamps.length - 1] <= windowStart) requestCounts.delete(key);
+        }
+      }
       
       if (times.length >= maxRequests) {
         return res.status(429).json({ error: 'Too many requests' });
@@ -238,6 +247,19 @@ class NexusBot extends Client {
 
     // Internal API: apply bot status from dashboard
     app.use(express.json());
+
+    // The /api/internal/* routes change the bot's presence and re-register every slash command.
+    // They used to be reachable by anyone who could reach this port (publicly, on a host like
+    // Railway). Only loopback callers are allowed now — or any caller presenting the
+    // INTERNAL_API_TOKEN, when one is configured.
+    app.use('/api/internal', (req, res, next) => {
+      const token = process.env.INTERNAL_API_TOKEN;
+      const presented = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+      if (token && presented === token) return next();
+      const ip = req.socket?.remoteAddress || '';
+      if (ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1') return next();
+      return res.status(403).json({ error: 'Forbidden' });
+    });
 
     app.post('/api/internal/status', (req, res) => {
       const { status } = req.body || {};
@@ -336,34 +358,38 @@ class NexusBot extends Client {
   }
 
   setupCronJobs() {
-    cron.schedule('* * * * *', () => checkGiveaways(this));
-    cron.schedule('* * * * *', () => {
-      checkVcEvents(this).catch(err => {
-        logger.error('[Cron] Error in VC event scheduler job:', err);
-      });
-    });
-    cron.schedule('0 0 * * *', () => runAutoSave(this));
-    cron.schedule('*/15 * * * *', () => this.updateAllCounters());
+    // Every job goes through safeJob: a job that throws (or rejects) is logged with its name
+    // instead of surfacing as an anonymous unhandled rejection, and a slow run is never started a
+    // second time while the previous one is still going (e.g. a football API sync that hangs).
+    const running = new Set();
+    const safeJob = (name, fn) => async () => {
+      if (running.has(name)) {
+        logger.debug(`[Cron] Skipping "${name}" — previous run still in progress`);
+        return;
+      }
+      running.add(name);
+      try {
+        await fn();
+      } catch (err) {
+        logger.error(`[Cron] Job "${name}" failed:`, err);
+      } finally {
+        running.delete(name);
+      }
+    };
+
+    cron.schedule('* * * * *', safeJob('giveaways', () => checkGiveaways(this)));
+    cron.schedule('* * * * *', safeJob('vc-events', () => checkVcEvents(this)));
+    cron.schedule('0 0 * * *', safeJob('auto-save', () => runAutoSave(this)));
+    cron.schedule('*/15 * * * *', safeJob('server-counters', () => this.updateAllCounters()));
     // Poll DB every 5 minutes and apply botStatus if it changed
-    cron.schedule('*/5 * * * *', () => this.syncBotStatusFromDb());
-    // Check for FC Barcelona match announcements and auto-update live schedule boards every 30 minutes
-    cron.schedule('*/30 * * * *', () => {
-      logger.info('[Cron] Triggering FC Barcelona fixture sync & schedule board check...');
-      checkFootballAnnouncements(this).catch(err => {
-        logger.error('[Cron] Error in football scheduler job:', err);
-      });
-      checkWeeklySummaries(this).catch(err => {
-        logger.error('[Cron] Error checking weekly summaries:', err);
-      });
-    });
-    // Daily sync of FC Barcelona match fixtures from API to check for modifications/rescheduled games (at 06:00 UTC)
-    cron.schedule('0 6 * * *', () => syncBarcelonaFixturesFromApi());
+    cron.schedule('*/5 * * * *', safeJob('bot-status', () => this.syncBotStatusFromDb()));
+    // FC Barcelona match announcements / live schedule boards, and weekly summaries, every 30 minutes
+    cron.schedule('*/30 * * * *', safeJob('football-announcements', () => checkFootballAnnouncements(this)));
+    cron.schedule('*/30 * * * *', safeJob('weekly-summaries', () => checkWeeklySummaries(this)));
+    // Daily sync of FC Barcelona fixtures from the API (rescheduled games etc.) at 06:00 UTC
+    cron.schedule('0 6 * * *', safeJob('football-fixtures-sync', () => syncBarcelonaFixturesFromApi()));
     // Refresh every configured LaLiga standings board once an hour, on the hour
-    cron.schedule('0 * * * *', () => {
-      checkLaligaStandingsUpdates(this).catch(err => {
-        logger.error('[Cron] Error in LaLiga standings scheduler job:', err);
-      });
-    });
+    cron.schedule('0 * * * *', safeJob('laliga-standings', () => checkLaligaStandingsUpdates(this)));
 
     // Run initial startup check 15 seconds after launch once bot caches are populated
     setTimeout(() => {

@@ -24,7 +24,20 @@ class DatabaseWrapper {
         // 1. Primary Database: Firebase Firestore (connects directly via firebase-applet-config.json)
         try {
             logger.info('Connecting to Firebase Firestore database...');
-            const fsConnected = await firestoreDb.connect();
+            // Bounded: the Firestore client retries silently forever when Google is unreachable,
+            // which used to leave the whole bot stuck at "Connecting to Firebase" with no fallback.
+            const timeoutMs = Number(process.env.FIRESTORE_CONNECT_TIMEOUT_MS) || 20000;
+            let timer;
+            const fsConnected = await Promise.race([
+                firestoreDb.connect(),
+                new Promise((resolve) => {
+                    timer = setTimeout(() => {
+                        logger.warn(`Firestore did not connect within ${timeoutMs}ms — falling back.`);
+                        firestoreDb.connected = false;
+                        resolve(false);
+                    }, timeoutMs);
+                })
+            ]).finally(() => clearTimeout(timer));
             if (fsConnected) {
                 this.db = firestoreDb;
                 this.connectionType = 'firestore';

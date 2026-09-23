@@ -21,7 +21,7 @@ function getDashboardBaseUrl() {
 export default {
     data: new SlashCommandBuilder()
         .setName('editrepo')
-        .setDescription('Get the link to Nexus Code, where you can have Nexus propose (and, once you approve, push) changes to YOUR OWN GitHub repo'),
+        .setDescription('Get the Nexus Code link to have Nexus propose (and push, once approved) changes to your repo'),
 
     async execute(interaction, guildConfig, client) {
         try {

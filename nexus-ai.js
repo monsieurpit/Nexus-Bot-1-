@@ -324,7 +324,7 @@ export class NexusAI {
    * Fetch active server settings and hyperparameters.
    */
   async getSettings() {
-    const res = await fetch(`${this.baseUrl}/settings`, {
+    const res = await this._fetchWithTimeout(`${this.baseUrl}/settings`, {
       method: 'GET',
       headers: this._getHeaders(),
     });
@@ -343,7 +343,7 @@ export class NexusAI {
    * @param {string} [updates.activePersonaId]
    */
   async updateSettings(updates = {}) {
-    const res = await fetch(`${this.baseUrl}/settings`, {
+    const res = await this._fetchWithTimeout(`${this.baseUrl}/settings`, {
       method: 'POST',
       headers: this._getHeaders(),
       body: JSON.stringify(updates),
@@ -355,7 +355,7 @@ export class NexusAI {
    * List all available AI Personas with tags and system prompts.
    */
   async listPersonas() {
-    const res = await fetch(`${this.baseUrl}/personas`, {
+    const res = await this._fetchWithTimeout(`${this.baseUrl}/personas`, {
       method: 'GET',
       headers: this._getHeaders(),
     });
@@ -366,7 +366,7 @@ export class NexusAI {
    * List all available AI models/personas in OpenAI-style model list format.
    */
   async listModels() {
-    const res = await fetch(`${this.baseUrl}/models`, {
+    const res = await this._fetchWithTimeout(`${this.baseUrl}/models`, {
       method: 'GET',
       headers: this._getHeaders(),
     });
@@ -377,7 +377,7 @@ export class NexusAI {
    * Get the server's currently active default persona.
    */
   async getActivePersona() {
-    const res = await fetch(`${this.baseUrl}/persona`, {
+    const res = await this._fetchWithTimeout(`${this.baseUrl}/persona`, {
       method: 'GET',
       headers: this._getHeaders(),
     });
@@ -393,7 +393,7 @@ export class NexusAI {
    * @returns {Promise<{ label: string, emoji: string, name: string, namePl: string, valence: number, arousal: number }>}
    */
   async getMood() {
-    const res = await fetch(`${this.baseUrl}/mood`, {
+    const res = await this._fetchWithTimeout(`${this.baseUrl}/mood`, {
       method: 'GET',
       headers: this._getHeaders(),
     });
@@ -406,7 +406,7 @@ export class NexusAI {
    * @param {string} persona
    */
   async switchServerPersona(persona) {
-    const res = await fetch(`${this.baseUrl}/persona/set`, {
+    const res = await this._fetchWithTimeout(`${this.baseUrl}/persona/set`, {
       method: 'POST',
       headers: this._getHeaders(),
       body: JSON.stringify({ persona }),
@@ -661,7 +661,7 @@ export class NexusAI {
    */
   async solveMath(input) {
     const expression = typeof input === 'string' ? input : input?.expression || input?.query || input?.prompt || '';
-    const res = await fetch(`${this.baseUrl}/math`, {
+    const res = await this._fetchWithTimeout(`${this.baseUrl}/math`, {
       method: 'POST',
       headers: this._getHeaders(),
       body: JSON.stringify({ expression }),
@@ -694,7 +694,7 @@ export class NexusAI {
    * @returns {Promise<{ text: string, count: number, entities: string[] }>}
    */
   async extractEntities(text) {
-    const res = await fetch(`${this.baseUrl}/entities`, {
+    const res = await this._fetchWithTimeout(`${this.baseUrl}/entities`, {
       method: 'POST',
       headers: this._getHeaders(),
       body: JSON.stringify({ text }),
@@ -716,7 +716,7 @@ export class NexusAI {
    */
   async searchWeb(options) {
     const opts = typeof options === 'string' ? { query: options } : options || {};
-    const res = await fetch(`${this.baseUrl}/web/search`, {
+    const res = await this._fetchWithTimeout(`${this.baseUrl}/web/search`, {
       method: 'POST',
       headers: this._getHeaders(),
       body: JSON.stringify({
@@ -724,7 +724,7 @@ export class NexusAI {
         provider: opts.provider || opts.engine || 'all',
         limit: opts.limit || 5,
       }),
-    });
+    }, 170000);
     return await this._parseResponse(res, 'Web Search API');
   }
 
@@ -756,7 +756,7 @@ export class NexusAI {
    */
   async infuseSwear(options) {
     const opts = typeof options === 'string' ? { text: options } : options || {};
-    const res = await fetch(`${this.baseUrl}/swear`, {
+    const res = await this._fetchWithTimeout(`${this.baseUrl}/swear`, {
       method: 'POST',
       headers: this._getHeaders(),
       body: JSON.stringify({
@@ -871,7 +871,7 @@ export class NexusAI {
     const url = category
       ? `${this.baseUrl}/documents?category=${encodeURIComponent(category)}`
       : `${this.baseUrl}/documents`;
-    const res = await fetch(url, {
+    const res = await this._fetchWithTimeout(url, {
       method: 'GET',
       headers: this._getHeaders(),
     });
@@ -903,7 +903,7 @@ export class NexusAI {
    */
   async searchDocuments(options) {
     const opts = typeof options === 'string' ? { query: options } : options || {};
-    const res = await fetch(`${this.baseUrl}/documents/search`, {
+    const res = await this._fetchWithTimeout(`${this.baseUrl}/documents/search`, {
       method: 'POST',
       headers: this._getHeaders(),
       body: JSON.stringify({ query: opts.query || opts.q, limit: opts.limit || opts.topK || 5 }),
@@ -928,7 +928,7 @@ export class NexusAI {
    * @param {string[]|string} [doc.keywords] - Search keywords
    */
   async addDocument({ title, content, category = 'custom-api-doc', keywords = [] }) {
-    const res = await fetch(`${this.baseUrl}/documents`, {
+    const res = await this._fetchWithTimeout(`${this.baseUrl}/documents`, {
       method: 'POST',
       headers: this._getHeaders(),
       body: JSON.stringify({ title, content, category, keywords }),
@@ -941,7 +941,7 @@ export class NexusAI {
    * @param {string} documentId
    */
   async deleteDocument(documentId) {
-    const res = await fetch(`${this.baseUrl}/documents/${encodeURIComponent(documentId)}`, {
+    const res = await this._fetchWithTimeout(`${this.baseUrl}/documents/${encodeURIComponent(documentId)}`, {
       method: 'DELETE',
       headers: this._getHeaders(),
     });
@@ -952,7 +952,7 @@ export class NexusAI {
    * Get knowledge corpus breakdown and categories.
    */
   async getCorpusStats() {
-    const res = await fetch(`${this.baseUrl}/corpus`, {
+    const res = await this._fetchWithTimeout(`${this.baseUrl}/corpus`, {
       method: 'GET',
       headers: this._getHeaders(),
     });
@@ -983,11 +983,11 @@ export class NexusAI {
    * }>}
    */
   async checkSecurity({ messageText = '', authorId = '', imageUrl = '', imageData = '' }) {
-    const res = await fetch(`${this.baseUrl}/raidshield`, {
+    const res = await this._fetchWithTimeout(`${this.baseUrl}/raidshield`, {
       method: 'POST',
       headers: this._getHeaders(),
       body: JSON.stringify({ messageText, authorId, imageUrl, imageData }),
-    });
+    }, 170000);
     return await this._parseResponse(res, 'RaidShield API');
   }
 
@@ -1015,11 +1015,11 @@ export class NexusAI {
    * @param {'general' | 'security'} [options.mode] - Scanner mode
    */
   async analyzeImage({ imageUrl = '', imageData = '', prompt = '', mode = 'general' }) {
-    const res = await fetch(`${this.baseUrl}/vision/analyze`, {
+    const res = await this._fetchWithTimeout(`${this.baseUrl}/vision/analyze`, {
       method: 'POST',
       headers: this._getHeaders(),
       body: JSON.stringify({ imageUrl, imageData, prompt, mode }),
-    });
+    }, 170000);
     return await this._parseResponse(res, 'Vision API');
   }
 
@@ -1038,7 +1038,7 @@ export class NexusAI {
    * List all supported strict rules and directives on the server.
    */
   async listSupportedRules() {
-    const res = await fetch(`${this.baseUrl}/sdk/rules`, {
+    const res = await this._fetchWithTimeout(`${this.baseUrl}/sdk/rules`, {
       method: 'GET',
       headers: this._getHeaders(),
     });
@@ -1053,7 +1053,7 @@ export class NexusAI {
    * @param {boolean} [options.isSuperChillUser] - VIP mode flag
    */
   async enforceRules({ text, rules, isSuperChillUser = false }) {
-    const res = await fetch(`${this.baseUrl}/sdk/rules/enforce`, {
+    const res = await this._fetchWithTimeout(`${this.baseUrl}/sdk/rules/enforce`, {
       method: 'POST',
       headers: this._getHeaders(),
       body: JSON.stringify({ text, rules, isSuperChillUser }),
@@ -1070,11 +1070,11 @@ export class NexusAI {
    * @param {Object} options
    */
   async generate(options = {}) {
-    const res = await fetch(`${this.baseUrl}/generate`, {
+    const res = await this._fetchWithTimeout(`${this.baseUrl}/generate`, {
       method: 'POST',
       headers: this._getHeaders(),
       body: JSON.stringify(options),
-    });
+    }, 170000);
     return await this._parseResponse(res, 'Generate API');
   }
 
@@ -1083,11 +1083,11 @@ export class NexusAI {
    * @param {Object} options
    */
   async chatCompletion(options = {}) {
-    const res = await fetch(`${this.baseUrl}/chat/completions`, {
+    const res = await this._fetchWithTimeout(`${this.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: this._getHeaders(),
       body: JSON.stringify(options),
-    });
+    }, 170000);
     return await this._parseResponse(res, 'Chat Completions API');
   }
 
@@ -1099,7 +1099,7 @@ export class NexusAI {
    * Verify API Key connection and authentication.
    */
   async verifyAuth() {
-    const res = await fetch(`${this.baseUrl}/auth/verify`, {
+    const res = await this._fetchWithTimeout(`${this.baseUrl}/auth/verify`, {
       method: 'GET',
       headers: this._getHeaders(),
     });
@@ -1110,7 +1110,7 @@ export class NexusAI {
    * List registered API keys.
    */
   async listKeys() {
-    const res = await fetch(`${this.baseUrl}/keys`, {
+    const res = await this._fetchWithTimeout(`${this.baseUrl}/keys`, {
       method: 'GET',
       headers: this._getHeaders(),
     });
@@ -1122,7 +1122,7 @@ export class NexusAI {
    * @param {string} [label]
    */
   async generateKey(label = 'discord_bot') {
-    const res = await fetch(`${this.baseUrl}/keys/generate`, {
+    const res = await this._fetchWithTimeout(`${this.baseUrl}/keys/generate`, {
       method: 'POST',
       headers: this._getHeaders(),
       body: JSON.stringify({ label }),
@@ -1138,7 +1138,7 @@ export class NexusAI {
    * @param {{ label?: string, status?: 'active'|'revoked', capabilities?: string[]|'latest' }} updates
    */
   async updateKey(key, updates = {}) {
-    const res = await fetch(`${this.baseUrl}/keys/${encodeURIComponent(key)}`, {
+    const res = await this._fetchWithTimeout(`${this.baseUrl}/keys/${encodeURIComponent(key)}`, {
       method: 'PATCH',
       headers: this._getHeaders(),
       body: JSON.stringify(updates),
@@ -1150,7 +1150,7 @@ export class NexusAI {
    * Check FIFO queue waitlist metrics.
    */
   async getQueueStatus() {
-    const res = await fetch(`${this.baseUrl}/queue/status`, {
+    const res = await this._fetchWithTimeout(`${this.baseUrl}/queue/status`, {
       method: 'GET',
       headers: this._getHeaders(),
     });
@@ -1163,7 +1163,7 @@ export class NexusAI {
    */
   async getHealth() {
     const rootUrl = this.baseUrl.replace(/\/v1$/, '');
-    const res = await fetch(`${rootUrl}/health`, {
+    const res = await this._fetchWithTimeout(`${rootUrl}/health`, {
       method: 'GET',
       headers: this._getHeaders(),
     });

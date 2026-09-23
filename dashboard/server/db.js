@@ -1,477 +1,97 @@
-import pg from 'pg'
-import dotenv from 'dotenv'
-import { fileURLToPath } from 'url'
-import { dirname, resolve } from 'path'
-import { getDocs, collection, doc, setDoc } from 'firebase/firestore'
-import { firestoreDb } from '../../src/utils/firestoreDatabase.js'
+// Dashboard data access — goes through the bot's OWN database layer (src/utils/database.js), so
+// the dashboard always reads and writes exactly what the bot reads and writes, on whichever backend
+// the bot is actually using (Firestore first, then PostgreSQL, then in-memory).
+//
+// This file used to open its own PostgreSQL pool and issue raw SQL against `guilds`/`temp_data`
+// tables, with an in-memory mock (seeded with a fake demo server) as a fallback. The bot, however,
+// uses Firestore as its primary store — so with a DATABASE_URL set, every dashboard save went into
+// Postgres tables the bot never read, and several mock-path saves silently matched no query at all.
+import {
+  db,
+  initializeDatabase,
+  getGuildConfig,
+  setGuildConfig,
+} from '../../src/utils/database.js'
+import { getReadyBotClient } from '../../src/utils/botRegistry.js'
 
-const __dirname = dirname(fileURLToPath(import.meta.url))
-dotenv.config({ path: resolve(__dirname, '../../.env') })
+let initPromise = null
 
-const { Pool } = pg
-const PUBLIC_PORT = 48953
-
-function buildConfig() {
-  const connectionUrl =
-    process.env.PITCLOUD_DATABASE_URL ||
-    process.env.PITCLOUD_URL ||
-    process.env.POSTGRES_PITCLOUD_URL ||
-    process.env.DATABASE_PUBLIC_URL ||
-    process.env.DATABASE_URL ||
-    process.env.POSTGRES_URL ||
-    process.env.DATABASE_PRIVATE_URL ||
-    process.env.POSTGRESQL_URL ||
-    process.env.NEON_URL
-
-  if (connectionUrl) {
-    try {
-      const u = new URL(connectionUrl)
-      const config = {
-        connectionString: connectionUrl,
-        host: u.hostname,
-        port: parseInt(u.port || '5432', 10),
-        database: u.pathname.replace(/^\//, '') || process.env.POSTGRES_DB || 'nexus',
-        user: decodeURIComponent(u.username),
-        password: decodeURIComponent(u.password),
-        ssl: { rejectUnauthorized: false },
-      }
-      return config
-    } catch (e) {
-      console.warn('⚠️ Could not parse connection URL:', e.message)
-    }
+async function ready() {
+  if (!db.initialized) {
+    initPromise ||= initializeDatabase()
+    await initPromise
   }
-
-  const pgHost = process.env.PGHOST
-  const pgUser = process.env.PGUSER
-  const pgPassword = process.env.PGPASSWORD
-  const pgDatabase = process.env.PGDATABASE
-  const pgPort = process.env.PGPORT
-
-  if (pgHost && pgUser && pgDatabase) {
-    const useSSL = process.env.POSTGRES_SSL === 'true'
-    const config = {
-      host: pgHost,
-      port: parseInt(pgPort || String(PUBLIC_PORT), 10),
-      database: pgDatabase,
-      user: pgUser,
-      password: pgPassword,
-      ssl: useSSL ? { rejectUnauthorized: false } : false,
-    }
-    return config
-  }
-
-  return null
+  return db
 }
 
-const config = buildConfig()
-let realPool = null
-if (config && config.host) {
-  try {
-    realPool = new Pool({
-      ...config,
-      max: 10,
-      idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 5000,
-    })
-    realPool.on('error', (err) => {
-      console.warn('DB pool background error (falling back to mock if needed):', err.message)
-    })
-  } catch (err) {
-    console.warn('Could not initialize PostgreSQL pool:', err.message)
-    realPool = null
+// getGuildConfig/setGuildConfig take a Discord client only to reach `client.db`.
+const dbClient = { get db() { return db } }
+
+export class DashboardDataError extends Error {
+  constructor(message, status = 500) {
+    super(message)
+    this.status = status
   }
 }
 
-// In-Memory Database Fallback
-const inMemoryData = {
-  guilds: new Map([
-    [
-      '123456789012345678',
-      {
-        id: '123456789012345678',
-        config: {
-          name: 'Nexus Community',
-          prefix: '!',
-          language: 'en',
-          timezone: 'UTC',
-          logChannelId: '123456789012345680',
-          logIgnore: { users: [], channels: [] },
-          ticketCategoryId: '123456789012345681',
-          ticketStaffRoleId: '123456789012345682',
-          maxTicketsPerUser: 3,
-          dmOnClose: true,
-          ticketLogging: { lifecycleChannelId: '123456789012345683', transcriptChannelId: '123456789012345684' },
-          verification: {
-            enabled: true,
-            channelId: '123456789012345685',
-            roleId: '123456789012345686',
-            buttonText: 'Verify Me',
-            message: 'Click the button below to verify yourself.',
-            autoVerify: { enabled: false, criteria: 'none', accountAgeDays: 7, roleId: '' }
-          },
-          raidShield: {
-            enabled: true,
-            notificationChannelId: '123456789012345687',
-            alertRoleId: '123456789012345688',
-            autoBan: false,
-            verifiedRoleId: '123456789012345686',
-            quarantineRoleId: '123456789012345689',
-            quarantineChannelId: '123456789012345690',
-            aiModeration: { enabled: true, sensitivity: 'medium' }
-          },
-          logging: {
-            enabled: true,
-            channelId: '123456789012345680',
-            enabledEvents: { 'moderation.ban': true, 'moderation.kick': true, 'member.join': true, 'ticket.create': true }
-          },
-          enabledCommands: {}
-        },
-        counters: { members: 1420, online: 382, channels: 28, roles: 14 },
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      }
-    ]
-  ]),
-  welcomeConfigs: new Map([
-    [
-      '123456789012345678',
-      {
-        guild_id: '123456789012345678',
-        config: {
-          enabled: true,
-          channelId: '123456789012345691',
-          welcomePing: true,
-          welcomeMessage: 'Welcome {user} to {server}!',
-          welcomeImage: '',
-          welcomeEmbed: {
-            title: 'Welcome!',
-            description: "We're glad you're here, {user}!",
-            color: '#7c6cf0',
-            thumbnail: true,
-            footer: 'Enjoy your stay'
-          },
-          goodbyeEnabled: true,
-          goodbyeChannelId: '123456789012345692',
-          leaveMessage: '{user.tag} has left the server.',
-          leaveEmbed: { color: '#ef4444' },
-          dmMessage: 'Welcome to the server! Read our rules in #rules.',
-          roleIds: ['123456789012345693'],
-          autoRoleDelay: 0
-        }
-      }
-    ]
-  ]),
-  tempData: new Map([
-    [
-      'bot:global:status',
-      {
-        value: {
-          status: 'online',
-          online: true,
-          guildCount: 1,
-          cachedGuilds: 1,
-          uptime: 7200,
-          ping: 18,
-          version: '1.1.1',
-          botUser: { id: '999888777666555444', username: 'Nexus Bot', tag: 'Nexus#0001', avatar: null },
-          system: { nodeVersion: process.version, memoryUsage: { heapUsed: 45 * 1024 * 1024, heapTotal: 90 * 1024 * 1024 } }
-        },
-        expires_at: null
-      }
-    ],
-    [
-      'guild:123456789012345678:jointocreate',
-      {
-        value: {
-          enabled: true,
-          categoryId: '123456789012345694',
-          triggerChannels: ['123456789012345695'],
-          channelNameTemplate: "{username}'s Room",
-          userLimit: 0,
-          bitrate: 64000
-        },
-        expires_at: null
-      }
-    ],
-    [
-      'guild:123456789012345678:applications:settings',
-      {
-        value: {
-          enabled: true,
-          applicationChannelId: '123456789012345696',
-          logChannelId: '123456789012345697',
-          questions: ['What is your age?', 'Why do you want to join staff?', 'What can you contribute to our team?'],
-          roles: { admin: '123456789012345682', reviewer: '123456789012345682', accepted: '123456789012345698', denied: '' },
-          requireVerification: true,
-          minAccountAge: 7,
-          maxApplications: 1,
-          cooldown: 24
-        },
-        expires_at: null
-      }
-    ],
-    [
-      'economy:123456789012345678:config',
-      {
-        value: {
-          enabled: true,
-          currencyName: 'Coins',
-          currencyEmoji: '🪙',
-          dailyAmount: 100,
-          dailyStreakBonus: 10,
-          packs: [
-            {
-              id: 'starter_pack',
-              name: 'Starter Pack',
-              emoji: '📦',
-              description: 'A modest pack to get you started',
-              price: 100,
-              rewards: [
-                { type: 'coins', amount: 50, chance: 60, label: '50 coins' },
-                { type: 'coins', amount: 150, chance: 30, label: '150 coins' },
-                { type: 'coins', amount: 300, chance: 10, label: '300 coins' }
-              ]
-            }
-          ]
-        },
-        expires_at: null
-      }
-    ]
-  ])
+export async function getValue(key, defaultValue = {}) {
+  await ready()
+  const value = await db.get(key, null)
+  return value ?? defaultValue
 }
 
-let mockWarned = false
-function logMockNotice() {
-  if (!mockWarned) {
-    console.log('🗄️ In-Memory DB active with default guild seed (PostgreSQL not connected).')
-    mockWarned = true
-  }
+export async function setValue(key, value) {
+  await ready()
+  const ok = await db.set(key, value)
+  if (ok === false) throw new DashboardDataError('Database write failed', 503)
+  return value
 }
 
-async function handleMockQuery(text, params = []) {
-  logMockNotice()
-  const trimmed = text.trim()
-
-  // 1. SELECT id, config, counters, created_at, updated_at FROM guilds ORDER BY created_at DESC
-  if (trimmed.startsWith('SELECT id, config, counters, created_at, updated_at FROM guilds')) {
-    if (firestoreDb.isAvailable()) {
-      try {
-        const snap = await getDocs(collection(firestoreDb.db, 'guilds'));
-        snap.forEach(docSnap => {
-          const data = docSnap.data();
-          const id = docSnap.id;
-          const conf = (data && 'value' in data && typeof data.value === 'object' && data.value !== null) ? data.value : data;
-          inMemoryData.guilds.set(id, {
-            id,
-            config: conf || {},
-            counters: data?.counters || conf?.counters || conf?.serverStats || { members: 0, online: 0, channels: 0, roles: 0 },
-            created_at: data?.createdAt || new Date().toISOString(),
-            updated_at: data?.updatedAt || new Date().toISOString()
-          });
-        });
-      } catch (err) {
-        console.warn('Firestore guild fetch failed:', err.message);
-      }
-    }
-    const rows = Array.from(inMemoryData.guilds.values())
-    return { rows, rowCount: rows.length }
-  }
-
-  // 2. INSERT INTO guilds (id, config) VALUES ($1, '{}') ON CONFLICT (id) DO NOTHING
-  if (trimmed.startsWith('INSERT INTO guilds (id, config)')) {
-    const id = params[0]
-    if (!inMemoryData.guilds.has(id)) {
-      inMemoryData.guilds.set(id, {
-        id,
-        config: {},
-        counters: { members: 0, online: 0, channels: 0, roles: 0 },
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      })
-      if (firestoreDb.isAvailable()) {
-        await firestoreDb.set(`guild:${id}:config`, {}).catch(() => null);
-      }
-    }
-    return { rows: [], rowCount: 1 }
-  }
-
-  // 3. INSERT INTO welcome_configs (guild_id, config) VALUES ($1, '{}') ON CONFLICT (guild_id) DO NOTHING
-  if (trimmed.startsWith('INSERT INTO welcome_configs')) {
-    const guildId = params[0]
-    if (!inMemoryData.welcomeConfigs.has(guildId)) {
-      inMemoryData.welcomeConfigs.set(guildId, {
-        guild_id: guildId,
-        config: {}
-      })
-      if (firestoreDb.isAvailable()) {
-        await firestoreDb.set(`guild:${guildId}:welcome`, {}).catch(() => null);
-      }
-    }
-    return { rows: [], rowCount: 1 }
-  }
-
-  // 4. SELECT value FROM temp_data WHERE key = $1 ...
-  if (trimmed.startsWith('SELECT value FROM temp_data WHERE key =')) {
-    const key = params[0] || (trimmed.includes("'bot:global:status'") ? 'bot:global:status' : '')
-    if (firestoreDb.isAvailable()) {
-      const fsVal = await firestoreDb.get(key, null);
-      if (fsVal !== null) {
-        return { rows: [{ value: fsVal }], rowCount: 1 };
-      }
-    }
-    const item = inMemoryData.tempData.get(key)
-    if (item && (!item.expires_at || new Date(item.expires_at) > new Date())) {
-      return { rows: [{ value: item.value }], rowCount: 1 }
-    }
-    return { rows: [], rowCount: 0 }
-  }
-
-  // 5. INSERT INTO temp_data (key, value) VALUES ...
-  if (trimmed.startsWith('INSERT INTO temp_data')) {
-    let key = params[0]
-    let value = params[1]
-    if (trimmed.includes("'bot:global:status'")) {
-      key = 'bot:global:status'
-      value = params[0]
-    }
-    const parsedValue = typeof value === 'string' ? JSON.parse(value) : value
-    inMemoryData.tempData.set(key, { value: parsedValue, expires_at: null })
-    if (firestoreDb.isAvailable()) {
-      await firestoreDb.set(key, parsedValue).catch(() => null);
-    }
-    return { rows: [], rowCount: 1 }
-  }
-
-  // 6. SELECT config FROM guilds WHERE id = $1
-  if (trimmed.startsWith('SELECT config FROM guilds WHERE id =')) {
-    const guildId = params[0];
-    if (firestoreDb.isAvailable()) {
-      const fsConfig = await firestoreDb.get(`guild:${guildId}:config`, null);
-      if (fsConfig) {
-        return { rows: [{ config: fsConfig }], rowCount: 1 };
-      }
-    }
-    const guild = inMemoryData.guilds.get(guildId)
-    if (guild) {
-      return { rows: [{ config: guild.config }], rowCount: 1 }
-    }
-    return { rows: [], rowCount: 0 }
-  }
-
-  // 7. UPDATE guilds SET config = config || $2::jsonb, updated_at = NOW() WHERE id = $1 RETURNING config
-  if (trimmed.startsWith('UPDATE guilds SET config = config ||')) {
-    const guildId = params[0]
-    const patch = typeof params[1] === 'string' ? JSON.parse(params[1]) : params[1]
-    let guild = inMemoryData.guilds.get(guildId)
-    if (!guild) {
-      guild = { id: guildId, config: {}, counters: {}, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }
-      inMemoryData.guilds.set(guildId, guild)
-    }
-    guild.config = { ...(guild.config || {}), ...patch }
-    guild.updated_at = new Date().toISOString()
-    if (firestoreDb.isAvailable()) {
-      await firestoreDb.set(`guild:${guildId}:config`, guild.config).catch(() => null);
-    }
-    return { rows: [{ config: guild.config }], rowCount: 1 }
-  }
-
-  // 8. SELECT config FROM welcome_configs WHERE guild_id = $1
-  if (trimmed.startsWith('SELECT config FROM welcome_configs WHERE guild_id =')) {
-    const guildId = params[0];
-    if (firestoreDb.isAvailable()) {
-      const fsWelcome = await firestoreDb.get(`guild:${guildId}:welcome`, null);
-      if (fsWelcome) {
-        return { rows: [{ config: fsWelcome }], rowCount: 1 };
-      }
-    }
-    const wc = inMemoryData.welcomeConfigs.get(guildId)
-    if (wc) {
-      return { rows: [{ config: wc.config }], rowCount: 1 }
-    }
-    return { rows: [], rowCount: 0 }
-  }
-
-  // 9. UPDATE welcome_configs SET config = config || $2::jsonb, updated_at = NOW() WHERE guild_id = $1 RETURNING config
-  if (trimmed.startsWith('UPDATE welcome_configs SET config = config ||')) {
-    const guildId = params[0]
-    const patch = typeof params[1] === 'string' ? JSON.parse(params[1]) : params[1]
-    let wc = inMemoryData.welcomeConfigs.get(guildId)
-    if (!wc) {
-      wc = { guild_id: guildId, config: {} }
-      inMemoryData.welcomeConfigs.set(guildId, wc)
-    }
-    wc.config = { ...(wc.config || {}), ...patch }
-    if (firestoreDb.isAvailable()) {
-      await firestoreDb.set(`guild:${guildId}:welcome`, wc.config).catch(() => null);
-    }
-    return { rows: [{ config: wc.config }], rowCount: 1 }
-  }
-
-  // 10. SELECT config->'leveling' AS leveling FROM guilds WHERE id = $1
-  if (trimmed.includes("config->'leveling' AS leveling FROM guilds WHERE id =")) {
-    const guildId = params[0];
-    if (firestoreDb.isAvailable()) {
-      const fsLeveling = await firestoreDb.get(`guild:${guildId}:leveling:config`, null);
-      if (fsLeveling) {
-        return { rows: [{ leveling: fsLeveling }], rowCount: 1 };
-      }
-    }
-    const guild = inMemoryData.guilds.get(guildId)
-    return { rows: [{ leveling: guild?.config?.leveling || {} }], rowCount: guild ? 1 : 0 }
-  }
-
-  // 11. UPDATE guilds SET config = jsonb_set(config, '{leveling}', $2::jsonb) ...
-  if (trimmed.includes("jsonb_set(config, '{leveling}'")) {
-    const guildId = params[0]
-    const leveling = typeof params[1] === 'string' ? JSON.parse(params[1]) : params[1]
-    let guild = inMemoryData.guilds.get(guildId)
-    if (!guild) {
-      guild = { id: guildId, config: {}, counters: {}, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }
-      inMemoryData.guilds.set(guildId, guild)
-    }
-    guild.config = { ...(guild.config || {}), leveling }
-    guild.updated_at = new Date().toISOString()
-    if (firestoreDb.isAvailable()) {
-      await firestoreDb.set(`guild:${guildId}:leveling:config`, leveling).catch(() => null);
-      await firestoreDb.set(`guild:${guildId}:config`, guild.config).catch(() => null);
-    }
-    return { rows: [{ leveling }], rowCount: 1 }
-  }
-
-  return { rows: [], rowCount: 0 }
+/** Shallow-merges `patch` into the object stored at `key` and returns the merged result. */
+export async function patchValue(key, patch) {
+  const current = await getValue(key, {})
+  const merged = { ...(current && typeof current === 'object' ? current : {}), ...(patch || {}) }
+  return setValue(key, merged)
 }
 
-const pool = {
-  query: async (text, params = []) => {
-    if (realPool) {
-      try {
-        return await realPool.query(text, params)
-      } catch (err) {
-        // Fallback to in-memory on connection or database error
-        return await handleMockQuery(text, params)
-      }
-    }
-    return await handleMockQuery(text, params)
-  },
-  connect: async () => {
-    if (realPool) {
-      try {
-        return await realPool.connect()
-      } catch (err) {
-        return {
-          query: async (text, params = []) => await handleMockQuery(text, params),
-          release: () => {}
-        }
-      }
-    }
-    return {
-      query: async (text, params = []) => await handleMockQuery(text, params),
-      release: () => {}
-    }
-  },
-  on: (event, handler) => {
-    if (realPool) realPool.on(event, handler)
-  }
+export async function getGuildConfigData(guildId) {
+  await ready()
+  return getGuildConfig(dbClient, guildId)
 }
 
-export default pool
+/** Top-level merge into the guild config, validated by the bot's own config schema. */
+export async function patchGuildConfig(guildId, patch) {
+  await ready()
+  const ok = await setGuildConfig(dbClient, guildId, patch || {})
+  if (!ok) {
+    throw new DashboardDataError('Configuration rejected — check the values and try again.', 400)
+  }
+  return getGuildConfig(dbClient, guildId)
+}
+
+/**
+ * Servers to show in the dashboard's selector. Prefers the live bot client (real names, and only
+ * servers the bot is actually in); falls back to guilds that have a stored config.
+ */
+export async function listGuilds() {
+  await ready()
+  const client = getReadyBotClient()
+  if (client) {
+    return Array.from(client.guilds.cache.values())
+      .map((guild) => ({
+        id: guild.id,
+        name: guild.name,
+        icon: guild.iconURL?.() || null,
+        memberCount: guild.memberCount ?? null,
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name))
+  }
+
+  const keys = await db.list('guild:').catch(() => [])
+  const ids = new Set()
+  for (const key of keys) {
+    const match = /^guild:(\d{5,25}):config$/.exec(key)
+    if (match) ids.add(match[1])
+  }
+  return Array.from(ids).map((id) => ({ id, name: null, icon: null, memberCount: null }))
+}

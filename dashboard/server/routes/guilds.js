@@ -1,5 +1,24 @@
 import { Router } from 'express'
-import pool from '../db.js'
+import {
+  getValue,
+  patchValue,
+  getGuildConfigData,
+  patchGuildConfig,
+  listGuilds,
+  setValue,
+} from '../db.js'
+import {
+  getWelcomeConfig,
+  updateWelcomeConfig,
+  getLevelingConfig,
+  saveLevelingConfig,
+  getJoinToCreateConfig,
+  updateJoinToCreateConfig,
+  getApplicationSettings,
+  saveApplicationSettings,
+  db as botDb,
+} from '../../../src/utils/database.js'
+import { getReadyBotClient } from '../../../src/utils/botRegistry.js'
 import {
   getAllMatches,
   syncBarcelonaFixturesFromApi,
@@ -12,44 +31,44 @@ import {
 
 const router = Router()
 
-const BOT_INTERNAL_URL = process.env.BOT_INTERNAL_URL || 'http://localhost:3000'
+// The database helpers above take a Discord client only to reach `client.db`.
+const dbClient = { get db() { return botDb } }
 
-async function notifyBot(path, body = {}) {
-  try {
-    const res = await fetch(`${BOT_INTERNAL_URL}${path}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(3000),
-    })
-    if (!res.ok) console.warn(`Bot notify ${path} responded ${res.status}`)
-  } catch (err) {
-    console.warn(`Bot notify ${path} failed (bot may not be running):`, err.message)
+const ALLOWED_STATUSES = ['online', 'idle', 'dnd', 'invisible']
+const FOOTBALL_DEFAULTS = { enabled: false, channelId: null, roleId: null, postedMatches: [], customMatches: [] }
+
+// Every :guildId in this router is a Discord snowflake — rejecting anything else up front keeps
+// arbitrary strings out of database keys.
+router.param('guildId', (req, res, next, guildId) => {
+  if (guildId === 'global') return next()
+  if (!/^\d{5,25}$/.test(guildId)) return res.status(400).json({ error: 'Invalid server id' })
+  next()
+})
+
+function requireObjectBody(req, res) {
+  if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)) {
+    res.status(400).json({ error: 'Expected a JSON object body' })
+    return null
   }
+  return req.body
 }
 
-async function ensureGuild(guildId) {
-  await pool.query(
-    `INSERT INTO guilds (id, config) VALUES ($1, '{}') ON CONFLICT (id) DO NOTHING`,
-    [guildId]
-  )
-}
-
-async function ensureWelcome(guildId) {
-  await pool.query(
-    `INSERT INTO welcome_configs (guild_id, config) VALUES ($1, '{}') ON CONFLICT (guild_id) DO NOTHING`,
-    [guildId]
-  )
+/** Applies a presence change to the live bot right away (the 5-minute DB poll is the fallback). */
+function applyBotStatus(status) {
+  const client = getReadyBotClient()
+  if (!client) return
+  try {
+    client.user.setPresence({ status, activities: client.config?.bot?.presence?.activities })
+  } catch (err) {
+    console.warn('Could not update bot presence from dashboard:', err.message)
+  }
 }
 
 router.get('/', async (_req, res) => {
   try {
-    const result = await pool.query(
-      `SELECT id, config, counters, created_at, updated_at FROM guilds ORDER BY created_at DESC`
-    )
-    res.json(result.rows)
+    res.json(await listGuilds())
   } catch (err) {
-    console.error('DB error listing guilds:', err.message)
+    console.error('Error listing guilds:', err.message)
     res.status(503).json({ error: 'Database unavailable', detail: err.message })
   }
 })
@@ -57,17 +76,12 @@ router.get('/', async (_req, res) => {
 // Global bot status — must be registered before /:guildId routes to avoid param capture
 router.put('/global/status', async (req, res, next) => {
   try {
-    const { status } = req.body
-    const allowed = ['online', 'idle', 'dnd', 'invisible']
-    if (!status || !allowed.includes(status)) {
+    const { status } = req.body || {}
+    if (!status || !ALLOWED_STATUSES.includes(status)) {
       return res.status(400).json({ error: 'Invalid status' })
     }
-    await pool.query(
-      `INSERT INTO temp_data (key, value) VALUES ('bot:global:status', $1::jsonb)
-       ON CONFLICT (key) DO UPDATE SET value = $1::jsonb, expires_at = NULL`,
-      [JSON.stringify({ status })]
-    )
-    notifyBot('/api/internal/status', { status })
+    await setValue('bot:global:status', { status })
+    applyBotStatus(status)
     res.json({ ok: true, status })
   } catch (err) {
     next(err)
@@ -76,11 +90,8 @@ router.put('/global/status', async (req, res, next) => {
 
 router.get('/global/status', async (_req, res, next) => {
   try {
-    const result = await pool.query(
-      `SELECT value FROM temp_data WHERE key = 'bot:global:status'`
-    )
-    const status = result.rows[0]?.value?.status || null
-    res.json({ status })
+    const stored = await getValue('bot:global:status', null)
+    res.json({ status: stored?.status || null })
   } catch (err) {
     next(err)
   }
@@ -88,10 +99,7 @@ router.get('/global/status', async (_req, res, next) => {
 
 router.get('/:guildId/config', async (req, res, next) => {
   try {
-    const { guildId } = req.params
-    const result = await pool.query(`SELECT config FROM guilds WHERE id = $1`, [guildId])
-    if (!result.rows || result.rows.length === 0) return res.json({})
-    res.json(result.rows[0]?.config || {})
+    res.json(await getGuildConfigData(req.params.guildId))
   } catch (err) {
     next(err)
   }
@@ -99,20 +107,12 @@ router.get('/:guildId/config', async (req, res, next) => {
 
 router.put('/:guildId/config', async (req, res, next) => {
   try {
-    const { guildId } = req.params
-    const patch = req.body
-
-    const { botStatus, ...guildPatch } = patch
-
-    await ensureGuild(guildId)
-    const result = await pool.query(
-      `UPDATE guilds
-       SET config = config || $2::jsonb, updated_at = NOW()
-       WHERE id = $1
-       RETURNING config`,
-      [guildId, JSON.stringify(guildPatch)]
-    )
-    res.json(result.rows[0]?.config || {})
+    const body = requireObjectBody(req, res)
+    if (!body) return
+    const { botStatus, ...guildPatch } = body
+    const config = await patchGuildConfig(req.params.guildId, guildPatch)
+    if (botStatus && ALLOWED_STATUSES.includes(botStatus)) applyBotStatus(botStatus)
+    res.json(config)
   } catch (err) {
     next(err)
   }
@@ -120,10 +120,7 @@ router.put('/:guildId/config', async (req, res, next) => {
 
 router.get('/:guildId/welcome', async (req, res, next) => {
   try {
-    const { guildId } = req.params
-    const result = await pool.query(`SELECT config FROM welcome_configs WHERE guild_id = $1`, [guildId])
-    if (!result.rows || result.rows.length === 0) return res.json({})
-    res.json(result.rows[0]?.config || {})
+    res.json(await getWelcomeConfig(dbClient, req.params.guildId))
   } catch (err) {
     next(err)
   }
@@ -131,18 +128,10 @@ router.get('/:guildId/welcome', async (req, res, next) => {
 
 router.put('/:guildId/welcome', async (req, res, next) => {
   try {
-    const { guildId } = req.params
-    const patch = req.body
-    await ensureWelcome(guildId)
-    const result = await pool.query(
-      `UPDATE welcome_configs
-       SET config = config || $2::jsonb, updated_at = NOW()
-       WHERE guild_id = $1
-       RETURNING config`,
-      [guildId, JSON.stringify(patch)]
-    )
-    notifyBot('/api/internal/config-update', { guildId, config: { welcome: patch } })
-    res.json(result.rows[0]?.config || {})
+    const body = requireObjectBody(req, res)
+    if (!body) return
+    await getGuildConfigData(req.params.guildId) // ensures the database is initialized
+    res.json(await updateWelcomeConfig(dbClient, req.params.guildId, body))
   } catch (err) {
     next(err)
   }
@@ -150,10 +139,8 @@ router.put('/:guildId/welcome', async (req, res, next) => {
 
 router.get('/:guildId/leveling', async (req, res, next) => {
   try {
-    const { guildId } = req.params
-    const result = await pool.query(`SELECT config->'leveling' AS leveling FROM guilds WHERE id = $1`, [guildId])
-    if (!result.rows || result.rows.length === 0) return res.json({})
-    res.json(result.rows[0]?.leveling || {})
+    await getGuildConfigData(req.params.guildId)
+    res.json(await getLevelingConfig(dbClient, req.params.guildId))
   } catch (err) {
     next(err)
   }
@@ -161,21 +148,14 @@ router.get('/:guildId/leveling', async (req, res, next) => {
 
 router.put('/:guildId/leveling', async (req, res, next) => {
   try {
-    const { guildId } = req.params
-    const patch = req.body
-    await ensureGuild(guildId)
-    const existing = await pool.query(`SELECT config->'leveling' AS leveling FROM guilds WHERE id = $1`, [guildId])
-    const current = existing.rows[0]?.leveling || {}
-    const merged = { ...current, ...patch }
-    const result = await pool.query(
-      `UPDATE guilds
-       SET config = jsonb_set(config, '{leveling}', $2::jsonb), updated_at = NOW()
-       WHERE id = $1
-       RETURNING config->'leveling' AS leveling`,
-      [guildId, JSON.stringify(merged)]
-    )
-    notifyBot('/api/internal/config-update', { guildId, config: { leveling: merged } })
-    res.json(result.rows[0].leveling)
+    const body = requireObjectBody(req, res)
+    if (!body) return
+    await getGuildConfigData(req.params.guildId)
+    const current = await getLevelingConfig(dbClient, req.params.guildId)
+    const merged = { ...current, ...body }
+    const ok = await saveLevelingConfig(dbClient, req.params.guildId, merged)
+    if (!ok) return res.status(503).json({ error: 'Database write failed' })
+    res.json(merged)
   } catch (err) {
     next(err)
   }
@@ -183,13 +163,8 @@ router.put('/:guildId/leveling', async (req, res, next) => {
 
 router.get('/:guildId/joinToCreate', async (req, res, next) => {
   try {
-    const { guildId } = req.params
-    const key = `guild:${guildId}:jointocreate`
-    const result = await pool.query(
-      `SELECT value FROM temp_data WHERE key = $1 AND (expires_at IS NULL OR expires_at > NOW())`,
-      [key]
-    )
-    res.json(result.rows.length > 0 ? result.rows[0].value : {})
+    await getGuildConfigData(req.params.guildId)
+    res.json(await getJoinToCreateConfig(dbClient, req.params.guildId))
   } catch (err) {
     next(err)
   }
@@ -197,21 +172,11 @@ router.get('/:guildId/joinToCreate', async (req, res, next) => {
 
 router.put('/:guildId/joinToCreate', async (req, res, next) => {
   try {
-    const { guildId } = req.params
-    const key = `guild:${guildId}:jointocreate`
-    const patch = req.body
-    const existing = await pool.query(
-      `SELECT value FROM temp_data WHERE key = $1 AND (expires_at IS NULL OR expires_at > NOW())`,
-      [key]
-    )
-    const current = existing.rows.length > 0 ? existing.rows[0].value : {}
-    const merged = { ...current, ...patch }
-    await pool.query(
-      `INSERT INTO temp_data (key, value) VALUES ($1, $2::jsonb)
-       ON CONFLICT (key) DO UPDATE SET value = $2::jsonb, expires_at = NULL`,
-      [key, JSON.stringify(merged)]
-    )
-    res.json(merged)
+    const body = requireObjectBody(req, res)
+    if (!body) return
+    await getGuildConfigData(req.params.guildId)
+    await updateJoinToCreateConfig(dbClient, req.params.guildId, body)
+    res.json(await getJoinToCreateConfig(dbClient, req.params.guildId))
   } catch (err) {
     next(err)
   }
@@ -219,13 +184,8 @@ router.put('/:guildId/joinToCreate', async (req, res, next) => {
 
 router.get('/:guildId/applications', async (req, res, next) => {
   try {
-    const { guildId } = req.params
-    const key = `guild:${guildId}:applications:settings`
-    const result = await pool.query(
-      `SELECT value FROM temp_data WHERE key = $1 AND (expires_at IS NULL OR expires_at > NOW())`,
-      [key]
-    )
-    res.json(result.rows.length > 0 ? result.rows[0].value : {})
+    await getGuildConfigData(req.params.guildId)
+    res.json(await getApplicationSettings(dbClient, req.params.guildId))
   } catch (err) {
     next(err)
   }
@@ -233,21 +193,12 @@ router.get('/:guildId/applications', async (req, res, next) => {
 
 router.put('/:guildId/applications', async (req, res, next) => {
   try {
-    const { guildId } = req.params
-    const key = `guild:${guildId}:applications:settings`
-    const patch = req.body
-    const existing = await pool.query(
-      `SELECT value FROM temp_data WHERE key = $1 AND (expires_at IS NULL OR expires_at > NOW())`,
-      [key]
-    )
-    const current = existing.rows.length > 0 ? existing.rows[0].value : {}
-    const merged = { ...current, ...patch }
-    await pool.query(
-      `INSERT INTO temp_data (key, value) VALUES ($1, $2::jsonb)
-       ON CONFLICT (key) DO UPDATE SET value = $2::jsonb, expires_at = NULL`,
-      [key, JSON.stringify(merged)]
-    )
-    res.json(merged)
+    const body = requireObjectBody(req, res)
+    if (!body) return
+    await getGuildConfigData(req.params.guildId)
+    const ok = await saveApplicationSettings(dbClient, req.params.guildId, body)
+    if (!ok) return res.status(503).json({ error: 'Database write failed' })
+    res.json(await getApplicationSettings(dbClient, req.params.guildId))
   } catch (err) {
     next(err)
   }
@@ -255,13 +206,7 @@ router.put('/:guildId/applications', async (req, res, next) => {
 
 router.get('/:guildId/economy', async (req, res, next) => {
   try {
-    const { guildId } = req.params
-    const key = `economy:${guildId}:config`
-    const result = await pool.query(
-      `SELECT value FROM temp_data WHERE key = $1 AND (expires_at IS NULL OR expires_at > NOW())`,
-      [key]
-    )
-    res.json(result.rows.length > 0 ? result.rows[0].value : {})
+    res.json(await getValue(`economy:${req.params.guildId}:config`, {}))
   } catch (err) {
     next(err)
   }
@@ -269,22 +214,9 @@ router.get('/:guildId/economy', async (req, res, next) => {
 
 router.put('/:guildId/economy', async (req, res, next) => {
   try {
-    const { guildId } = req.params
-    const key = `economy:${guildId}:config`
-    const patch = req.body
-    const existing = await pool.query(
-      `SELECT value FROM temp_data WHERE key = $1 AND (expires_at IS NULL OR expires_at > NOW())`,
-      [key]
-    )
-    const current = existing.rows.length > 0 ? existing.rows[0].value : {}
-    const merged = { ...current, ...patch }
-    await pool.query(
-      `INSERT INTO temp_data (key, value) VALUES ($1, $2::jsonb)
-       ON CONFLICT (key) DO UPDATE SET value = $2::jsonb, expires_at = NULL`,
-      [key, JSON.stringify(merged)]
-    )
-    notifyBot('/api/internal/config-update', { guildId, config: { economy: merged } })
-    res.json(merged)
+    const body = requireObjectBody(req, res)
+    if (!body) return
+    res.json(await patchValue(`economy:${req.params.guildId}:config`, body))
   } catch (err) {
     next(err)
   }
@@ -292,10 +224,8 @@ router.put('/:guildId/economy', async (req, res, next) => {
 
 router.get('/:guildId/football', async (req, res, next) => {
   try {
-    const { guildId } = req.params
-    const result = await pool.query(`SELECT config->'football' AS football FROM guilds WHERE id = $1`, [guildId])
-    if (result.rows.length === 0) return res.json({ enabled: false, channelId: null, roleId: null, postedMatches: [], customMatches: [] })
-    res.json(result.rows[0].football || { enabled: false, channelId: null, roleId: null, postedMatches: [], customMatches: [] })
+    const config = await getGuildConfigData(req.params.guildId)
+    res.json({ ...FOOTBALL_DEFAULTS, ...(config.football || {}) })
   } catch (err) {
     next(err)
   }
@@ -303,21 +233,11 @@ router.get('/:guildId/football', async (req, res, next) => {
 
 router.put('/:guildId/football', async (req, res, next) => {
   try {
-    const { guildId } = req.params
-    const patch = req.body
-    await ensureGuild(guildId)
-    const existing = await pool.query(`SELECT config->'football' AS football FROM guilds WHERE id = $1`, [guildId])
-    const current = existing.rows[0]?.football || {}
-    const merged = { ...current, ...patch }
-    const result = await pool.query(
-      `UPDATE guilds
-       SET config = jsonb_set(config, '{football}', $2::jsonb), updated_at = NOW()
-       WHERE id = $1
-       RETURNING config->'football' AS football`,
-      [guildId, JSON.stringify(merged)]
-    )
-    notifyBot('/api/internal/config-update', { guildId, config: { football: merged } })
-    res.json(result.rows[0].football)
+    const body = requireObjectBody(req, res)
+    if (!body) return
+    const current = (await getGuildConfigData(req.params.guildId)).football || {}
+    const updated = await patchGuildConfig(req.params.guildId, { football: { ...current, ...body } })
+    res.json({ ...FOOTBALL_DEFAULTS, ...(updated.football || {}) })
   } catch (err) {
     next(err)
   }
@@ -326,8 +246,7 @@ router.put('/:guildId/football', async (req, res, next) => {
 router.get('/:guildId/football/matches', async (req, res, next) => {
   try {
     const { guildId } = req.params
-    const existing = await pool.query(`SELECT config->'football' AS football FROM guilds WHERE id = $1`, [guildId])
-    const footballCfg = existing.rows[0]?.football || {}
+    const footballCfg = (await getGuildConfigData(guildId)).football || {}
     const customMatches = footballCfg.customMatches || []
     const matches = getAllMatches(customMatches)
     const status = getFootballApiStatus()
@@ -351,6 +270,7 @@ router.post('/:guildId/football/sync', async (_req, res, next) => {
 router.get('/:guildId/counters', async (req, res, next) => {
   try {
     const { guildId } = req.params
+    await getGuildConfigData(guildId) // ensures the database is initialized
     const counters = await getServerCounters(null, guildId)
     res.json(counters)
   } catch (err) {
@@ -362,8 +282,8 @@ router.put('/:guildId/counters', async (req, res, next) => {
   try {
     const { guildId } = req.params
     const counters = Array.isArray(req.body) ? req.body : (req.body?.counters || [])
+    await getGuildConfigData(guildId) // ensures the database is initialized
     await saveServerCounters(null, guildId, counters)
-    notifyBot('/api/internal/config-update', { guildId, config: { counters, serverStats: counters } })
     res.json({ ok: true, counters })
   } catch (err) {
     next(err)
@@ -373,6 +293,7 @@ router.put('/:guildId/counters', async (req, res, next) => {
 router.get('/:guildId/serverstats', async (req, res, next) => {
   try {
     const { guildId } = req.params
+    await getGuildConfigData(guildId) // ensures the database is initialized
     const counters = await getServerCounters(null, guildId)
     res.json({ enabled: counters.length > 0, counters })
   } catch (err) {
@@ -384,8 +305,8 @@ router.put('/:guildId/serverstats', async (req, res, next) => {
   try {
     const { guildId } = req.params
     const counters = Array.isArray(req.body) ? req.body : (req.body?.counters || [])
+    await getGuildConfigData(guildId) // ensures the database is initialized
     await saveServerCounters(null, guildId, counters)
-    notifyBot('/api/internal/config-update', { guildId, config: { counters, serverStats: counters } })
     res.json({ ok: true, enabled: counters.length > 0, counters })
   } catch (err) {
     next(err)

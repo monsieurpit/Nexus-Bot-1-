@@ -3,7 +3,9 @@ dotenv.config();
 import { logger } from '../utils/logger.js';
 import { NexusAI } from '../../nexus-ai.js';
 import { getUserMemories, saveUserMemory } from './memoryBrainService.js';
-import { getChannelHistory, recordChannelMessage } from './channelHistoryService.js';
+import { getChannelHistory, recordChannelMessage, clearChannelHistory } from './channelHistoryService.js';
+import { logTelemetry, logCrash, logPersonaTrigger } from './aiTelemetryService.js';
+import { PermissionFlagsBits } from 'discord.js';
 
 // Talks to your real, deployed Nexus AI engine — the same custom engine that lives in the
 // Nexus-AI- repo (footballIntelligence.ts, bm25Engine.ts, reasoningEngine.ts, etc.), instead of
@@ -97,33 +99,28 @@ function generateOfflineFallbackResponse(question, userContext) {
 }
 
 /**
- * Sends a question to the real Nexus AI engine and returns plain text.
- * Falls back to the minimal offline response if the remote API call fails.
+ * Sends a question to the real Nexus AI engine and returns the full result: the reply text, the
+ * raw API payload (for telemetry), how long it took, and — when the real call failed — the error
+ * plus the minimal offline fallback text to show instead.
  *
  * Cross-conversation memory (favorite team, preferred name, etc. — persisted per Discord user
- * between separate messages) is wired in here when `userContext.client` is provided: this was
- * previously a completely dead feature — the engine's /api/v1/nexus endpoint has real logic to
- * recall stored facts (a "what do you remember about me" path) and already returns a `newMemory`
- * field whenever it extracts something new to remember, and memoryBrainService.js already had
- * working get/save functions for exactly this — but nothing on this side ever actually called
- * either of them, so the engine's own memory recall logic could never fire for any Discord user.
- * Passing `client` is optional and backward compatible: any other caller of askNexusAi that
- * doesn't provide one just skips memory loading/saving, same as before this change.
+ * between separate messages) is wired in here when `userContext.client` is provided. Passing
+ * `client` is optional: any caller that doesn't provide one just skips memory loading/saving.
  */
-export async function askNexusAi(question, userContext = {}) {
+async function requestNexusReply(question, userContext = {}) {
   const isSuperChillUser = userContext.userId === '1394001641899954368' || Boolean(userContext.isSuperChillUser);
   const hasMemoryAccess = Boolean(userContext.client && userContext.userId);
+  const startedAt = Date.now();
 
   try {
     const memories = hasMemoryAccess
       ? await getUserMemories(userContext.client, userContext.userId)
       : [];
     // Nexus's "brain" — channelHistoryService.js's rolling per-channel buffer, recorded on EVERY
-    // message in messageCreate.js (not just ones addressed to Nexus). Before this, `history` was
-    // never populated at all: every question got answered with zero conversation context, no
-    // matter how good the AI engine's own follow-up/entity-tracking logic was on the other end —
-    // it simply never received anything to work with.
-    const history = userContext.channelId ? getChannelHistory(userContext.channelId) : [];
+    // message in messageCreate.js (not just ones addressed to Nexus).
+    const history = userContext.channelId
+      ? getChannelHistory(userContext.channelId, undefined, { excludeMessageId: userContext.messageId })
+      : [];
     const data = await nexusClient.askJSON({
       prompt: question,
       authorId: userContext.userId,
@@ -131,105 +128,136 @@ export async function askNexusAi(question, userContext = {}) {
       isSuperChillUser,
       memories,
       history,
-      // Found missing entirely (2026-09-17): nexus-ai.js's askJSON already supports imageUrl and
-      // Nexus-AI-'s /api/v1/nexus already runs it through a real vision model, but nothing on this
-      // side of the pipe ever extracted a Discord attachment and passed it through — a message
-      // like "nexus what does this say" with an image attached silently answered as if there were
-      // no image at all. handleNexusAiMessage below is what actually populates this now.
+      // A Discord image attachment is forwarded to the engine's vision pipeline.
       imageUrl: userContext.imageUrl || '',
     });
     const reply = data?.response || data?.text || '';
     if (!reply) throw new Error('Empty response from Nexus API');
     if (hasMemoryAccess && data?.newMemory) {
-      // Best-effort, fire-and-forget by design (see saveUserMemory's own comment) — never lets a
-      // memory-persistence failure delay or break the reply the user is actually waiting on.
+      // Best-effort, fire-and-forget by design — a memory-persistence failure must never delay or
+      // break the reply the user is actually waiting on.
       saveUserMemory(userContext.client, userContext.userId, data.newMemory).catch(() => {});
     }
-    // Record Nexus's own reply too, tagged assistant — so the NEXT message in this channel
-    // (whether it's a follow-up to Nexus or just ambient chatter) has this turn available too.
+    // Record Nexus's own reply too, tagged assistant — so the NEXT message in this channel has
+    // this turn available as context.
     if (userContext.channelId) {
       recordChannelMessage(userContext.channelId, {
         authorId: userContext.client?.user?.id,
         username: 'Nexus',
         content: reply,
         isBot: true,
-        // Which user's question this reply is actually answering — see channelHistoryService.js's
-        // own comment on replyToAuthorId for why this matters more than positional adjacency.
+        // Which user's question this reply is actually answering — see channelHistoryService.js.
         replyToAuthorId: userContext.userId,
       });
     }
-    return reply;
+    return { reply, data, latencyMs: Date.now() - startedAt, error: null };
   } catch (err) {
     logger.warn(`[Nexus AI] Real API call failed (${err.message}), using minimal offline fallback`);
-    return generateOfflineFallbackResponse(question, userContext);
+    // The engine rate-limits each Discord user (HTTP 429). That's not "the server is down", so the
+    // user gets told to slow down instead of the misleading "can't reach my engine" text.
+    const rateLimited = /HTTP 429/.test(err?.message || '');
+    const reply = rateLimited
+      ? "Whoa, slow the fuck down — you're asking faster than I can think. Try again in a few seconds."
+      : generateOfflineFallbackResponse(question, userContext);
+    return { reply, data: null, latencyMs: Date.now() - startedAt, error: err, rateLimited };
   }
 }
 
 /**
- * Same as askNexusAi above, but streams the reply back via onToken as the engine generates it
- * (only the casual/small-talk conversational path actually streams anything server-side — a
- * grounded factual question just produces zero onToken calls and goes straight to the final
- * result, exactly like askNexusAi would have). Mirrors askNexusAi's memory-fetch/save and
- * channel-history recording so callers get identical side effects either way.
- *
- * Falls back to the plain non-streaming askNexusAi (which has its own retrying HTTP client and
- * offline-fallback text) on ANY failure — a network hiccup, a malformed stream, whatever — rather
- * than duplicating that error handling here. Returns `{ reply, streamed }` so the caller (the
- * Discord message-editing logic) knows whether anything was actually streamed or whether the
- * fallback text just needs to be sent as one normal reply.
- *
- * @param {string} question
- * @param {Object} userContext
- * @param {(chunk: string) => void} onToken
- * @returns {Promise<{ reply: string, streamed: boolean }>}
+ * Sends a question to the real Nexus AI engine and returns plain text.
+ * Falls back to the minimal offline response if the remote API call fails.
  */
-export async function askNexusAiStream(question, userContext = {}, onToken) {
-  const isSuperChillUser = userContext.userId === '1394001641899954368' || Boolean(userContext.isSuperChillUser);
-  const hasMemoryAccess = Boolean(userContext.client && userContext.userId);
-  let streamedAny = false;
+export async function askNexusAi(question, userContext = {}) {
+  const { reply } = await requestNexusReply(question, userContext);
+  return reply;
+}
 
-  try {
-    const memories = hasMemoryAccess
-      ? await getUserMemories(userContext.client, userContext.userId)
-      : [];
-    const history = userContext.channelId ? getChannelHistory(userContext.channelId) : [];
-    const data = await nexusClient.askStream(
-      {
-        prompt: question,
-        authorId: userContext.userId,
-        username: userContext.username,
-        isSuperChillUser,
-        memories,
-        history,
-        // Same fix as askNexusAi above — parity so a streamed reply sees an attached image too.
-        imageUrl: userContext.imageUrl || '',
-      },
-      (chunk) => {
-        streamedAny = true;
-        onToken(chunk);
-      }
-    );
-    const reply = data?.response || data?.text || '';
-    if (!reply) throw new Error('Empty response from Nexus stream API');
-    if (hasMemoryAccess && data?.newMemory) {
-      saveUserMemory(userContext.client, userContext.userId, data.newMemory).catch(() => {});
+// ─── 👍/👎 feedback tracking ─────────────────────────────────────────────────────────────────────
+// messageReactionAdd.js forwards a 👎 on one of Nexus's replies to the guild's #negative-feedback
+// telemetry channel (question + answer, for corpus fixes). Bounded in-memory map: a reply older
+// than the most recent MAX_TRACKED_AI_REPLIES (or from before a restart) is simply not tracked.
+const MAX_TRACKED_AI_REPLIES = 500;
+const trackedAiReplies = new Map();
+
+export function trackAiReply(messageId, entry) {
+  if (!messageId) return;
+  trackedAiReplies.set(messageId, entry);
+  while (trackedAiReplies.size > MAX_TRACKED_AI_REPLIES) {
+    trackedAiReplies.delete(trackedAiReplies.keys().next().value);
+  }
+}
+
+// Messages deleted while an answer was being generated (fed by events/messageDelete.js). Bounded
+// the same way as trackedAiReplies — only ever needs to cover the last few minutes of deletions.
+const recentlyDeletedMessages = new Set();
+export function markMessageDeleted(messageId) {
+  if (!messageId) return;
+  recentlyDeletedMessages.add(messageId);
+  while (recentlyDeletedMessages.size > 1000) {
+    recentlyDeletedMessages.delete(recentlyDeletedMessages.values().next().value);
+  }
+}
+function wasRecentlyDeleted(messageId) {
+  return recentlyDeletedMessages.has(messageId);
+}
+
+export function getTrackedAiReply(messageId) {
+  return trackedAiReplies.get(messageId) || null;
+}
+
+// Replies must never be able to ping @everyone/@here, roles, or arbitrary users — the text comes
+// from the AI, and a prompt like "say @everyone" would otherwise mass-ping the whole server.
+const SAFE_REPLY_MENTIONS = { parse: [], repliedUser: true };
+
+/**
+ * Only people who can actually moderate the server (or the bot's VIP owner) may switch Nexus off
+ * or on for everyone — otherwise any member could silence the AI for the whole guild.
+ */
+function canToggleNexus(message) {
+  if (message.author?.id === '1394001641899954368') return true;
+  if (!message.guild) return true; // DMs / group scopes: the user only affects themselves
+  const perms = message.member?.permissions;
+  return Boolean(perms && (perms.has(PermissionFlagsBits.ManageGuild) || perms.has(PermissionFlagsBits.ManageMessages)));
+}
+
+/**
+ * Posts the engine's per-reply telemetry (and any failure) to the guild's AI telemetry channels.
+ * Every call here is fire-and-forget and never throws — see aiTelemetryService.js.
+ */
+function reportTelemetry(message, question, result) {
+  const guildId = message.guild?.id;
+  if (!guildId) return;
+  const client = message.client;
+  const promptSnippet = question.slice(0, 500);
+
+  if (result.error) {
+    if (!result.rateLimited) {
+      logCrash(client, guildId, { input: promptSnippet, error: result.error, source: 'nexus-ai:chat' }).catch(() => {});
     }
-    if (userContext.channelId) {
-      recordChannelMessage(userContext.channelId, {
-        authorId: userContext.client?.user?.id,
-        username: 'Nexus',
-        content: reply,
-        isBot: true,
-        // Which user's question this reply is actually answering — see channelHistoryService.js's
-        // own comment on replyToAuthorId for why this matters more than positional adjacency.
-        replyToAuthorId: userContext.userId,
-      });
-    }
-    return { reply, streamed: streamedAny };
-  } catch (err) {
-    logger.warn(`[Nexus AI] Stream API call failed (${err.message}), falling back to non-streaming askNexusAi`);
-    const reply = await askNexusAi(question, userContext);
-    return { reply, streamed: false };
+    return;
+  }
+
+  const telemetry = result.data?.telemetry || null;
+  logTelemetry(client, guildId, {
+    latencyMs: telemetry?.latencyMs ?? result.latencyMs,
+    language: telemetry?.language,
+    temperature: telemetry?.temperature,
+    swearFloorTriggered: telemetry?.swearFloorTriggered,
+    promptSnippet,
+  }).catch(() => {});
+
+  if (telemetry?.llmFailureReason) {
+    logCrash(client, guildId, {
+      input: promptSnippet,
+      error: new Error(`LLM failure: ${telemetry.llmFailureReason}`),
+      source: 'nexus-ai:llm',
+    }).catch(() => {});
+  }
+  if (telemetry?.swearFloorTriggered) {
+    logPersonaTrigger(client, guildId, { type: 'swear_floor', promptSnippet }).catch(() => {});
+  }
+  if (telemetry?.triggered) {
+    logPersonaTrigger(client, guildId, { type: 'meltdown', promptSnippet }).catch(() => {});
   }
 }
 
@@ -329,21 +357,28 @@ export async function handleNexusAiMessage(message) {
   const imageAttachment = message.attachments?.find((a) => a.contentType?.startsWith('image/'));
   const imageUrl = imageAttachment?.url || '';
 
-  // Check for deactivation trigger (e.g. "Nexus, desactivate", "hey nexus deactivate", "@Nexus desactivate")
-  if (DEACTIVATE_REGEX.test(rawQuestion.trim())) {
-    await setNexusAiDisabled(targetScopeId, message.client, true);
+  // Check for deactivation / reactivation triggers (e.g. "Nexus, desactivate", "@Nexus activate").
+  const wantsDeactivate = DEACTIVATE_REGEX.test(rawQuestion.trim());
+  const wantsActivate = !wantsDeactivate && ACTIVATE_REGEX.test(rawQuestion.trim());
+  if (wantsDeactivate || wantsActivate) {
+    if (!canToggleNexus(message)) {
+      await message.reply({
+        content: "Nice try bro, only the server mods get to flip my switch.",
+        allowedMentions: SAFE_REPLY_MENTIONS,
+      }).catch(err => logger.error('[Nexus AI] Error sending toggle-denied reply:', err));
+      return true;
+    }
+    await setNexusAiDisabled(targetScopeId, message.client, wantsDeactivate);
+    if (wantsDeactivate) {
+      // Re-enabling later starts fresh instead of resurfacing stale pre-shutdown context.
+      clearChannelHistory(message.channel.id);
+    }
     await message.reply({
-      content: "Alright, I'm desactivating my fucking ass."
-    }).catch(err => logger.error('[Nexus AI] Error sending deactivate reply:', err));
-    return true;
-  }
-
-  // Check for reactivation trigger (e.g. "Nexus, activate", "hey nexus activate", "@Nexus activate")
-  if (ACTIVATE_REGEX.test(rawQuestion.trim())) {
-    await setNexusAiDisabled(targetScopeId, message.client, false);
-    await message.reply({
-      content: "Alright, I'm back up, what the fuck do you want?"
-    }).catch(err => logger.error('[Nexus AI] Error sending activate reply:', err));
+      content: wantsDeactivate
+        ? "Alright, I'm desactivating my fucking ass."
+        : "Alright, I'm back up, what the fuck do you want?",
+      allowedMentions: SAFE_REPLY_MENTIONS,
+    }).catch(err => logger.error('[Nexus AI] Error sending toggle reply:', err));
     return true;
   }
 
@@ -395,65 +430,62 @@ export async function handleNexusAiMessage(message) {
   }, 8000);
 
   try {
-    // Progressive token-by-token streaming was removed on purpose: it made the Discord message
-    // visibly rebuild itself through half-formed, under-sworn intermediate states (the swear
-    // floor / safety top-up only applies to the FINAL text, so the streamed preview and the
-    // settled message always differed and it "edited" in front of you). One complete, fully
-    // processed reply, sent once, is what Patrick wants. The persistent typing indicator above
-    // covers the wait.
-    const sentMessage = null;
-    const streamed = false;
-
-    const answer = await askNexusAi(question, {
+    // One complete, fully processed reply, sent once (no token-by-token streaming — the swear
+    // floor / safety top-up only applies to the FINAL text). The typing indicator covers the wait.
+    const result = await requestNexusReply(question, {
       userId,
       username: message.author.username,
       client: message.client,
       channelId: message.channel.id,
+      messageId: message.id,
       imageUrl
     });
+    const answer = result.reply;
+
+    // Moderation (AI moderation / RaidShield) runs concurrently and may have deleted the question
+    // while the engine was thinking — don't answer a message staff just removed.
+    if (wasRecentlyDeleted(message.id)) return true;
+    reportTelemetry(message, question, result);
 
     // Check if answer is missing or consists entirely of invisible blank characters
     if (!answer || cleanInvisibleCharacters(answer).length === 0) {
       await message.reply({
-        content: "Nah bro, I ran into a fucking error, Try again when I want to work..."
+        content: "Nah bro, I ran into a fucking error, Try again when I want to work...",
+        allowedMentions: SAFE_REPLY_MENTIONS,
       }).catch(() => {});
       return true;
     }
 
+    // The question may have been deleted by moderation while the engine was thinking — replying
+    // to a deleted message would throw "Unknown message", so fall back to a plain channel send.
+    const replyOptions = { failIfNotExists: false };
     const chunks = splitIntoChunks(answer);
-    if (streamed && sentMessage && chunks.length === 1) {
-      // Final edit with the verified, possibly-slightly-different-from-streamed text (a safety
-      // block, swear-floor top-up, or phone-number correction can tweak the tail end after the
-      // raw stream already showed something close to it) — this edit is the source of truth for
-      // what the message ends up reading, not whatever was last streamed.
-      await sentMessage.edit({ content: chunks[0] }).catch(async () => {
-        // If the edit itself fails for some reason, still get the real answer to the user.
-        await message.reply({ content: chunks[0] }).catch(() => {});
-      });
-    } else if (chunks.length === 1) {
-      await message.reply({
-        content: chunks[0]
-      });
-    } else {
-      // Multi-chunk answers (rare for the streaming-eligible casual path, normal for longer
-      // grounded answers) — if a streamed reply message already exists, its first edit becomes
-      // chunk 1 instead of sending a duplicate message.
-      if (streamed && sentMessage) {
-        await sentMessage.edit({ content: chunks[0] }).catch(() => {});
-      } else {
-        await message.reply({ content: chunks[0] });
-      }
-      for (let i = 1; i < chunks.length; i++) {
-        await message.channel.send({
-          content: chunks[i]
-        });
+    const firstMessage = await message.reply({
+      content: chunks[0],
+      allowedMentions: SAFE_REPLY_MENTIONS,
+      ...replyOptions,
+    });
+    for (let i = 1; i < chunks.length; i++) {
+      await message.channel.send({ content: chunks[i], allowedMentions: { parse: [] } });
+    }
+
+    // 👍/👎 feedback — only when this guild actually has a #negative-feedback channel configured,
+    // so servers that don't use it don't get two reactions stuck on every single AI reply.
+    if (firstMessage && !result.error && message.guild) {
+      const { getGuildConfig } = await import('./guildConfig.js');
+      const config = await getGuildConfig(message.client, message.guild.id).catch(() => null);
+      if (config?.aiTelemetry?.negativeFeedbackChannelId) {
+        trackAiReply(firstMessage.id, { guildId: message.guild.id, question, answer });
+        await firstMessage.react('👍').catch(() => {});
+        await firstMessage.react('👎').catch(() => {});
       }
     }
     return true;
   } catch (error) {
     logger.error('[Nexus AI] Error handling message:', error);
     await message.reply({
-      content: "Nah bro, I ran into a fucking error, Try again when I want to work..."
+      content: "Nah bro, I ran into a fucking error, Try again when I want to work...",
+      allowedMentions: SAFE_REPLY_MENTIONS,
     }).catch(() => {});
     return true;
   } finally {

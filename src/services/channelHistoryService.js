@@ -19,6 +19,17 @@ const CHANNEL_IDLE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
 /** @type {Map<string, { messages: Array<{role: 'user'|'assistant', content: string, authorId: string, username: string, timestamp: number}>, lastTouchedAt: number }>} */
 const channelBuffers = new Map();
 
+// Buffers are only replaced lazily when their channel is touched again, so a channel that goes
+// quiet forever would otherwise keep its buffer for the life of the process. A cheap hourly sweep
+// drops idle ones; unref() so this timer never keeps the process alive on its own.
+const sweepTimer = setInterval(() => {
+  const now = Date.now();
+  for (const [channelId, buffer] of channelBuffers) {
+    if (now - buffer.lastTouchedAt >= CHANNEL_IDLE_TTL_MS) channelBuffers.delete(channelId);
+  }
+}, 60 * 60 * 1000);
+sweepTimer.unref?.();
+
 function getOrCreateBuffer(channelId) {
   const existing = channelBuffers.get(channelId);
   if (existing && Date.now() - existing.lastTouchedAt < CHANNEL_IDLE_TTL_MS) {
@@ -41,6 +52,7 @@ export function recordChannelMessage(channelId, entry) {
   const buffer = getOrCreateBuffer(channelId);
   buffer.messages.push({
     role: entry.isBot ? 'assistant' : 'user',
+    messageId: entry.messageId,
     content: entry.content.trim().slice(0, 1000), // a single message being absurdly long shouldn't blow out the buffer
     authorId: entry.authorId,
     username: entry.username,
@@ -69,10 +81,13 @@ export function recordChannelMessage(channelId, entry) {
  * @param {string} channelId
  * @param {number} [limit] defaults to the full buffer (50)
  */
-export function getChannelHistory(channelId, limit = MAX_MESSAGES_PER_CHANNEL) {
+export function getChannelHistory(channelId, limit = MAX_MESSAGES_PER_CHANNEL, { excludeMessageId } = {}) {
   const buffer = channelBuffers.get(channelId);
   if (!buffer) return [];
-  return buffer.messages.slice(-limit).map((m) => ({
+  return buffer.messages
+    .filter((m) => !excludeMessageId || m.messageId !== excludeMessageId)
+    .slice(-limit)
+    .map((m) => ({
     role: m.role,
     content: m.content,
     authorId: m.authorId,
