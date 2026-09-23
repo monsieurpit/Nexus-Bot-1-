@@ -92,7 +92,7 @@ export default {
                         continue;
                     }
 
-                    await member.kick(reason);
+                    await member.kick(reason.slice(0, 512));
 
                     results.successful.push({ user: member.user.tag, userId });
 

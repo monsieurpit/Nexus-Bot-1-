@@ -14,13 +14,18 @@ export default {
             option
                 .setName("amount")
                 .setDescription("Number of messages (1-100)")
+                .setMinValue(1)
+                .setMaxValue(100)
                 .setRequired(true),
         )
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages),
     category: "moderation",
 
     async execute(interaction, config, client) {
-        if (!await guardDefer(interaction, 'purge')) return;
+        // Ephemeral: a public "thinking…" reply is a real message in this channel — it was fetched
+        // and bulk-deleted along with the others (one fewer real message removed), after which the
+        // final confirmation edit failed with "Unknown Message".
+        if (!await guardDefer(interaction, 'purge', { flags: MessageFlags.Ephemeral })) return;
 
         try {
             guardPermission(interaction, PermissionFlagsBits.ManageMessages, 'Manage Messages');
@@ -64,7 +69,12 @@ export default {
 
             await InteractionHelper.safeEditReply(interaction, {
                 embeds: [
-                    successEmbed(`🗑️ Deleted ${deletedCount} messages in ${channel}.`),
+                    successEmbed(
+                        `🗑️ Deleted ${deletedCount} messages in ${channel}.` +
+                        (deletedCount < fetched.size
+                            ? `\n${fetched.size - deletedCount} message(s) were skipped: Discord doesn't allow bulk-deleting messages older than 14 days.`
+                            : '')
+                    ),
                 ],
                 flags: MessageFlags.Ephemeral,
             });

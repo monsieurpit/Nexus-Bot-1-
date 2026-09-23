@@ -230,7 +230,7 @@ async function handleCreate(interaction) {
         await safeLogEvent(() => logEvent({
             client: interaction.client,
             guildId: interaction.guildId,
-            eventType: EVENT_TYPES.GIVEAWAY_START,
+            eventType: EVENT_TYPES.GIVEAWAY_CREATE, // GIVEAWAY_START never existed, so creations were never logged
             data: {
                 description: `Giveaway created: ${prize}`,
                 channelId: targetChannel.id,

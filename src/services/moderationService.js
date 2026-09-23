@@ -7,6 +7,13 @@ import { logModerationAction } from '../utils/moderation.js';
 
 
 
+// Discord rejects audit-log reasons over 512 characters, which made the whole action fail when a
+// moderator typed a long reason. The full reason is still kept in the case log.
+function auditReason(reason) {
+  const text = String(reason ?? '');
+  return text.length > 512 ? `${text.slice(0, 509)}...` : text;
+}
+
 export class ModerationService {
   
 
@@ -21,6 +28,10 @@ export class ModerationService {
     }
 
     
+    if (target.id === target.guild.ownerId) {
+      return { valid: false, error: `You cannot ${action} the server owner.` };
+    }
+
     if (moderator.guild.ownerId === moderator.id) {
       return { valid: true };
     }
@@ -108,10 +119,9 @@ export class ModerationService {
         // If target is not in guild, we can't check their roles easily.
         // As a safety measure, only allow users with ManageGuild or Administrator to ban non-members.
         const isOwner = guild.ownerId === moderator.id;
-        const hasHighPerms = moderator.permissions.has([
-            PermissionFlagsBits.ManageGuild,
-            PermissionFlagsBits.Administrator
-        ]);
+        // has([a, b]) requires BOTH — a "Manage Server" moderator without Administrator was refused
+        // despite the message below saying either one is enough. Administrator implies ManageGuild.
+        const hasHighPerms = moderator.permissions.has(PermissionFlagsBits.ManageGuild);
 
         if (!isOwner && !hasHighPerms) {
             throw new NexusBotError(
@@ -124,7 +134,7 @@ export class ModerationService {
 
 
       
-      await guild.members.ban(user.id, { reason });
+      await guild.members.ban(user.id, { reason: auditReason(reason) });
 
       
       const caseId = await logModerationAction({
@@ -199,7 +209,7 @@ export class ModerationService {
       }
 
       
-      await member.kick(reason);
+      await member.kick(auditReason(reason));
 
       
       const caseId = await logModerationAction({
@@ -273,7 +283,7 @@ export class ModerationService {
       }
 
       
-      await member.timeout(durationMs, reason);
+      await member.timeout(durationMs, auditReason(reason));
 
       
       const durationMinutes = Math.floor(durationMs / 60000);
@@ -348,7 +358,7 @@ export class ModerationService {
       }
 
       
-      await member.timeout(null, reason);
+      await member.timeout(null, auditReason(reason));
 
       
       await logModerationAction({
@@ -411,7 +421,7 @@ export class ModerationService {
       }
 
       
-      await guild.members.unban(user.id, reason);
+      await guild.members.unban(user.id, auditReason(reason));
 
       
       const caseId = await logModerationAction({

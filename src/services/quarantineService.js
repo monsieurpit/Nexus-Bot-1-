@@ -372,7 +372,8 @@ export class QuarantineService {
       await channel.send({
         content: pingContent,
         embeds: [embed],
-        components: [actionRow]
+        components: [actionRow],
+        allowedMentions: { roles: config.alertRoleId ? [config.alertRoleId] : [] }
       });
     } catch (error) {
       logger.error('Error sending staff alert:', error);

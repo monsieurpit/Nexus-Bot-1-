@@ -2,6 +2,7 @@ import { ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import { logger } from './logger.js';
 import { NexusBotError, ErrorTypes } from './errorHandler.js';
 import { unwrapReplitData } from './database.js';
+import { Mutex } from './mutex.js';
 import { 
     createGiveawayEmbed as createGiveawayEmbedService,
     createGiveawayButtons as createGiveawayButtonsService,
@@ -15,6 +16,18 @@ import {
  */
 export function giveawayKey(guildId) {
     return `guild:${guildId}:giveaways`;
+}
+
+/**
+ * Giveaway end times are stored as ISO strings (older records may hold epoch milliseconds).
+ * Comparing/dividing the raw string used to yield NaN — "<t:NaN:R>" in the embed, and the
+ * "has it ended?" check never returned true.
+ */
+export function getGiveawayEndMs(giveaway) {
+    const raw = giveaway?.endsAt ?? giveaway?.endTime;
+    if (raw === null || raw === undefined || raw === '') return null;
+    const ms = typeof raw === 'number' ? raw : new Date(raw).getTime();
+    return Number.isFinite(ms) ? ms : null;
 }
 
 
@@ -87,13 +100,15 @@ export async function saveGiveaway(client, guildId, giveawayData) {
         }
 
         const key = giveawayKey(guildId);
-        const giveaways = await getGuildGiveaways(client, guildId);
-        
-        
-        const giveawayMap = arrayToGiveawayMap(giveaways);
-        giveawayMap[giveawayData.messageId] = giveawayData;
-        
-        await client.db.set(key, giveawayMap);
+        // Every giveaway of a guild lives in ONE stored map, so updates are serialized per guild —
+        // two people joining two different giveaways at the same moment used to overwrite each
+        // other's entries (each save wrote back the whole map it had read).
+        await Mutex.runExclusive(`giveaways:${guildId}`, async () => {
+            const giveaways = await getGuildGiveaways(client, guildId);
+            const giveawayMap = arrayToGiveawayMap(giveaways);
+            giveawayMap[giveawayData.messageId] = giveawayData;
+            await client.db.set(key, giveawayMap);
+        });
         
         logger.debug(`Saved giveaway ${giveawayData.messageId} in guild ${guildId}`);
         return true;
@@ -130,18 +145,19 @@ export async function deleteGiveaway(client, guildId, messageId) {
         }
 
         const key = giveawayKey(guildId);
-        const giveaways = await getGuildGiveaways(client, guildId);
-        
-        
-        const giveawayMap = arrayToGiveawayMap(giveaways);
-        
-        if (!giveawayMap[messageId]) {
+        const removed = await Mutex.runExclusive(`giveaways:${guildId}`, async () => {
+            const giveaways = await getGuildGiveaways(client, guildId);
+            const giveawayMap = arrayToGiveawayMap(giveaways);
+            if (!giveawayMap[messageId]) return false;
+            delete giveawayMap[messageId];
+            await client.db.set(key, giveawayMap);
+            return true;
+        });
+
+        if (!removed) {
             logger.debug(`Giveaway not found for deletion: ${messageId} in guild ${guildId}`);
             return false;
         }
-        
-        delete giveawayMap[messageId];
-        await client.db.set(key, giveawayMap);
         
         logger.debug(`Deleted giveaway ${messageId} from guild ${guildId}`);
         return true;
@@ -178,8 +194,8 @@ export function createGiveawayEmbed(giveaway, status, winners = []) {
 
 export function isGiveawayEnded(giveaway) {
     if (!giveaway) return true;
-    const endTime = giveaway.endsAt || giveaway.endTime;
-    return Date.now() > endTime;
+    const endMs = getGiveawayEndMs(giveaway);
+    return endMs !== null && Date.now() > endMs;
 }
 
 

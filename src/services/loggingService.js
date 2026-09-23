@@ -58,7 +58,9 @@ const EVENT_TYPES = {
   GIVEAWAY_DELETE: 'giveaway.delete',
   
   
-  COUNTER_UPDATE: 'counter.update'
+  COUNTER_UPDATE: 'counter.update',
+
+  CONFIGURATION_CHANGE: 'config.change'
 };
 
 const EVENT_COLORS = {
@@ -131,6 +133,7 @@ const EVENT_ICONS = {
   'giveaway.reroll': '🔄',
   'giveaway.delete': '🗑️',
   'counter.update': '📊',
+  'config.change': '⚙️',
 };
 
 

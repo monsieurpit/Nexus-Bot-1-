@@ -19,6 +19,7 @@ function getDashboardBaseUrl() {
 }
 
 export default {
+    allowDM: true,
     data: new SlashCommandBuilder()
         .setName('editrepo')
         .setDescription('Get the Nexus Code link to have Nexus propose (and push, once approved) changes to your repo'),

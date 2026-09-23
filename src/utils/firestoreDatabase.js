@@ -9,6 +9,8 @@ import {
     getDocs,
     getDocFromServer,
     setLogLevel,
+    query,
+    where,
     increment as fsIncrement
 } from 'firebase/firestore';
 import { createRequire } from 'module';
@@ -721,9 +723,14 @@ class FirestoreDatabase {
             const keys = new Set();
             const now = new Date();
 
-            // 1. Read kv_data
+            // 1. Read kv_data — with a prefix, only the matching range of keys (an indexed query on
+            // the `key` field every write stores) instead of downloading the entire collection,
+            // which held every economy balance, level record, etc. and was re-read on each call.
             try {
-                const kvSnap = await getDocs(collection(this.db, 'kv_data'));
+                const kvCollection = collection(this.db, 'kv_data');
+                const kvSnap = prefix
+                    ? await getDocs(query(kvCollection, where('key', '>=', prefix), where('key', '<', `${prefix}\uf8ff`)))
+                    : await getDocs(kvCollection);
                 kvSnap.forEach((docSnap) => {
                     const data = docSnap.data();
                     if (data.expiresAt && new Date(data.expiresAt) < now) {

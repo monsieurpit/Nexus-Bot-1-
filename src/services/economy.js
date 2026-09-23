@@ -12,16 +12,24 @@ async function withLock(key, fn) {
   const prev = _locks.get(key) || Promise.resolve();
   let release;
   const next = new Promise(resolve => { release = resolve; });
-  _locks.set(key, prev.then(() => next));
+  const tail = prev.then(() => next);
+  _locks.set(key, tail);
 
   await prev; // wait for any in-flight operation on this key
   try {
     return await fn();
   } finally {
     release();
-    // GC: clean up resolved chain entry if nothing else is waiting
-    if (_locks.get(key) === next) _locks.delete(key);
+    // GC: drop the entry once nothing else queued behind us. (This compared against `next`
+    // before, which is never what's stored, so the map grew by one entry per user forever.)
+    if (_locks.get(key) === tail) _locks.delete(key);
   }
+}
+
+// Bets/amounts must be positive whole numbers: a negative bet would flip win/lose (losing a -100
+// bet ADDS 100 coins), and NaN corrupts balances permanently.
+function isValidAmount(amount) {
+  return Number.isSafeInteger(amount) && amount > 0;
 }
 
 function lockKey(guildId, userId) {
@@ -43,12 +51,16 @@ function participantsKey(guildId)         { return `economy:${guildId}:participa
 // ─── Participant tracking (for leaderboard) ───────────────────────────────────
 async function trackParticipant(guildId, userId) {
   try {
-    const data = await db.get(participantsKey(guildId));
-    const ids = data?.ids || [];
-    if (!ids.includes(userId)) {
-      ids.push(userId);
-      await db.set(participantsKey(guildId), { ids });
-    }
+    // Guild-wide list, written by many users at once — serialized, or two users' first
+    // transactions racing each other dropped one of them from the leaderboard.
+    await withLock(`participants:${guildId}`, async () => {
+      const data = await db.get(participantsKey(guildId));
+      const ids = data?.ids || [];
+      if (!ids.includes(userId)) {
+        ids.push(userId);
+        await db.set(participantsKey(guildId), { ids });
+      }
+    });
   } catch (err) {
     logger.warn(`[Economy] Failed to track participant ${userId}:`, err);
   }
@@ -336,6 +348,7 @@ export async function robUser(guildId, robberId, targetId) {
 
 // ─── Coinflip (atomic) ───────────────────────────────────────────────────────
 export async function playCoinflip(guildId, userId, amount, choice) {
+  if (!isValidAmount(amount)) return { success: false, reason: 'amount' };
   return withLock(lockKey(guildId, userId), async () => {
     const current = await _readBalance(guildId, userId);
     if ((current.coins || 0) < amount) return { success: false, reason: 'funds' };
@@ -381,6 +394,7 @@ function spinReel() {
 }
 
 export async function playSlots(guildId, userId, bet) {
+  if (!isValidAmount(bet)) return { success: false, reason: 'amount' };
   return withLock(lockKey(guildId, userId), async () => {
     const current = await _readBalance(guildId, userId);
     if ((current.coins || 0) < bet) return { success: false, reason: 'funds' };
@@ -522,7 +536,7 @@ export async function addCoins(guildId, userId, amount) {
 }
 
 export async function removeCoins(guildId, userId, amount) {
-  if (!Number.isFinite(amount)) return null;
+  if (!Number.isFinite(amount) || amount < 0) return null;
   return withLock(lockKey(guildId, userId), async () => {
     const current = await _readBalance(guildId, userId);
     if ((current.coins || 0) < amount) return null;
@@ -568,18 +582,23 @@ export async function buyPack(guildId, userId, packId) {
 }
 
 // ─── Ultra Gamble ─────────────────────────────────────────────────────────────
+// Odds rebalanced: the previous table paid out 6.15x the bet on average (e.g. 5% for 50x, 8% for
+// 20x, 10% for 10x…) with no cooldown, so every /ultragamble was hugely profitable and anyone could
+// print unlimited coins in minutes. Same outcomes and multipliers, now with a house edge
+// (expected return ≈ 0.86x the bet) like every other game here.
 const ULTRA_OUTCOMES = [
-  { id: 'wipeout',  label: '💀 WIPEOUT',       multiplier: 0,    chance: 20,  color: 'error',   desc: 'You lost everything. Walk of shame.'              },
-  { id: 'inferno',  label: '🔥 INFERNO',        multiplier: 0.25, chance: 20,  color: 'error',   desc: 'The house burned 75% of your bet.'                },
-  { id: 'shock',    label: '⚡ SHOCK',           multiplier: 1,    chance: 10,  color: 'warning', desc: 'You got your coins back. Lucky escape.'           },
-  { id: 'sharp',    label: '🎯 SHARP',           multiplier: 2,    chance: 15,  color: 'success', desc: 'Clean double. Not bad at all.'                    },
-  { id: 'diamond',  label: '💎 DIAMOND',         multiplier: 5,    chance: 12,  color: 'success', desc: 'Five times your bet. Sparkling!'                  },
-  { id: 'royal',    label: '👑 ROYAL',           multiplier: 10,   chance: 10,  color: 'success', desc: 'Ten times the bet. You\'re royalty.'              },
-  { id: 'cosmic',   label: '🌌 COSMIC',          multiplier: 20,   chance: 8,   color: 'success', desc: '20x! The universe is on your side.'               },
-  { id: 'ultra',    label: '🌟 ULTRA JACKPOT',   multiplier: 50,   chance: 5,   color: 'success', desc: '50x ULTRA WIN. You are absolutely unhinged.'      },
+  { id: 'wipeout',  label: '💀 WIPEOUT',       multiplier: 0,    chance: 48,   color: 'error',   desc: 'You lost everything. Walk of shame.'              },
+  { id: 'inferno',  label: '🔥 INFERNO',        multiplier: 0.25, chance: 25,   color: 'error',   desc: 'The house burned 75% of your bet.'                },
+  { id: 'shock',    label: '⚡ SHOCK',           multiplier: 1,    chance: 12,   color: 'warning', desc: 'You got your coins back. Lucky escape.'           },
+  { id: 'sharp',    label: '🎯 SHARP',           multiplier: 2,    chance: 9,    color: 'success', desc: 'Clean double. Not bad at all.'                    },
+  { id: 'diamond',  label: '💎 DIAMOND',         multiplier: 5,    chance: 4,    color: 'success', desc: 'Five times your bet. Sparkling!'                  },
+  { id: 'royal',    label: '👑 ROYAL',           multiplier: 10,   chance: 1.5,  color: 'success', desc: 'Ten times the bet. You\'re royalty.'              },
+  { id: 'cosmic',   label: '🌌 COSMIC',          multiplier: 20,   chance: 0.35, color: 'success', desc: '20x! The universe is on your side.'               },
+  { id: 'ultra',    label: '🌟 ULTRA JACKPOT',   multiplier: 50,   chance: 0.15, color: 'success', desc: '50x ULTRA WIN. You are absolutely unhinged.'      },
 ];
 
 export async function playUltraGamble(guildId, userId, bet) {
+  if (!isValidAmount(bet)) return { success: false, reason: 'amount' };
   return withLock(lockKey(guildId, userId), async () => {
     const bal = await _readBalance(guildId, userId);
     const wallet = bal.coins || 0;

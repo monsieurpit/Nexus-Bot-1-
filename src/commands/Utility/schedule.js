@@ -6,6 +6,7 @@ import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { getAllMatches, getFootballConfig } from '../../services/footballService.js';
 
 export default {
+    allowDM: true,
     data: new SlashCommandBuilder()
         .setName('schedule')
         .setDescription('View upcoming FC Barcelona matches and 3-day announcement countdowns')
@@ -37,7 +38,8 @@ export default {
             const guild = interaction.guild;
             const filter = interaction.options?.getString('filter') || 'upcoming';
 
-            const config = await getFootballConfig(client, guild.id);
+            // Works in DMs too — there are simply no server-specific custom matches there.
+            const config = guild ? await getFootballConfig(client, guild.id) : { customMatches: [] };
             const matches = getAllMatches(config.customMatches);
             const now = Date.now();
 

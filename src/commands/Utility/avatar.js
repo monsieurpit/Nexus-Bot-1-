@@ -5,6 +5,7 @@ import { handleInteractionError } from '../../utils/errorHandler.js';
 
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 export default {
+    allowDM: true,
     data: new SlashCommandBuilder()
     .setName("avatar")
     .setDescription("Display a user's avatar image")

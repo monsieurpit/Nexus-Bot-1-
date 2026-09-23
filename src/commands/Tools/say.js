@@ -5,6 +5,7 @@ import {
     MessageFlags,
 } from 'discord.js';
 import { errorEmbed } from '../../utils/embeds.js';
+import { relayedMessageMentions } from '../../utils/commandGuards.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { logger } from '../../utils/logger.js';
 
@@ -58,7 +59,8 @@ export default {
                 });
             }
 
-            await target.send(message);
+            // @everyone/@here/role pings only if the member could send them themselves.
+            await target.send({ content: message, allowedMentions: relayedMessageMentions(interaction.member) });
 
             logger.info(
                 `[Say] ${interaction.user.tag} sent a message to #${target.name} in ${interaction.guild.name}`

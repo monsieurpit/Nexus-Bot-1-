@@ -145,6 +145,8 @@ export async function handleStickyNote(message, client) {
         }
     } catch (error) {
         logger.error('Error in handleStickyNote:', error);
-        repostLocks.delete(channel.id);
+        // `channel` is block-scoped inside the try — this used to throw a ReferenceError here, so
+        // the lock was never released and the sticky never reposted in that channel again.
+        if (message?.channel?.id) repostLocks.delete(message.channel.id);
     }
 }

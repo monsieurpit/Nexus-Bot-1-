@@ -41,14 +41,16 @@ export default {
                 .setColor(getColor('error'))
                 .setThumbnail(targetUser.displayAvatarURL())
                 .addFields(
-                    { name: 'Reason', value: reason },
+                    { name: 'Reason', value: String(reason || 'No reason provided').slice(0, 1024) },
                     { name: 'Reported In Channel', value: interaction.channel.toString(), inline: true },
                     { name: 'Time', value: new Date().toUTCString(), inline: true },
                 );
 
+            // The owner is a user, not a role — `<@&id>` rendered as "@deleted-role" and pinged nobody.
             await reportChannel.send({
-                content: `<@&${interaction.guild.ownerId}> New Report!`,
+                content: `<@${interaction.guild.ownerId}> New Report!`,
                 embeds: [reportEmbed],
+                allowedMentions: { users: [interaction.guild.ownerId] },
             });
 
             await InteractionHelper.safeEditReply(interaction, {

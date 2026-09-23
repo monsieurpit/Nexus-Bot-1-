@@ -121,8 +121,10 @@ export function createGiveawayEmbed(giveaway, status, winners = []) {
             .setColor(accentColor);
 
         // Optional image banner
-        if (giveaway.imageUrl) {
-            embed.setImage(giveaway.imageUrl);
+        // /giveaway stores the banner as `image`; older records used `imageUrl`.
+        const imageUrl = giveaway.imageUrl || giveaway.image;
+        if (typeof imageUrl === 'string' && /^https?:\/\//i.test(imageUrl)) {
+            embed.setImage(imageUrl);
         }
 
         // Description / flavour text
@@ -137,8 +139,12 @@ export function createGiveawayEmbed(giveaway, status, winners = []) {
                 : '`No valid entries`';
             descLines.push(`**${isReroll ? '🔄 New Winner(s)' : '🏆 Winner(s)'}:** ${winnerDisplay}`);
         } else {
-            const endTime = giveaway.endsAt || giveaway.endTime;
-            descLines.push(`⏰ **Ends:** <t:${Math.floor(endTime / 1000)}:R>  ·  <t:${Math.floor(endTime / 1000)}:f>`);
+            const rawEnd = giveaway.endsAt ?? giveaway.endTime;
+            const endMs = typeof rawEnd === 'number' ? rawEnd : new Date(rawEnd).getTime();
+            if (Number.isFinite(endMs)) {
+                const endUnix = Math.floor(endMs / 1000);
+                descLines.push(`⏰ **Ends:** <t:${endUnix}:R>  ·  <t:${endUnix}:f>`);
+            }
         }
 
         embed.setDescription(descLines.join('\n'));
@@ -380,24 +386,48 @@ export async function checkGiveaways(client) {
             return;
         }
 
-        const endedGiveaways = await getEndedGiveaways(client);
-        if (endedGiveaways.length === 0) return;
+        const { getGuildGiveaways, saveGiveaway, getGiveawayEndMs } = await import('../utils/giveaways.js');
+        const now = Date.now();
+        const due = [];
 
-        logger.info(`Processing ${endedGiveaways.length} ended giveaway(s)`);
+        // PostgreSQL has an indexed giveaways table; every other backend (Firestore — the bot's
+        // primary store — and in-memory) keeps each guild's giveaways in one key-value map. This
+        // used to ONLY query the PostgreSQL table, so on Firestore no giveaway ever ended.
+        const isPostgres = client.db.getConnectionType?.() === 'postgresql';
+        if (isPostgres) {
+            for (const record of await getEndedGiveaways(client)) {
+                const giveaway = typeof record.data === 'string' ? JSON.parse(record.data) : record.data;
+                due.push({
+                    guildId: record.guild_id,
+                    messageId: record.message_id,
+                    giveaway,
+                    persist: (updated) => markGiveawayEnded(client, record.id, updated),
+                });
+            }
+        } else {
+            for (const guildId of client.guilds.cache.keys()) {
+                const giveaways = await getGuildGiveaways(client, guildId);
+                for (const giveaway of giveaways) {
+                    if (!giveaway?.messageId || giveaway.ended || giveaway.isEnded) continue;
+                    const endMs = getGiveawayEndMs(giveaway);
+                    if (endMs === null || endMs > now) continue;
+                    due.push({
+                        guildId,
+                        messageId: giveaway.messageId,
+                        giveaway,
+                        persist: (updated) => saveGiveaway(client, guildId, updated),
+                    });
+                }
+            }
+        }
 
-        for (const record of endedGiveaways) {
+        if (due.length === 0) return;
+        logger.info(`Processing ${due.length} ended giveaway(s)`);
+
+        for (const { guildId, messageId, giveaway, persist } of due) {
             try {
-                const { id: giveawayId, guild_id: guildId, message_id: messageId, data: rawData } = record;
-                const giveaway = typeof rawData === 'string' ? JSON.parse(rawData) : rawData;
-
                 const guild = client.guilds.cache.get(guildId);
                 if (!guild) continue;
-
-                const channel = await guild.channels.fetch(giveaway.channelId).catch(() => null);
-                if (!channel) continue;
-
-                const message = await channel.messages.fetch(messageId).catch(() => null);
-                if (!message) continue;
 
                 const participants = giveaway.participants || [];
                 const winners = selectWinners(participants, giveaway.winnerCount || 1);
@@ -407,23 +437,36 @@ export async function checkGiveaways(client) {
                 giveaway.winnerIds = winners;
                 giveaway.endedAt = new Date().toISOString();
 
+                const channel = await guild.channels.fetch(giveaway.channelId).catch(() => null);
+                const message = channel ? await channel.messages.fetch(messageId).catch(() => null) : null;
+
+                // Marked ended first — if the channel/message is gone, this used to `continue`
+                // without saving, so the same dead giveaway was re-processed every minute forever.
+                await persist(giveaway);
+
+                if (!channel || !message) {
+                    logger.info(`Giveaway ${messageId} in guild ${guildId} ended, but its message no longer exists`);
+                    continue;
+                }
+
                 await message.edit({
                     content: '🎊 **GIVEAWAY ENDED**',
                     embeds: [createGiveawayEmbed(giveaway, 'ended', winners)],
                     components: [createGiveawayButtons(true)],
-                });
-
-                await markGiveawayEnded(client, giveawayId, giveaway);
+                }).catch(err => logger.warn(`Could not edit ended giveaway message ${messageId}:`, err.message));
 
                 if (winners.length > 0) {
                     const mentions = winners.map(id => `<@${id}>`).join(', ');
                     const pingMsg = await channel.send({
                         content: `🎉 Congratulations ${mentions}! You won **${giveaway.prize}**! Contact <@${giveaway.hostId}> to claim your prize.`,
-                    });
-                    giveaway.winnerPingMessageId = pingMsg.id;
-                    await markGiveawayEnded(client, giveawayId, giveaway);
+                        allowedMentions: { users: winners },
+                    }).catch(() => null);
+                    if (pingMsg) {
+                        giveaway.winnerPingMessageId = pingMsg.id;
+                        await persist(giveaway);
+                    }
                 } else {
-                    await channel.send({ content: `The giveaway for **${giveaway.prize}** ended with no valid entries.` });
+                    await channel.send({ content: `The giveaway for **${giveaway.prize}** ended with no valid entries.` }).catch(() => null);
                 }
 
                 try {

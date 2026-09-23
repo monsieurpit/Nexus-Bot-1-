@@ -129,6 +129,16 @@ export function guardMemberExists(member) {
  * @param {string} actionName - e.g. "kick", "ban"
  */
 export function guardRoleHierarchy(interaction, targetMember, actionName) {
+    const ownerId = interaction.guild?.ownerId;
+    if (targetMember.id === ownerId) {
+        throw new NexusBotError(
+            `Cannot ${actionName} the server owner`,
+            ErrorTypes.PERMISSION,
+            `You cannot ${actionName} the server owner.`
+        );
+    }
+    // The server owner outranks everyone regardless of their roles.
+    if (interaction.user.id === ownerId) return;
     if (interaction.member.roles.highest.position <= targetMember.roles.highest.position) {
         throw new NexusBotError(
             `Cannot ${actionName} user`,
@@ -136,4 +146,17 @@ export function guardRoleHierarchy(interaction, targetMember, actionName) {
             `You cannot ${actionName} a user with an equal or higher role than you.`
         );
     }
+}
+
+/**
+ * allowedMentions for text a member makes the bot post (/say, /announce, the embed builder…).
+ * The bot usually has "Mention @everyone" permission — relaying a member's text must never let them
+ * ping @everyone/@here or roles unless they could do it themselves.
+ * @param {import('discord.js').GuildMember|null} member
+ */
+export function relayedMessageMentions(member) {
+    const canMassPing = Boolean(member?.permissions?.has?.(PermissionFlagsBits.MentionEveryone));
+    return canMassPing
+        ? { parse: ['users', 'roles', 'everyone'] }
+        : { parse: ['users'] };
 }

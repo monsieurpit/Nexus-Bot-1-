@@ -5,6 +5,7 @@ import { handleInteractionError, NexusBotError, ErrorTypes } from '../../utils/e
 
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 export default {
+    allowDM: true,
     data: new SlashCommandBuilder()
     .setName("roll")
     .setDescription("Rolls dice using standard notation (e.g., 2d20, 1d6 + 5).")

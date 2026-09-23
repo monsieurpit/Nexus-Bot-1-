@@ -159,6 +159,13 @@ export async function registerCommands(client, clientId, guildId) {
                 if (!registeredNames.has(commandName)) {
                     registeredNames.add(commandName);
                     const commandJson = command.data.toJSON();
+                    // Nearly every command needs a server (members, roles, channels, per-guild
+                    // config). Without an explicit context Discord also offers them in DMs with the
+                    // bot, where they could only fail. Commands that genuinely work anywhere opt in
+                    // with `allowDM: true`.
+                    if (!Array.isArray(commandJson.contexts) || commandJson.contexts.length === 0) {
+                        commandJson.contexts = command.allowDM ? [0, 1, 2] : [0];
+                    }
                     if (command.guildOnly) {
                         guildOnlyCommands.push(commandJson);
                     } else {

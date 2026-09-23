@@ -56,10 +56,18 @@ export default {
             const cases = await getModerationCases(interaction.guild.id, filters);
 
             if (cases.length === 0) {
-                throw new Error(targetUser 
-                    ? `No moderation cases found for ${targetUser.tag}`
-                    : `No ${filterType === 'all' ? '' : filterType} cases found in this server.`
-                );
+                // An empty result is a normal answer, not an error (it used to be thrown as a plain
+                // Error, which showed the user a generic "Something went wrong").
+                await InteractionHelper.safeEditReply(interaction, {
+                    embeds: [createEmbed({
+                        title: '📋 Moderation Cases',
+                        description: targetUser
+                            ? `No moderation cases found for ${targetUser.tag}.`
+                            : `No ${filterType === 'all' ? '' : `${filterType} `}cases found in this server.`,
+                        color: 'info'
+                    })]
+                });
+                return;
             }
 
             const CASES_PER_PAGE = 5;

@@ -8,7 +8,8 @@ import {
     guardDefer,
     guardPermission,
     guardSelfTarget,
-    guardMemberExists
+    guardMemberExists,
+    guardRoleHierarchy
 } from '../../utils/commandGuards.js';
 
 const durationChoices = [
@@ -58,6 +59,8 @@ export default {
 
             guardSelfTarget(targetUser.id, interaction, client, 'timeout');
             guardMemberExists(member);
+            // Like /kick: a moderator can't time out someone at or above their own top role.
+            guardRoleHierarchy(interaction, member, 'timeout');
 
             if (!member.moderatable) {
                 throw new NexusBotError(
@@ -68,7 +71,7 @@ export default {
             }
 
             const durationMs = durationMinutes * 60 * 1000;
-            await member.timeout(durationMs, reason);
+            await member.timeout(durationMs, reason.slice(0, 512));
 
             const durationDisplay =
                 durationChoices.find((c) => c.value === durationMinutes)

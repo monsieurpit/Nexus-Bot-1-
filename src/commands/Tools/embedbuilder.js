@@ -26,6 +26,7 @@ const RULES_BANNER_PATH = path.join(__dirname, '../../../attached_assets/RULES-1
 import { db } from '../../utils/database.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { successEmbed, errorEmbed } from '../../utils/embeds.js';
+import { relayedMessageMentions } from '../../utils/commandGuards.js';
 import { logger } from '../../utils/logger.js';
 import { NexusBotError, ErrorTypes } from '../../utils/errorHandler.js';
 import { getColor } from '../../config/bot.js';
@@ -995,9 +996,12 @@ async function handlePostEmbed(selectInteraction, rootInteraction, state, guild)
     });
 
     chanCollector.on('collect', async chanInter => {
+        // Declared outside the try so the catch below can name the channel (it used to reference
+        // a block-scoped variable there and threw a ReferenceError instead of reporting the error).
+        let channel = null;
         try {
             await chanInter.deferUpdate();
-            const channel = chanInter.channels.first();
+            channel = chanInter.channels.first();
 
             if (!channel) {
                 await chanInter.followUp({
@@ -1048,6 +1052,7 @@ async function handlePostEmbed(selectInteraction, rootInteraction, state, guild)
                 messagePayload.components = [new ActionRowBuilder().addComponents(...btnComponents)];
             }
 
+            messagePayload.allowedMentions = relayedMessageMentions(chanInter.member || rootInteraction.member);
             await channel.send(messagePayload);
 
             await chanInter.followUp({
@@ -1226,9 +1231,10 @@ async function handlePostRulesEmbed(selectInteraction, rootInteraction, guild) {
     });
 
     chanCollector.on('collect', async chanInter => {
+        let channel = null;
         try {
             await chanInter.deferUpdate();
-            const channel = chanInter.channels.first();
+            channel = chanInter.channels.first();
 
             if (!channel) {
                 await chanInter.followUp({
@@ -1289,7 +1295,7 @@ async function handlePostRulesEmbed(selectInteraction, rootInteraction, guild) {
         } catch (err) {
             logger.error('Failed to post rules embed:', err);
             await chanInter.followUp({
-                embeds: [errorEmbed('Send Failed', `Something went wrong while posting to ${channel}: ${err.message}`)],
+                embeds: [errorEmbed('Send Failed', `Something went wrong while posting to ${channel ?? 'that channel'}: ${err.message}`)],
                 flags: MessageFlags.Ephemeral,
             }).catch(() => {});
         }

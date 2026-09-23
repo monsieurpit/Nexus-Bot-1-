@@ -227,6 +227,17 @@ async function handleSetupOrDashboard(interaction, config, client, subcommand) {
                         },
                     );
 
+                // This setup log embed used to be built and then never sent anywhere.
+                try {
+                    const latestConfig = await getGuildConfig(client, interaction.guildId);
+                    const logChannelId = latestConfig?.ticketLogging?.lifecycleChannelId || latestConfig?.logging?.channelId;
+                    const logChannel = logChannelId ? interaction.guild.channels.cache.get(logChannelId) : null;
+                    if (logChannel?.isTextBased?.()) {
+                        await logChannel.send({ embeds: [logEmbed] });
+                    }
+                } catch (logError) {
+                    logger.debug('Could not post ticket setup log:', logError);
+                }
 
             } catch (error) {
                 logger.error('Ticket setup error', {

@@ -37,6 +37,12 @@ class NexusBot extends Client {
         
         GatewayIntentBits.GuildBans,                    
       ],
+      // Safe default for EVERY message the bot sends: user mentions and reply pings work, but
+      // @everyone/@here and role pings only go out where a feature explicitly allows them
+      // (ticket staff role, RaidShield alert role, football/VC-event/weekly-summary pings…).
+      // Without this, any text the bot relays — a /say message, an embed-builder post, a sticky
+      // note, a welcome template, an AI reply — could mass-ping the whole server.
+      allowedMentions: { parse: ['users'], repliedUser: true },
     });
 
     this.config = config;

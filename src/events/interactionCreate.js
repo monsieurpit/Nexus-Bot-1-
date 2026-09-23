@@ -11,6 +11,8 @@ import { validateChatInputPayloadOrThrow } from '../utils/commandInputValidation
 import { enforceAbuseProtection, formatCooldownDuration } from '../utils/abuseProtection.js';
 import { logCrash } from '../services/aiTelemetryService.js';
 
+const ECONOMY_ADMIN_COMMANDS = new Set(['eco-admin', 'economy-dashboard', 'pack-spawn', 'packs-reward']);
+
 function withTraceContext(context = {}, traceContext = {}) {
   return {
     traceId: traceContext.traceId,
@@ -89,9 +91,29 @@ export default {
               }
             }
 
+            // The economy dashboard's "Disable Economy" toggle used to only stop message coins —
+            // every economy command kept working. Admin/config commands stay available so it can be
+            // turned back on and managed.
+            if (interaction.guild && command.category === 'Economy' && !ECONOMY_ADMIN_COMMANDS.has(interaction.commandName)) {
+              const { getEconomyConfig } = await import('../services/economy.js');
+              const economyConfig = await getEconomyConfig(interaction.guild.id);
+              if (economyConfig.enabled === false) {
+                throw createError(
+                  `Economy disabled in guild ${interaction.guild.id}`,
+                  ErrorTypes.CONFIGURATION,
+                  'The economy system is currently disabled on this server.',
+                  withTraceContext({ commandName: interaction.commandName, guildId: interaction.guild.id, expected: true }, interactionTraceContext)
+                );
+              }
+            }
+
             await command.execute(interaction, guildConfig, client);
           } catch (error) {
-            if (interaction.guild?.id) {
+            // Only real failures go to the crash channel — not cooldowns, disabled commands,
+            // missing permissions or bad input, which are normal, expected outcomes.
+            const isExpectedOutcome = error?.context?.expected === true ||
+              [ErrorTypes.RATE_LIMIT, ErrorTypes.VALIDATION, ErrorTypes.USER_INPUT, ErrorTypes.PERMISSION, ErrorTypes.CONFIGURATION].includes(error?.type);
+            if (interaction.guild?.id && !isExpectedOutcome) {
               logCrash(client, interaction.guild.id, {
                 input: `/${interaction.commandName}`,
                 error,

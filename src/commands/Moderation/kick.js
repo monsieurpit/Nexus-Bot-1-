@@ -48,7 +48,7 @@ export default {
                 );
             }
 
-            await member.kick(reason);
+            await member.kick(reason.slice(0, 512));
 
             const caseId = await logModerationAction({
                 client,

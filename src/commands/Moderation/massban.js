@@ -105,9 +105,11 @@ export default {
                         }
                     }
 
+                    // `deleteMessageDays` no longer exists in discord.js v14 and was silently
+                    // ignored, so delete_days never deleted anything.
                     await interaction.guild.members.ban(userId, {
-                        reason: reason,
-                        deleteMessageDays: deleteDays
+                        reason: reason.slice(0, 512),
+                        deleteMessageSeconds: deleteDays * 24 * 60 * 60
                     });
 
                     results.successful.push({ user: user.tag, userId });
