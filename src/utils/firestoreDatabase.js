@@ -137,8 +137,12 @@ class FirestoreDatabase {
             });
 
             // Automatically synchronize and populate dedicated tables/collections
-            await this.syncGuildFeatureTables().catch(err => {
-                logger.warn('Initial syncGuildFeatureTables non-fatal error:', err.message);
+            // Runs in the BACKGROUND, never awaited: on a real database it reads every legacy document,
+            // which took longer than the connection timeout — the bot then gave up on Firestore and
+            // ran on empty fallback storage, so every server looked "reset" (the data itself was
+            // untouched). The connection no longer waits for it.
+            this.syncGuildFeatureTables().catch(err => {
+                logger.warn('Legacy kv_data migration non-fatal error:', err.message);
             });
 
             logger.info(`✅ Firebase Firestore Database connected (${this.databaseId || 'default'})`);

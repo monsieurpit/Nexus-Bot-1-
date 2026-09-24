@@ -51,7 +51,7 @@ class DatabaseWrapper {
             logger.info('Connecting to Firebase Firestore database...');
             // Bounded: the Firestore client retries silently forever when Google is unreachable,
             // which used to leave the whole bot stuck at "Connecting to Firebase" with no fallback.
-            const timeoutMs = Number(process.env.FIRESTORE_CONNECT_TIMEOUT_MS) || 20000;
+            const timeoutMs = Number(process.env.FIRESTORE_CONNECT_TIMEOUT_MS) || 60000;
             let timer;
             const fsConnected = await Promise.race([
                 firestoreDb.connect(),
