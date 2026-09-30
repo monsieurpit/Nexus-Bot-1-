@@ -9,7 +9,7 @@ import { relayedMessageMentions } from '../../utils/commandGuards.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { logger } from '../../utils/logger.js';
 
-const AUTHORIZED_USER_ID = '1354229457522524322';
+const AUTHORIZED_USER_ID = '1554657430393196594';
 
 export default {
     data: new SlashCommandBuilder()
