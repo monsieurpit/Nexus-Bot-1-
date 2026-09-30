@@ -64,3 +64,19 @@ test('"nexus forget me" erases the user\'s stored memories', async () => {
   assert.equal(store.has('nexus:memory:42'), false);
   assert.match(replies[0], /wiped everything/);
 });
+
+test('replies can never carry a live @everyone / @here / role mention', async () => {
+  const { defuseMassMentions } = await import('../../src/services/nexusAiService.js');
+  const out = defuseMassMentions('he pings @everyone and @here, also <@&123456>');
+  assert.ok(!/@everyone|@here|<@&/.test(out), out);
+  assert.match(out, /@\u200beveryone/);
+});
+
+test('"nexus" as the object of the question is kept ("do u like nexus"), a trailing call is stripped', async () => {
+  const { parseNexusTrigger: parse } = await import('../../src/services/nexusAiService.js');
+  assert.equal(parse('do u like nexus').question, 'do u like nexus');
+  assert.equal(parse('what do you think about nexus').question, 'what do you think about nexus');
+  assert.equal(parse('is casseurt smarter than nexus').question, 'is casseurt smarter than nexus');
+  assert.equal(parse('what is 2+2 nexus?').question, 'what is 2+2');
+  assert.equal(parse('you good, nexus').question, 'you good');
+});

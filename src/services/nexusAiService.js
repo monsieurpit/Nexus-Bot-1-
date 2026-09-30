@@ -266,6 +266,11 @@ function reportTelemetry(message, question, result) {
   }
 }
 
+export function defuseMassMentions(text) {
+  if (!text || typeof text !== 'string') return text;
+  return text.replace(/@(everyone|here)\b/gi, '@\u200b$1').replace(/<@&(\d+)>/g, '@\u200brole');
+}
+
 /**
  * Strips all invisible Unicode whitespace, braille blanks, hangul fillers, and zero-width characters.
  */
@@ -331,7 +336,12 @@ export function parseNexusTrigger(content, botUserId = null) {
   // 3. Ends with "nexus" as a distinct word (e.g. "what is 2+2 nexus?")
   const suffixMatch = trimmed.match(/^(.*?)(?:[\s,:!?\-]+\bnexus\b[\s,:!?\-]*)$/is);
   if (suffixMatch && suffixMatch[1].trim().length > 0) {
-    return { matched: true, question: suffixMatch[1].trim() };
+    // "do u like nexus" / "what do you think about nexus" / "is casseurt better than nexus": here
+    // "nexus" is the OBJECT of the question (Nexus himself), not someone calling him — stripping it
+    // sent the engine just "do u like" (live, 2026-09-30). Only a trailing call ("what is 2+2
+    // nexus?", "you good, nexus") is stripped.
+    const endsWithObjectWord = /\b(?:like|love|hate|respect|trust|rate|know|miss|fear|beat|marry|date|fight|kiss|kill|roast|about|of|with|for|to|than|is|are|was|think|prefer|trust|believe|support|help|smarter|better|worse|dumber|funnier)$/i.test(suffixMatch[1].trim()) && !/[,:!?\-]\s*$/.test(trimmed.slice(0, trimmed.toLowerCase().lastIndexOf('nexus')));
+    return { matched: true, question: endsWithObjectWord ? trimmed : suffixMatch[1].trim() };
   }
 
   return null;
@@ -456,7 +466,9 @@ export async function handleNexusAiMessage(message) {
       messageId: message.id,
       imageUrl
     });
-    const answer = result.reply;
+    // allowedMentions already stops the actual ping, but "@everyone" still showed as text in the
+    // reply (live: a Casseurt rant said "he pings @everyone"). A zero-width space makes it plain text.
+    const answer = defuseMassMentions(result.reply);
 
     // Moderation (AI moderation / RaidShield) runs concurrently and may have deleted the question
     // while the engine was thinking — don't answer a message staff just removed.
