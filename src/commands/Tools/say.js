@@ -1,6 +1,5 @@
 import {
     SlashCommandBuilder,
-    PermissionFlagsBits,
     ChannelType,
     MessageFlags,
 } from 'discord.js';
@@ -15,7 +14,6 @@ export default {
     data: new SlashCommandBuilder()
         .setName('say')
         .setDescription('Make Nexus send a message to any channel')
-        .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
         .addStringOption(option =>
             option
                 .setName('message')
