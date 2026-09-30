@@ -216,13 +216,18 @@ export class NexusAI {
   // gateway/network errors (HTTP 502/503/504/520-524/429 and network disconnects) common on
   // cloud platforms like Railway.
   async _fetchWithTimeout(url, options = {}, timeoutMs = 50000, maxRetries = 2) {
+    // A POST (asking Nexus, a RaidShield scan) is NOT safe to repeat on every error: 504/524 are
+    // gateway/Cloudflare TIMEOUTS (Cloudflare cuts at ~100s) while the engine is still working on
+    // the original request — retrying queued a second copy behind it, so a slow answer was
+    // generated twice and the user waited even longer. 500 means the engine already processed it
+    // and failed; 429 means "slow down", which an instant retry can't fix. For a POST, only errors
+    // that mean the request never reached the engine (502/503/520-523) are retried. GETs are
+    // idempotent and keep the wider list.
+    const isIdempotent = !options.method || options.method.toUpperCase() === 'GET';
     const isRetryableStatus = (status) =>
-      status === 429 ||
-      status === 500 ||
-      status === 502 ||
-      status === 503 ||
-      status === 504 ||
-      (status >= 520 && status <= 524);
+      isIdempotent
+        ? status === 429 || status === 500 || status === 502 || status === 503 || status === 504 || (status >= 520 && status <= 524)
+        : status === 502 || status === 503 || (status >= 520 && status <= 523);
 
     let lastRes = null;
     let lastError = null;
@@ -1014,6 +1019,25 @@ export class NexusAI {
    * @param {string} [options.prompt] - Custom inspection instruction or question
    * @param {'general' | 'security'} [options.mode] - Scanner mode
    */
+  /**
+   * Forwards an emoji reaction on one of Nexus's replies to the engine's learning system
+   * (docs/learning-system.md in Nexus-AI-). The engine only accepts it for a reply it really sent
+   * recently. Fire-and-forget: short timeout, no retries — feedback must never slow the bot down.
+   * @param {Object} options
+   * @param {string} options.answer - The exact reply text Nexus sent
+   * @param {string} options.emoji - The reaction emoji (e.g. '👍', '👎', '💀')
+   * @param {string} [options.authorId] - Discord user ID of whoever reacted
+   * @returns {Promise<{accepted: boolean, reason: string}>}
+   */
+  async sendReactionFeedback({ answer = '', emoji = '', authorId = '' } = {}) {
+    const res = await this._fetchWithTimeout(`${this.baseUrl}/learning/reaction`, {
+      method: 'POST',
+      headers: this._getHeaders(),
+      body: JSON.stringify({ answer, emoji, authorId }),
+    }, 15000, 0);
+    return await this._parseResponse(res, 'Learning API');
+  }
+
   async analyzeImage({ imageUrl = '', imageData = '', prompt = '', mode = 'general' }) {
     const res = await this._fetchWithTimeout(`${this.baseUrl}/vision/analyze`, {
       method: 'POST',

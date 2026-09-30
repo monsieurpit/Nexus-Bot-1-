@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  askNexusAi,
-  parseNexusTrigger,
-  isNexusAiDisabled,
-  setNexusAiDisabled
-} from '../../src/services/nexusAiService.js';
+
+// These tests exercise the offline fallback, so the SDK must NOT reach a real engine — on a dev
+// machine the real one is often running at the default localhost:3000 and answered for real, which
+// made the fallback assertions fail. A dead address (set before the service module creates its
+// client, hence the dynamic import) makes the test independent of what's running locally.
+process.env.NEXUS_API_URL = 'http://127.0.0.1:9/api/v1';
+const { askNexusAi, parseNexusTrigger, isNexusAiDisabled, setNexusAiDisabled } = await import('../../src/services/nexusAiService.js');
 
 test('parseNexusTrigger detects bot mention and prefixes', () => {
   const t1 = parseNexusTrigger('hey nexus what is 2+2');
@@ -44,4 +45,22 @@ test('setNexusAiDisabled and isNexusAiDisabled manage toggle states', async () =
 
   await setNexusAiDisabled(dummyGuild, null, false);
   assert.equal(await isNexusAiDisabled(dummyGuild, null), false);
+});
+
+test('"nexus forget me" erases the user\'s stored memories', async () => {
+  const { handleNexusAiMessage } = await import('../../src/services/nexusAiService.js');
+  const store = new Map([['nexus:memory:42', [{ key: 'favoriteTeam', fact: 'Barça' }]]]);
+  const replies = [];
+  const message = {
+    author: { id: '42', bot: false, username: 'u' },
+    content: 'nexus forget everything about me',
+    guild: null,
+    channel: { id: 'c1', sendTyping: async () => {} },
+    attachments: { find: () => null },
+    client: { user: { id: 'bot' }, db: { get: async (k) => store.get(k), set: async (k, v) => store.set(k, v), delete: async (k) => store.delete(k) } },
+    reply: async (m) => replies.push(m.content),
+  };
+  assert.equal(await handleNexusAiMessage(message), true);
+  assert.equal(store.has('nexus:memory:42'), false);
+  assert.match(replies[0], /wiped everything/);
 });

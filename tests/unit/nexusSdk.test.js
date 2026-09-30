@@ -132,3 +132,34 @@ test('NexusAI retries and recovers from transient HTTP 502 error', async (t) => 
   assert.equal(res.response, 'recovered after retry!');
 });
 
+test('NexusAI never re-sends a POST after a gateway timeout (504/524) or rate limit (429)', async (t) => {
+  // A 504/524 means the engine may still be working on the request — a retry would queue a second
+  // copy of the same answer behind it.
+  const originalFetch = global.fetch;
+  t.after(() => { global.fetch = originalFetch; });
+  const client = new NexusAI({ apiKey: 'k', baseUrl: 'http://example.test/api/v1' });
+  for (const status of [504, 524, 429, 500]) {
+    let calls = 0;
+    global.fetch = async () => {
+      calls++;
+      return { ok: false, status, statusText: 'x', text: async () => '' };
+    };
+    await assert.rejects(() => client.ask('yo'), new RegExp(`HTTP ${status}`));
+    assert.equal(calls, 1, `POST retried after HTTP ${status}`);
+  }
+});
+
+test('NexusAI still retries a POST when the request never reached the engine (502/503)', async (t) => {
+  const originalFetch = global.fetch;
+  t.after(() => { global.fetch = originalFetch; });
+  const client = new NexusAI({ apiKey: 'k', baseUrl: 'http://example.test/api/v1' });
+  let calls = 0;
+  global.fetch = async () => {
+    calls++;
+    if (calls === 1) return { ok: false, status: 503, statusText: 'x', text: async () => '' };
+    return { ok: true, status: 200, headers: { get: () => 'application/json' }, text: async () => JSON.stringify({ response: 'ok' }) };
+  };
+  const res = await client.askJSON({ prompt: 'yo' });
+  assert.equal(res.response, 'ok');
+  assert.equal(calls, 2);
+});

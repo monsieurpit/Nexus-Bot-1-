@@ -48,6 +48,7 @@ const AI_RATE_LIMIT_ATTEMPTS_IMAGE = 20;
 const AI_RATE_LIMIT_WINDOW_MS = 60000;
 
 const MIN_CONTENT_LENGTH = 4;
+let lastEngineDownWarningAt = 0;
 
 // Higher sensitivity = acts on lower-confidence classifications.
 const SENSITIVITY_THRESHOLDS = { low: 0.95, medium: 0.90, high: 0.80 };
@@ -131,7 +132,15 @@ async function analyzeContent(text, imageUrls = [], recentMessages = [], current
       return classified;
     }
   } catch (err) {
-    logger.debug(`[AI Moderation] Central RaidShield call failed, defaulting to safe: ${err.message}`);
+    // Fail-open is deliberate (members aren't blocked while the engine is down), but it used to be
+    // logged at debug level only — AI moderation could be off for hours with nobody noticing.
+    // Warn, at most once every 5 minutes.
+    if (Date.now() - lastEngineDownWarningAt > 5 * 60 * 1000) {
+      lastEngineDownWarningAt = Date.now();
+      logger.warn(`[AI Moderation] RaidShield engine unreachable — messages are NOT being scanned (failing open as safe): ${err.message}`);
+    } else {
+      logger.debug(`[AI Moderation] Central RaidShield call failed, defaulting to safe: ${err.message}`);
+    }
   }
 
   return {

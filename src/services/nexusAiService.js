@@ -2,7 +2,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 import { logger } from '../utils/logger.js';
 import { NexusAI } from '../../nexus-ai.js';
-import { getUserMemories, saveUserMemory } from './memoryBrainService.js';
+import { getUserMemories, saveUserMemory, forgetUserMemories } from './memoryBrainService.js';
 import { getChannelHistory, recordChannelMessage, clearChannelHistory } from './channelHistoryService.js';
 import { logTelemetry, logCrash, logPersonaTrigger } from './aiTelemetryService.js';
 import { PermissionFlagsBits } from 'discord.js';
@@ -37,6 +37,11 @@ const disabledGuilds = new Set(); // targetId (guildId or channelId) -> boolean
 const DEACTIVATE_REGEX = /^(?:please\s+)?(?:desactiv(?:e|ate)|deactiv(?:e|ate)|d[ée]sactiv(?:e|er|é|ée|és|ées)?|disable|turn\s*off|shut\s*(?:down|up)|[ée]teins?)\b/i;
 // Same fix as DEACTIVATE_REGEX above — only require the command word to lead the message.
 const ACTIVATE_REGEX = /^(?:please\s+)?(?:reactivate|activate|r[ée]activ(?:e|er|é|ée|és|ées)?|activ(?:e|er|é|ée|és|ées)?|enable|turn\s*on|allume?|rallume?)\b/i;
+
+// "nexus forget me" / "forget everything about me" / "oublie-moi" — erases what Nexus stored about
+// that user (memoryBrainService.js). forgetUserMemories existed but nothing ever called it, so there
+// was no way for anyone to get their stored facts deleted.
+const FORGET_ME_REGEX = /^(?:please\s+|pls\s+)?(?:forget\s+(?:everything\s+|all\s+)?(?:about\s+)?me|delete\s+(?:my\s+(?:data|memories|info)|everything\s+(?:you\s+know\s+)?about\s+me)|oublie[- ]?(?:moi|tout\s+sur\s+moi))\b/i;
 
 const disabledAiResponses = [
   "Dude, y'all desactivated me, I ain't answering!",
@@ -382,6 +387,17 @@ export async function handleNexusAiMessage(message) {
     return true;
   }
 
+  if (FORGET_ME_REGEX.test(rawQuestion.trim())) {
+    await forgetUserMemories(message.client, message.author?.id);
+    await message.reply({
+      content: /oublie/i.test(rawQuestion)
+        ? "C'est fait, j'ai tout oublié ce que je savais sur toi. Qui t'es déjà, tabarnak?"
+        : "Done, I wiped everything I remembered about you. Who the fuck are you again?",
+      allowedMentions: SAFE_REPLY_MENTIONS,
+    }).catch((err) => logger.error('[Nexus AI] Error sending forget-me reply:', err));
+    return true;
+  }
+
   // If AI is currently disabled in this guild/channel, do not process regular prompts and notify the user
   const isDisabled = await isNexusAiDisabled(targetScopeId, message.client);
   if (isDisabled) {
@@ -469,13 +485,15 @@ export async function handleNexusAiMessage(message) {
       await message.channel.send({ content: chunks[i], allowedMentions: { parse: [] } });
     }
 
-    // 👍/👎 feedback — only when this guild actually has a #negative-feedback channel configured,
-    // so servers that don't use it don't get two reactions stuck on every single AI reply.
+    // Every real AI reply is tracked, so ANY member reaction on it (💀, 😂, 👎...) can reach the
+    // engine's learning system (messageReactionAdd.js). The 👍/👎 buttons themselves are still only
+    // added where a #negative-feedback channel is configured, so other servers don't get two
+    // reactions stuck on every AI reply.
     if (firstMessage && !result.error && message.guild) {
+      trackAiReply(firstMessage.id, { guildId: message.guild.id, question, answer });
       const { getGuildConfig } = await import('./guildConfig.js');
       const config = await getGuildConfig(message.client, message.guild.id).catch(() => null);
       if (config?.aiTelemetry?.negativeFeedbackChannelId) {
-        trackAiReply(firstMessage.id, { guildId: message.guild.id, question, answer });
         await firstMessage.react('👍').catch(() => {});
         await firstMessage.react('👎').catch(() => {});
       }
