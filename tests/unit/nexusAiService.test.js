@@ -80,3 +80,14 @@ test('"nexus" as the object of the question is kept ("do u like nexus"), a trail
   assert.equal(parse('what is 2+2 nexus?').question, 'what is 2+2');
   assert.equal(parse('you good, nexus').question, 'you good');
 });
+
+test('resolveNexusTrigger: a reply to one of Nexus\'s own answers counts without saying "nexus"', async () => {
+  const { resolveNexusTrigger, trackAiReply } = await import('../../src/services/nexusAiService.js');
+  const base = { client: { user: { id: '999' } }, mentions: {} };
+  assert.equal(resolveNexusTrigger({ ...base, content: 'lol fair', reference: { messageId: 'm1' } }), null);
+  trackAiReply('m1', { question: 'q', answer: 'a', guildId: 'g' });
+  assert.deepEqual(resolveNexusTrigger({ ...base, content: ' lol fair ', reference: { messageId: 'm1' } }), { matched: true, question: 'lol fair' });
+  assert.ok(resolveNexusTrigger({ ...base, content: 'and you?', reference: { messageId: 'x' }, mentions: { repliedUser: { id: '999' } } }));
+  assert.equal(resolveNexusTrigger({ ...base, content: 'no reply here' }), null);
+  assert.ok(resolveNexusTrigger({ ...base, content: 'nexus hi' }));
+});

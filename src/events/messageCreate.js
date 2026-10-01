@@ -12,7 +12,7 @@ import { getAfk, clearAfk } from '../services/afkService.js';
 import { handleAutoSlowmode } from '../services/autoSlowmodeService.js';
 import { handleChaosTriggers } from '../services/chaosTriggerService.js';
 import { handleStickyNote } from '../services/stickyNoteService.js';
-import { handleNexusAiMessage, parseNexusTrigger } from '../services/nexusAiService.js';
+import { handleNexusAiMessage, resolveNexusTrigger } from '../services/nexusAiService.js';
 import { recordChannelMessage } from '../services/channelHistoryService.js';
 import { recordWeeklyStat } from '../services/weeklySummaryService.js';
 import { handleDirectMessage } from '../services/dmService.js';
@@ -49,7 +49,7 @@ export default {
         isBot: false,
       });
 
-      const isNexusQuery = Boolean(parseNexusTrigger(message.content, client.user?.id));
+      const isNexusQuery = Boolean(resolveNexusTrigger(message));
 
       // Resolve ticket status ONCE — reused by all services that must stay
       // silent in ticket channels (scam detection, AI mod, chaos roasts, etc.)
