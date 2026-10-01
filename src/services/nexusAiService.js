@@ -123,7 +123,10 @@ async function requestNexusReply(question, userContext = {}) {
       : [];
     // Nexus's "brain" — channelHistoryService.js's rolling per-channel buffer, recorded on EVERY
     // message in messageCreate.js (not just ones addressed to Nexus).
-    const history = userContext.channelId
+    // The recent conversation is only used when the user REPLIED to one of Nexus's messages (Patrick,
+    // 2026-10-01): a plain "nexus ..." mention starts fresh. Callers that do not say (useHistory unset)
+    // keep the old behavior.
+    const history = userContext.channelId && userContext.useHistory !== false
       ? getChannelHistory(userContext.channelId, undefined, { excludeMessageId: userContext.messageId })
       : [];
     const data = await nexusClient.askJSON({
@@ -348,6 +351,17 @@ export function parseNexusTrigger(content, botUserId = null) {
 }
 
 /**
+ * True when the message is a Discord reply to one of Nexus's own messages (one this process tracked, or one
+ * Discord marks as replying to the bot). Only then does Nexus look at the recent conversation.
+ */
+export function isReplyToNexus(message) {
+  const refId = message?.reference?.messageId;
+  if (!refId) return false;
+  const botUserId = message.client?.user?.id;
+  return Boolean(getTrackedAiReply(refId)) || Boolean(botUserId && message.mentions?.repliedUser?.id === botUserId);
+}
+
+/**
  * Same as parseNexusTrigger, plus: a Discord reply to one of Nexus's own answers counts as talking
  * to him, so people don't have to say "nexus" in a back-and-forth (asked in #feature-ideas).
  * Only replies to answers this process tracked (or that Discord marks as replying to the bot)
@@ -480,6 +494,7 @@ export async function handleNexusAiMessage(message) {
       client: message.client,
       channelId: message.channel.id,
       messageId: message.id,
+      useHistory: isReplyToNexus(message),
       imageUrl
     });
     // allowedMentions already stops the actual ping, but "@everyone" still showed as text in the

@@ -91,3 +91,14 @@ test('resolveNexusTrigger: a reply to one of Nexus\'s own answers counts without
   assert.equal(resolveNexusTrigger({ ...base, content: 'no reply here' }), null);
   assert.ok(resolveNexusTrigger({ ...base, content: 'nexus hi' }));
 });
+
+test('isReplyToNexus: only a reply to one of Nexus\'s own messages counts, a plain mention does not', async () => {
+  const { isReplyToNexus, trackAiReply } = await import('../../src/services/nexusAiService.js');
+  const base = { client: { user: { id: '999' } }, mentions: {} };
+  assert.equal(isReplyToNexus({ ...base, content: 'nexus hi' }), false);
+  assert.equal(isReplyToNexus({ ...base, reference: { messageId: 'unknown' } }), false);
+  trackAiReply('m-reply-1', { question: 'q', answer: 'a', guildId: 'g' });
+  assert.equal(isReplyToNexus({ ...base, reference: { messageId: 'm-reply-1' } }), true);
+  assert.equal(isReplyToNexus({ ...base, reference: { messageId: 'x' }, mentions: { repliedUser: { id: '999' } } }), true);
+  assert.equal(isReplyToNexus({ ...base, reference: { messageId: 'x' }, mentions: { repliedUser: { id: '123' } } }), false);
+});
