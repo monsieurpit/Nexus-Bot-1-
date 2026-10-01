@@ -362,19 +362,13 @@ export function isReplyToNexus(message) {
 }
 
 /**
- * Same as parseNexusTrigger, plus: a Discord reply to one of Nexus's own answers counts as talking
- * to him, so people don't have to say "nexus" in a back-and-forth (asked in #feature-ideas).
- * Only replies to answers this process tracked (or that Discord marks as replying to the bot)
- * count, and the whole message is the question.
+ * The trigger check for a message: it has to say "nexus" (start or end) or ping him. Replying to one of his messages
+ * does NOT trigger him anymore (it only gives him the recent conversation, see isReplyToNexus).
  */
 export function resolveNexusTrigger(message) {
-  const botUserId = message.client?.user?.id;
-  const named = parseNexusTrigger(message.content, botUserId);
-  if (named) return named;
-  const refId = message.reference?.messageId;
-  if (!refId || !message.content?.trim()) return null;
-  const repliesToNexus = Boolean(getTrackedAiReply(refId)) || (botUserId && message.mentions?.repliedUser?.id === botUserId);
-  return repliesToNexus ? { matched: true, question: message.content.trim() } : null;
+  // Patrick (2026-10-01): replying to Nexus is NOT enough, you still have to say "nexus" (or ping him) for him
+  // to answer. A reply only decides whether he reads the recent conversation (see isReplyToNexus).
+  return parseNexusTrigger(message.content, message.client?.user?.id);
 }
 
 /**
