@@ -494,7 +494,22 @@ export async function handleNexusAiMessage(message) {
   // A bare "@Nexus" + image with no caption still needs SOME prompt text for the engine's own
   // language/intent detection to run against — mirrors the same fallback Nexus-AI-'s server.ts
   // itself already uses when an image arrives with no accompanying user text.
-  const question = rawQuestion.trim() || (imageUrl ? 'Analyze this uploaded image attachment' : bareMention ? 'nexus' : '');
+  // "<@123456>" means nothing to the model: user mentions become "@username" (2026-10-04: "should we invite <@id> to
+  // our goon party?" got "who even is <@123>?"). Role/channel mentions become their names too.
+  const namedQuestion = rawQuestion
+    .replace(/<@!?(\d+)>/g, (m, id) => {
+      const user = message.mentions?.users?.get(id);
+      return user ? `@${message.guild?.members?.cache?.get(id)?.displayName || user.username}` : m;
+    })
+    .replace(/<@&(\d+)>/g, (m, id) => {
+      const role = message.mentions?.roles?.get(id) || message.guild?.roles?.cache?.get(id);
+      return role ? `@${role.name}` : m;
+    })
+    .replace(/<#(\d+)>/g, (m, id) => {
+      const channel = message.mentions?.channels?.get(id) || message.guild?.channels?.cache?.get(id);
+      return channel ? `#${channel.name}` : m;
+    });
+  const question = namedQuestion.trim() || (imageUrl ? 'Analyze this uploaded image attachment' : bareMention ? 'nexus' : '');
 
   // Send typing indicator while waiting for the Nexus API. Discord only displays the typing
   // indicator for ~10s before it silently expires — a single one-shot call here used to mean a
