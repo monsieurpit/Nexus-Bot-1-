@@ -526,6 +526,21 @@ export async function handleNexusAiMessage(message) {
   try {
     // One complete, fully processed reply, sent once (no token-by-token streaming — the swear
     // floor / safety top-up only applies to the FINAL text). The typing indicator covers the wait.
+    // Nobody gets "slow down" any more: every message waits its turn in the engine's queue, and anyone who'd be 5th or
+    // later in line is told it might take a bit longer (Patrick, 2026-10-04).
+    const queue = await Promise.race([
+      nexusClient.getQueueStatus().catch(() => null),
+      new Promise((resolve) => setTimeout(() => resolve(null), 2500)),
+    ]);
+    const ahead = queue ? Number(queue.aheadOfNewRequest ?? (queue.pendingInWaitlist || 0) + (queue.runningNow || 0)) || 0 : 0;
+    if (ahead >= 4) {
+      const eta = Number(queue?.estimatedWaitSeconds) || 0;
+      await message.reply({
+        content: `⏳ lots of people are talking to me rn — you're #${ahead + 1} in line, so my answer might take a bit longer${eta ? ` (~${Math.max(5, eta)}s)` : ''}. hang tight.`,
+        allowedMentions: SAFE_REPLY_MENTIONS,
+      }).catch(() => {});
+    }
+
     const result = await requestNexusReply(question, {
       userId,
       username: message.author.username,
