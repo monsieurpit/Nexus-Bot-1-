@@ -103,3 +103,14 @@ test('isReplyToNexus: only a reply to one of Nexus\'s own messages counts, a pla
   assert.equal(isReplyToNexus({ ...base, reference: { messageId: 'x' }, mentions: { repliedUser: { id: '999' } } }), true);
   assert.equal(isReplyToNexus({ ...base, reference: { messageId: 'x' }, mentions: { repliedUser: { id: '123' } } }), false);
 });
+
+test('getReferencedMessage: returns the replied-to text and marks the bot\'s own messages', async () => {
+  const { getReferencedMessage } = await import('../../src/services/nexusAiService.js');
+  const client = { user: { id: '999' } };
+  assert.equal(await getReferencedMessage({ client, reference: null }), null);
+  const fromBot = await getReferencedMessage({ client, reference: { messageId: 'm' }, fetchReference: async () => ({ content: "Guys, I'm scratching my balls.", author: { id: '999', username: 'Nexus' }, embeds: [] }) });
+  assert.deepEqual(fromBot, { content: "Guys, I'm scratching my balls.", authorId: '999', username: 'Nexus', isBot: true });
+  const fromUser = await getReferencedMessage({ client, reference: { messageId: 'm' }, fetchReference: async () => ({ content: 'long text to summarise', author: { id: '5', username: 'Bob' }, embeds: [] }) });
+  assert.equal(fromUser.isBot, false);
+  assert.equal(await getReferencedMessage({ client, reference: { messageId: 'm' }, fetchReference: async () => { throw new Error('gone'); } }), null);
+});

@@ -7,6 +7,7 @@ import { errorEmbed } from '../../utils/embeds.js';
 import { relayedMessageMentions } from '../../utils/commandGuards.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { logger } from '../../utils/logger.js';
+import { recordChannelMessage } from '../../services/channelHistoryService.js';
 
 const AUTHORIZED_USER_ID = '1554657430393196594';
 
@@ -58,7 +59,16 @@ export default {
             }
 
             // @everyone/@here/role pings only if the member could send them themselves.
-            await target.send({ content: message, allowedMentions: relayedMessageMentions(interaction.member) });
+            const sent = await target.send({ content: message, allowedMentions: relayedMessageMentions(interaction.member) });
+            // Nexus "said" this, so it goes into his channel memory as his own message: a reply to it ("why are you
+            // scratching your balls 😭") is then answered knowing he said it (2026-10-04).
+            recordChannelMessage(target.id, {
+                messageId: sent?.id,
+                authorId: interaction.client.user.id,
+                username: 'Nexus',
+                content: message,
+                isBot: true,
+            });
 
             logger.info(
                 `[Say] ${interaction.user.tag} sent a message to #${target.name} in ${interaction.guild.name}`

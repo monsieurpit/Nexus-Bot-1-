@@ -129,6 +129,22 @@ async function requestNexusReply(question, userContext = {}) {
     const history = userContext.channelId && userContext.useHistory !== false
       ? getChannelHistory(userContext.channelId, undefined, { excludeMessageId: userContext.messageId })
       : [];
+    // The message being replied to is always given to the engine (Patrick, 2026-10-04: he replied "why are you
+    // scratching your balls" to a /say message and Nexus had no idea he'd said it, so he answered with medical facts;
+    // "summarise this" on a reply needs the replied-to text too). It goes last, as the most recent message.
+    const ref = userContext.referencedMessage;
+    if (ref?.content?.trim()) {
+      const already = history.some((m) => m.content === ref.content.trim().slice(0, 1000));
+      if (!already) {
+        history.push({
+          role: ref.isBot ? 'assistant' : 'user',
+          content: ref.content.trim().slice(0, 1500),
+          authorId: ref.authorId,
+          username: ref.username,
+          replyToAuthorId: ref.isBot ? userContext.userId : undefined,
+        });
+      }
+    }
     const data = await nexusClient.askJSON({
       prompt: question,
       authorId: userContext.userId,
@@ -354,6 +370,20 @@ export function parseNexusTrigger(content, botUserId = null) {
  * True when the message is a Discord reply to one of Nexus's own messages (one this process tracked, or one
  * Discord marks as replying to the bot). Only then does Nexus look at the recent conversation.
  */
+// The message this one replies to, as { content, authorId, username, isBot } (null when not a reply or not fetchable).
+export async function getReferencedMessage(message) {
+  if (!message?.reference?.messageId) return null;
+  try {
+    const ref = await message.fetchReference();
+    if (!ref) return null;
+    const text = [ref.content, ...(ref.embeds || []).map((e) => [e.title, e.description].filter(Boolean).join(': '))].filter(Boolean).join('\n').trim();
+    if (!text) return null;
+    return { content: text, authorId: ref.author?.id, username: ref.author?.username, isBot: ref.author?.id === message.client?.user?.id };
+  } catch {
+    return null;
+  }
+}
+
 export function isReplyToNexus(message) {
   const refId = message?.reference?.messageId;
   if (!refId) return false;
@@ -489,6 +519,7 @@ export async function handleNexusAiMessage(message) {
       channelId: message.channel.id,
       messageId: message.id,
       useHistory: isReplyToNexus(message),
+      referencedMessage: await getReferencedMessage(message),
       imageUrl
     });
     // allowedMentions already stops the actual ping, but "@everyone" still showed as text in the

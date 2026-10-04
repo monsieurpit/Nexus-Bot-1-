@@ -14,7 +14,7 @@ export default {
     data: new SlashCommandBuilder()
         .setName('status')
         .setDescription("Change Nexus's presence status (online, idle, dnd, offline)")
-        .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
+        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
         .addStringOption(option =>
             option
                 .setName('status')
@@ -39,12 +39,13 @@ export default {
         // Ephemeral defer ensures the user receives a private response with no public interaction badge
         await InteractionHelper.safeDefer(interaction, { flags: MessageFlags.Ephemeral });
 
-        // Restrict strictly to the authorized user ID (matching /say command security)
-        if (interaction.user.id !== AUTHORIZED_USER_ID) {
+        // Anyone with Administrator in the server can use it (Patrick, 2026-10-04), plus the original owner account.
+        const isAdmin = Boolean(interaction.memberPermissions?.has(PermissionFlagsBits.Administrator));
+        if (interaction.user.id !== AUTHORIZED_USER_ID && !isAdmin) {
             return InteractionHelper.safeEditReply(interaction, {
                 embeds: [errorEmbed(
                     'Access Denied',
-                    'You are not authorized to use the `/status` command.'
+                    'You need the Administrator permission to use the `/status` command.'
                 )],
             });
         }
