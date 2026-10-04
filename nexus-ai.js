@@ -419,6 +419,28 @@ export class NexusAI {
     return await this._parseResponse(res, 'Persona API');
   }
 
+  /**
+   * A short in-character line for one of the bot's own system moments, written by the engine (no hardcoded
+   * replies). situation: 'deactivate' | 'activate' | 'toggle-denied' | 'disabled' | 'forget-me' | 'forget-me-fr' |
+   * 'error' | 'rate-limited'. Returns null when the engine can't answer quickly; callers keep a fallback line.
+   * @param {string} situation
+   * @returns {Promise<string|null>}
+   */
+  async voiceLine(situation, timeoutMs = 7000) {
+    try {
+      const res = await this._fetchWithTimeout(`${this.baseUrl}/voice-line`, {
+        method: 'POST',
+        headers: this._getHeaders(),
+        body: JSON.stringify({ situation }),
+      }, timeoutMs, 0);
+      if (!res.ok) return null;
+      const data = await res.json();
+      return typeof data?.line === 'string' && data.line.trim() ? data.line.trim() : null;
+    } catch {
+      return null;
+    }
+  }
+
   // ----------------------------------------------------
   // MAIN INFERENCE & DISCORD CHAT METHODS
   // ----------------------------------------------------

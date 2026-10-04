@@ -43,6 +43,13 @@ const ACTIVATE_REGEX = /^(?:please\s+)?(?:reactivate|activate|r[ée]activ(?:e|er
 // was no way for anyone to get their stored facts deleted.
 const FORGET_ME_REGEX = /^(?:please\s+|pls\s+)?(?:forget\s+(?:everything\s+|all\s+)?(?:about\s+)?me|delete\s+(?:my\s+(?:data|memories|info)|everything\s+(?:you\s+know\s+)?about\s+me)|oublie[- ]?(?:moi|tout\s+sur\s+moi))\b/i;
 
+// Nexus's own words for the bot's system moments, written by the engine; the fixed lines below are only the fallback
+// when the engine can't answer within a few seconds (Patrick, 2026-10-04: "make sure there are no hardcoded answers").
+async function voiced(situation, fallback) {
+  const line = await nexusClient.voiceLine(situation).catch(() => null);
+  return line || fallback;
+}
+
 const disabledAiResponses = [
   "Dude, y'all desactivated me, I ain't answering!",
   "Bro, y'all literally turned my ass off, I ain't answering shit.",
@@ -181,7 +188,7 @@ async function requestNexusReply(question, userContext = {}) {
     // user gets told to slow down instead of the misleading "can't reach my engine" text.
     const rateLimited = /HTTP 429/.test(err?.message || '');
     const reply = rateLimited
-      ? "Whoa, slow the fuck down — you're asking faster than I can think. Try again in a few seconds."
+      ? await voiced('rate-limited', "Whoa, slow the fuck down — you're asking faster than I can think. Try again in a few seconds.")
       : generateOfflineFallbackResponse(question, userContext);
     return { reply, data: null, latencyMs: Date.now() - startedAt, error: err, rateLimited };
   }
@@ -432,7 +439,7 @@ export async function handleNexusAiMessage(message) {
   if (wantsDeactivate || wantsActivate) {
     if (!canToggleNexus(message)) {
       await message.reply({
-        content: "Nice try bro, only the server mods get to flip my switch.",
+        content: await voiced('toggle-denied', "Nice try bro, only the server mods get to flip my switch."),
         allowedMentions: SAFE_REPLY_MENTIONS,
       }).catch(err => logger.error('[Nexus AI] Error sending toggle-denied reply:', err));
       return true;
@@ -444,8 +451,8 @@ export async function handleNexusAiMessage(message) {
     }
     await message.reply({
       content: wantsDeactivate
-        ? "Alright, I'm desactivating my fucking ass."
-        : "Alright, I'm back up, what the fuck do you want?",
+        ? await voiced('deactivate', "Alright, I'm desactivating my fucking ass.")
+        : await voiced('activate', "Alright, I'm back up, what the fuck do you want?"),
       allowedMentions: SAFE_REPLY_MENTIONS,
     }).catch(err => logger.error('[Nexus AI] Error sending toggle reply:', err));
     return true;
@@ -455,8 +462,8 @@ export async function handleNexusAiMessage(message) {
     await forgetUserMemories(message.client, message.author?.id);
     await message.reply({
       content: /oublie/i.test(rawQuestion)
-        ? "C'est fait, j'ai tout oublié ce que je savais sur toi. Qui t'es déjà, tabarnak?"
-        : "Done, I wiped everything I remembered about you. Who the fuck are you again?",
+        ? await voiced('forget-me-fr', "C'est fait, j'ai tout oublié ce que je savais sur toi. Qui t'es déjà, tabarnak?")
+        : await voiced('forget-me', "Done, I wiped everything I remembered about you. Who the fuck are you again?"),
       allowedMentions: SAFE_REPLY_MENTIONS,
     }).catch((err) => logger.error('[Nexus AI] Error sending forget-me reply:', err));
     return true;
@@ -467,7 +474,8 @@ export async function handleNexusAiMessage(message) {
   if (isDisabled) {
     const randomDisabledMsg = disabledAiResponses[Math.floor(Math.random() * disabledAiResponses.length)];
     await message.reply({
-      content: randomDisabledMsg
+      content: await voiced('disabled', randomDisabledMsg),
+      allowedMentions: SAFE_REPLY_MENTIONS,
     }).catch(err => logger.error('[Nexus AI] Error sending disabled reply:', err));
     return true;
   }
@@ -479,23 +487,14 @@ export async function handleNexusAiMessage(message) {
   // ask "what is this" — that case now falls through to the real question below instead of the
   // generic "why'd you mention me" filler, same as before this fix would have shown for a plain
   // text-only ping.
-  if (printableCharacters.length === 0 && !imageUrl) {
-    if (userId === '1394001641899954368') {
-      await message.reply({
-        content: "What's good my fucking bro! How can I help your awesome ass today?"
-      }).catch(err => logger.error('[Nexus AI] Error sending chill prompt hint:', err));
-      return true;
-    }
-    await message.reply({
-      content: 'Hello buddy, why the fuck did you mention my name? You want me to answer your fucking question again?'
-    }).catch(err => logger.error('[Nexus AI] Error sending prompt hint:', err));
-    return true;
-  }
+  // A bare "nexus" / "@Nexus" with nothing else is answered by the engine like any other message (it greets back in
+  // its own words) instead of the old hardcoded "why the fuck did you mention my name?" line (2026-10-04).
+  const bareMention = printableCharacters.length === 0 && !imageUrl;
 
   // A bare "@Nexus" + image with no caption still needs SOME prompt text for the engine's own
   // language/intent detection to run against — mirrors the same fallback Nexus-AI-'s server.ts
   // itself already uses when an image arrives with no accompanying user text.
-  const question = rawQuestion.trim() || (imageUrl ? 'Analyze this uploaded image attachment' : '');
+  const question = rawQuestion.trim() || (imageUrl ? 'Analyze this uploaded image attachment' : bareMention ? 'nexus' : '');
 
   // Send typing indicator while waiting for the Nexus API. Discord only displays the typing
   // indicator for ~10s before it silently expires — a single one-shot call here used to mean a
@@ -534,7 +533,7 @@ export async function handleNexusAiMessage(message) {
     // Check if answer is missing or consists entirely of invisible blank characters
     if (!answer || cleanInvisibleCharacters(answer).length === 0) {
       await message.reply({
-        content: "Nah bro, I ran into a fucking error, Try again when I want to work...",
+        content: await voiced('error', "Nah bro, I ran into a fucking error, Try again when I want to work..."),
         allowedMentions: SAFE_REPLY_MENTIONS,
       }).catch(() => {});
       return true;
@@ -570,7 +569,7 @@ export async function handleNexusAiMessage(message) {
   } catch (error) {
     logger.error('[Nexus AI] Error handling message:', error);
     await message.reply({
-      content: "Nah bro, I ran into a fucking error, Try again when I want to work...",
+      content: await voiced('error', "Nah bro, I ran into a fucking error, Try again when I want to work..."),
       allowedMentions: SAFE_REPLY_MENTIONS,
     }).catch(() => {});
     return true;
