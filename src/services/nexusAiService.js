@@ -98,6 +98,36 @@ export async function setNexusAiDisabled(targetId, client, disabled = true) {
   }
 }
 
+// Server context for the engine's helper specialist (Patrick, 2026-10-05: translations, staff applications, server
+// management — "prioritize server context, staff hierarchy"). Built from Discord's own data, nothing to configure:
+// server name, member count, channel, the asker's roles + staff permissions, and the staff role ladder (roles with
+// moderation permissions, highest first). Never throws; null outside a server.
+const STAFF_PERMISSIONS = ['Administrator', 'ManageGuild', 'ManageRoles', 'BanMembers', 'KickMembers', 'ModerateMembers', 'ManageMessages', 'ManageChannels'];
+export function buildServerContext(message) {
+  try {
+    const guild = message?.guild;
+    if (!guild) return null;
+    const perms = (holder) => STAFF_PERMISSIONS.filter((p) => holder?.permissions?.has?.(PermissionFlagsBits[p]));
+    const staffRoles = [...guild.roles.cache.values()]
+      .filter((r) => r.id !== guild.id && !r.managed && perms(r).length)
+      .sort((a, b) => b.position - a.position)
+      .slice(0, 12)
+      .map((r) => ({ name: r.name, members: r.members?.size ?? null, permissions: perms(r) }));
+    const member = message.member;
+    return {
+      serverName: guild.name,
+      memberCount: guild.memberCount ?? null,
+      channel: message.channel?.name || null,
+      askerIsOwner: guild.ownerId === message.author?.id,
+      askerRoles: member ? [...member.roles.cache.values()].filter((r) => r.id !== guild.id).sort((a, b) => b.position - a.position).slice(0, 8).map((r) => r.name) : [],
+      askerStaffPermissions: perms(member),
+      staffRoles,
+    };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Minimal, genuinely last-resort local fallback — used only when the real Nexus API call itself
  * throws (network error, server down, timeout).
@@ -161,6 +191,7 @@ async function requestNexusReply(question, userContext = {}) {
       history,
       // A Discord image attachment is forwarded to the engine's vision pipeline.
       imageUrl: userContext.imageUrl || '',
+      serverContext: userContext.serverContext || null,
     });
     const reply = data?.response || data?.text || '';
     if (!reply) throw new Error('Empty response from Nexus API');
@@ -549,7 +580,8 @@ export async function handleNexusAiMessage(message) {
       messageId: message.id,
       useHistory: isReplyToNexus(message),
       referencedMessage: await getReferencedMessage(message),
-      imageUrl
+      imageUrl,
+      serverContext: buildServerContext(message),
     });
     // allowedMentions already stops the actual ping, but "@everyone" still showed as text in the
     // reply (live: a Casseurt rant said "he pings @everyone"). A zero-width space makes it plain text.

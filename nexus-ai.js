@@ -526,6 +526,9 @@ export class NexusAI {
       // server.ts's own comment on this same flag). Only askCodeEdit() below ever sets this;
       // every other call through askJSON/ask/askCode/etc. leaves it false and is unaffected.
       codeEditRequest: Boolean(opts.codeEditRequest),
+      // Server name, the asker's roles and staff permissions, and the staff role ladder — used by the engine's
+      // helper specialist (translations, staff applications, moderation, server management).
+      serverContext: opts.serverContext || null,
     };
 
     // 170s — comfortably above server.ts's own real worst-case budget for this endpoint (150s;
