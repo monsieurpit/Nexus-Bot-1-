@@ -515,6 +515,8 @@ export class NexusAI {
       customRules: allRules.join('\n'),
       imageUrl: opts.imageUrl || opts.image || opts.attachmentUrl || '',
       imageData: opts.imageData || '',
+      videoUrl: opts.videoUrl || '',
+      videoData: opts.videoData || '',
       image: opts.imageUrl || opts.image || '',
       temperature: typeof opts.temperature === 'number' ? opts.temperature : this.defaultTemperature,
       webSearch: opts.webSearch,

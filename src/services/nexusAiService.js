@@ -191,6 +191,7 @@ async function requestNexusReply(question, userContext = {}) {
       history,
       // A Discord image attachment is forwarded to the engine's vision pipeline.
       imageUrl: userContext.imageUrl || '',
+      videoUrl: userContext.videoUrl || '',
       serverContext: userContext.serverContext || null,
     });
     const reply = data?.response || data?.text || '';
@@ -463,6 +464,10 @@ export async function handleNexusAiMessage(message) {
   // rare enough in practice, and the engine's own vision call only ever looks at one image anyway).
   const imageAttachment = message.attachments?.find((a) => a.contentType?.startsWith('image/'));
   const imageUrl = imageAttachment?.url || '';
+  // Videos (2026-10-05): the engine downloads the attachment and analyses it (metadata, 12 frames, speech transcript;
+  // ~20-30 s for a 2-minute clip). Max 100 MB.
+  const videoAttachment = !imageUrl ? message.attachments?.find((a) => a.contentType?.startsWith('video/') && (a.size || 0) <= 100 * 1024 * 1024) : null;
+  const videoUrl = videoAttachment?.url || '';
 
   // Check for deactivation / reactivation triggers (e.g. "Nexus, desactivate", "@Nexus activate").
   const wantsDeactivate = DEACTIVATE_REGEX.test(rawQuestion.trim());
@@ -520,7 +525,7 @@ export async function handleNexusAiMessage(message) {
   // text-only ping.
   // A bare "nexus" / "@Nexus" with nothing else is answered by the engine like any other message (it greets back in
   // its own words) instead of the old hardcoded "why the fuck did you mention my name?" line (2026-10-04).
-  const bareMention = printableCharacters.length === 0 && !imageUrl;
+  const bareMention = printableCharacters.length === 0 && !imageUrl && !videoUrl;
 
   // A bare "@Nexus" + image with no caption still needs SOME prompt text for the engine's own
   // language/intent detection to run against — mirrors the same fallback Nexus-AI-'s server.ts
@@ -540,7 +545,7 @@ export async function handleNexusAiMessage(message) {
       const channel = message.mentions?.channels?.get(id) || message.guild?.channels?.cache?.get(id);
       return channel ? `#${channel.name}` : m;
     });
-  const question = namedQuestion.trim() || (imageUrl ? 'Analyze this uploaded image attachment' : bareMention ? 'nexus' : '');
+  const question = namedQuestion.trim() || (imageUrl ? 'Analyze this uploaded image attachment' : videoUrl ? 'what do you think of this video?' : bareMention ? 'nexus' : '');
 
   // Send typing indicator while waiting for the Nexus API. Discord only displays the typing
   // indicator for ~10s before it silently expires — a single one-shot call here used to mean a
@@ -581,6 +586,7 @@ export async function handleNexusAiMessage(message) {
       useHistory: isReplyToNexus(message),
       referencedMessage: await getReferencedMessage(message),
       imageUrl,
+      videoUrl,
       serverContext: buildServerContext(message),
     });
     // allowedMentions already stops the actual ping, but "@everyone" still showed as text in the
