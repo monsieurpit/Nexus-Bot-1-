@@ -452,6 +452,7 @@ export class NexusAI {
    * @param {Object|string} options - Prompt string or options object
    * @param {string} [options.prompt] - The question or user message
    * @param {string} [options.persona] - Override persona ('crashout-bot', 'roast-master', 'chill-mod', 'code-architect', etc.)
+   * @param {'v1'|'v2'} [options.routerVersion] - Engine version: 'v2' = specialist router (default), 'v1' = the original engine
    * @param {string} [options.authorId] - Discord user ID (e.g. '1394001641899954368')
    * @param {string} [options.username] - Discord display name
    * @param {boolean} [options.isSuperChillUser] - Activates VIP brother mode
@@ -531,6 +532,9 @@ export class NexusAI {
       // Server name, the asker's roles and staff permissions, and the staff role ladder — used by the engine's
       // helper specialist (translations, staff applications, moderation, server management).
       serverContext: opts.serverContext || null,
+      // Which engine answers: 'v2' (the specialist router — the default for everyone) or 'v1' (the original single-prompt
+      // engine, kept for SDK/API users who rely on its older behaviour). Leave it unset to get the server's default (v2).
+      routerVersion: opts.routerVersion === 'v1' || opts.routerVersion === 'v2' ? opts.routerVersion : undefined,
     };
 
     // 170s — comfortably above server.ts's own real worst-case budget for this endpoint (150s;
