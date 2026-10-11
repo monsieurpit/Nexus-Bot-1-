@@ -45,7 +45,7 @@ const FORGET_ME_REGEX = /^(?:please\s+|pls\s+)?(?:forget\s+(?:everything\s+|all\
 
 // Nexus's own words for the bot's system moments, written by the engine; the fixed lines below are only the fallback
 // when the engine can't answer within a few seconds (Patrick, 2026-10-04: "make sure there are no hardcoded answers").
-async function voiced(situation, fallback) {
+export async function voiced(situation, fallback) {
   const line = await nexusClient.voiceLine(situation).catch(() => null);
   return line || fallback;
 }

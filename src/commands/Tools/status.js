@@ -7,6 +7,7 @@ import {
 import { errorEmbed, successEmbed } from '../../utils/embeds.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { logger } from '../../utils/logger.js';
+import { voiced } from '../../services/nexusAiService.js';
 
 const AUTHORIZED_USER_ID = '1354229457522524322';
 
@@ -98,9 +99,11 @@ export default {
                 ]
             };
 
+            // Nexus announces it himself, written by the AI for THIS status (Patrick, 2026-10-11); the fixed phrases are only
+            // the fallback if the engine doesn't answer within a few seconds.
             const phrasesList = statusPhrases[statusChoice] || ['status updated'];
             const randomPhrase = phrasesList[Math.floor(Math.random() * phrasesList.length)];
-            const channelMessage = `I changed my status gng, ${randomPhrase}`;
+            const channelMessage = await voiced(`status-${statusChoice}`, `I changed my status gng, ${randomPhrase}`);
 
             // Build presence payload
             const presencePayload = {
