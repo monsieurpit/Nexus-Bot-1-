@@ -422,6 +422,14 @@ export function parseNexusTrigger(content, botUserId = null) {
     return { matched: true, question: endsWithObjectWord ? trimmed : suffixMatch[1].trim() };
   }
 
+  // 4. "nexus" written in Morse code (-. . -..- ..- ...), anywhere as a word (Patrick, 2026-10-12: talking to Nexus in
+  // Morse). Phones turn - into — / – and . into • / ·. The whole message goes to the engine, which decodes it and
+  // answers in Morse.
+  const morseWords = trimmed.replace(/[—–‒−_]/g, '-').replace(/[•·∙⋅]/g, '.').split(/\s*[/|]\s*|\s{3,}/).map((w) => w.trim().replace(/\s+/g, ' '));
+  if (morseWords.includes('-. . -..- ..- ...')) {
+    return { matched: true, question: trimmed };
+  }
+
   return null;
 }
 
