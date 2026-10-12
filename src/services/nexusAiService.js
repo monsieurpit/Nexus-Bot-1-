@@ -194,8 +194,18 @@ async function requestNexusReply(question, userContext = {}) {
       videoUrl: userContext.videoUrl || '',
       serverContext: userContext.serverContext || null,
     });
-    const reply = data?.response || data?.text || '';
+    let reply = data?.response || data?.text || '';
     if (!reply) throw new Error('Empty response from Nexus API');
+    // Personal memory (2026-10-11): the engine attaches its privacy notice the first time someone talks to Nexus after the
+    // update. It's DMed once (they started the interaction, so it isn't an unsolicited mass DM); if their DMs are closed,
+    // a small line goes under the reply instead.
+    if (typeof data?.privacyNotice === 'string' && data.privacyNotice && userContext.client && userContext.userId) {
+      const sent = await Promise.race([
+        userContext.client.users.fetch(userContext.userId).then((u) => u.send({ content: data.privacyNotice.slice(0, 1900), allowedMentions: { parse: [] } })).then(() => true),
+        new Promise((resolve) => setTimeout(() => resolve(false), 4000)),
+      ]).catch(() => false);
+      if (!sent) reply += '\n-# 🗂️ Nexus now remembers what you send him so he can banter properly. Say "nexus stop saving my messages" to turn it off — details in the Privacy Policy on the Nexus AI website.';
+    }
     if (hasMemoryAccess && data?.newMemory) {
       // Best-effort, fire-and-forget by design — a memory-persistence failure must never delay or
       // break the reply the user is actually waiting on.
@@ -494,15 +504,10 @@ export async function handleNexusAiMessage(message) {
     return true;
   }
 
+  // "forget me": the bot's own small fact list is cleared here, then the message goes on to the engine, which deletes the
+  // personal memory (saved messages + profile) and answers (2026-10-11).
   if (FORGET_ME_REGEX.test(rawQuestion.trim())) {
     await forgetUserMemories(message.client, message.author?.id);
-    await message.reply({
-      content: /oublie/i.test(rawQuestion)
-        ? await voiced('forget-me-fr', "C'est fait, j'ai tout oublié ce que je savais sur toi. Qui t'es déjà, tabarnak?")
-        : await voiced('forget-me', "Done, I wiped everything I remembered about you. Who the fuck are you again?"),
-      allowedMentions: SAFE_REPLY_MENTIONS,
-    }).catch((err) => logger.error('[Nexus AI] Error sending forget-me reply:', err));
-    return true;
   }
 
   // If AI is currently disabled in this guild/channel, do not process regular prompts and notify the user
