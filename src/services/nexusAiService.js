@@ -524,7 +524,8 @@ export async function handleNexusAiMessage(message) {
 
   // "forget me": the bot's own small fact list is cleared here, then the message goes on to the engine, which deletes the
   // personal memory (saved messages + profile) and answers (2026-10-11).
-  if (FORGET_ME_REGEX.test(rawQuestion.trim())) {
+  const forgetMe = FORGET_ME_REGEX.test(rawQuestion.trim());
+  if (forgetMe) {
     await forgetUserMemories(message.client, message.author?.id);
   }
 
@@ -614,6 +615,11 @@ export async function handleNexusAiMessage(message) {
     });
     // allowedMentions already stops the actual ping, but "@everyone" still showed as text in the
     // reply (live: a Casseurt rant said "he pings @everyone"). A zero-width space makes it plain text.
+    // "forget me" while the engine is down: the bot's own facts ARE wiped, so say so instead of "can't reach my engine" —
+    // and ask for it again later, since the saved messages live on the engine.
+    if (forgetMe && result.error && !result.rateLimited) {
+      result.reply = "done, wiped everything i had on you here. my engine's down rn tho, say \"nexus forget me\" again in a bit so ur saved messages go too";
+    }
     const answer = defuseMassMentions(result.reply);
 
     // Moderation (AI moderation / RaidShield) runs concurrently and may have deleted the question
