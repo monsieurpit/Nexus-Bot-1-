@@ -367,8 +367,18 @@ function splitIntoChunks(text, maxLength = 1900) {
     if (splitIdx === -1) {
       splitIdx = maxLength;
     }
-    chunks.push(remaining.substring(0, splitIdx).trim());
+    let chunk = remaining.substring(0, splitIdx).trim();
     remaining = remaining.substring(splitIdx).trim();
+    // Split inside a ``` code block (long code, long binary): close it here and reopen it in the next message with the
+    // same language, so both messages render as code (2026-10-11).
+    const fences = chunk.match(/```/g) || [];
+    if (fences.length % 2 === 1) {
+      const lastOpen = chunk.lastIndexOf('```');
+      const lang = (chunk.slice(lastOpen + 3).match(/^[\w+#-]*/) || [''])[0];
+      chunk += '\n```';
+      remaining = '```' + lang + '\n' + remaining;
+    }
+    chunks.push(chunk);
   }
 
   return chunks;
