@@ -632,6 +632,9 @@ export async function handleNexusAiMessage(message) {
       ...replyOptions,
     });
     for (let i = 1; i < chunks.length; i++) {
+      // A short pause between parts: long answers (long code, long binary programs) arrive in order and stay well under
+      // Discord's rate limit (2026-10-11).
+      await new Promise((r) => setTimeout(r, 700));
       await message.channel.send({ content: chunks[i], allowedMentions: { parse: [] } });
     }
 
