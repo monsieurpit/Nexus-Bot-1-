@@ -19,3 +19,12 @@ test('humanParts sends the engine parts only when they are the whole answer', ()
   // @everyone inside a part is defused like the rest of the reply
   assert.ok(!/(^|[^​])@everyone/.test(humanParts(['ok', '@everyone go eat shit'], 'ok @everyone go eat shit')?.[1] ?? '@everyone'));
 });
+
+test('analyzeThreat refuses to run without the RaidShield key (callers fall back to checkSecurity)', async () => {
+  const { NexusAI } = await import('../../nexus-ai.js');
+  const prev = process.env.NEXUS_RAIDSHIELD_KEY;
+  delete process.env.NEXUS_RAIDSHIELD_KEY;
+  const c = new NexusAI({ baseUrl: 'http://127.0.0.1:9/api/v1' });
+  await assert.rejects(() => c.analyzeThreat({ messageText: 'hi' }), /RaidShield key not configured/);
+  if (prev !== undefined) process.env.NEXUS_RAIDSHIELD_KEY = prev;
+});

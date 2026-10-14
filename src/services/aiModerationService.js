@@ -86,8 +86,30 @@ function formatMessageIdentity(message) {
   };
 }
 
-async function analyzeContent(text, imageUrls = [], recentMessages = [], currentMessage = null) {
+async function analyzeContent(text, imageUrls = [], recentMessages = [], currentMessage = null, context = {}) {
   const imageUrl = (imageUrls && imageUrls[0]) || '';
+
+  // The RaidShield SPECIALIST (engine v2/raidshieldSpecialist.ts, 2026-10-14): the full report — severity, evidence,
+  // link checks, recommended action — when this bot has the RaidShield key (NEXUS_RAIDSHIELD_KEY). Without the key, or
+  // if it fails, the 21-rule checkSecurity() below runs exactly as before.
+  if (nexusClient.raidshieldKey) {
+    try {
+      const report = await nexusClient.analyzeThreat({ messageText: text, imageUrl, context });
+      if (report && report.classification) {
+        const classified = {
+          classification: report.actionRecommended === 'ALLOW' ? 'safe' : report.legacyClassification || 'scam',
+          confidence: typeof report.confidence === 'number' ? report.confidence : 0.9,
+          reason: report.staffSummary || report.threatType || 'RaidShield specialist',
+          reviewOnly: report.actionRecommended === 'FLAG_FOR_REVIEW',
+          details: report,
+        };
+        if (imageUrl) setCachedImage(imageUrl, classified);
+        return classified;
+      }
+    } catch (err) {
+      logger.debug(`[AI Moderation] RaidShield specialist failed (${err.message}), using the 21-rule scan`);
+    }
+  }
 
   // The image cache (getCachedImage/setCachedImage) used to be fully implemented but never
   // actually called anywhere — every image-bearing message paid the real vision-model round-trip
@@ -313,7 +335,8 @@ async function sendAiAlert(message, client, aiResult, action, aiConfig) {
     delete: 'Message Deleted / Mensaje Eliminado',
     timeout: 'Timed Out / Silenciado',
     failed: '⚠️ Action FAILED — check bot role position/permissions / Acción FALLIDA — revisa el rol/permisos del bot',
-    none: '⚠️ No action taken / Ninguna acción tomada'
+    none: '⚠️ No action taken / Ninguna acción tomada',
+    review: '🔎 Sent to staff review — nothing done to the member / Enviado a revisión del staff — no se tomó ninguna acción'
   };
 
   const embed = createEmbed({
@@ -346,6 +369,29 @@ async function sendAiAlert(message, client, aiResult, action, aiConfig) {
         value: actionLabels[action] || action,
         inline: true
       },
+      // The specialist's full report (when the bot has the RaidShield key).
+      ...(aiResult.details ? [
+        {
+          name: 'Threat / Amenaza',
+          value: `**${String(aiResult.details.threatType || aiResult.details.classification).slice(0, 200)}** — ${String(aiResult.details.classification).toUpperCase()}, severity ${String(aiResult.details.severity || '?').toUpperCase()}`,
+          inline: false
+        },
+        {
+          name: 'Evidence / Evidencia',
+          value: (aiResult.details.evidence || []).slice(0, 6).map((e) => `• \`${String(e.value).slice(0, 120)}\` — ${String(e.why || e.type).slice(0, 120)}`).join('\n').slice(0, 1024) || '—',
+          inline: false
+        },
+        ...((aiResult.details.links || []).length ? [{
+          name: 'Links / Enlaces',
+          value: aiResult.details.links.slice(0, 5).map((l) => `• ${l.domain}: **${l.verdict}** (${l.why})`).join('\n').slice(0, 1024),
+          inline: false
+        }] : []),
+        {
+          name: 'Recommended / Recomendado',
+          value: `${aiResult.details.actionRecommended}${aiResult.details.timeoutMinutes ? ` (${aiResult.details.timeoutMinutes} min)` : ''} · false-positive risk ${aiResult.details.falsePositiveRisk}${aiResult.details.falsePositiveNote ? ` — ${String(aiResult.details.falsePositiveNote).slice(0, 200)}` : ''}`,
+          inline: false
+        },
+      ] : []),
       {
         name: 'Message Content / Contenido',
         value: (message.content || '[No text / Sin texto]').slice(0, 1024),
@@ -530,7 +576,13 @@ export class AiModerationService {
       // scanned message) but the RaidShield endpoint has no field for it and it was never sent —
       // pure rate-limit pressure for nothing, so it is no longer fetched.
       const currentMessage = formatMessageIdentity(message);
-      const result = await analyzeContent(text, imageUrls, [], currentMessage);
+      // What the specialist needs to judge a raid / a throwaway account (no extra Discord API call).
+      const context = {
+        accountAgeDays: message.author?.createdTimestamp ? Math.floor((Date.now() - message.author.createdTimestamp) / 86400000) : undefined,
+        joinedMinutesAgo: message.member?.joinedTimestamp ? Math.floor((Date.now() - message.member.joinedTimestamp) / 60000) : undefined,
+        channelName: message.channel?.name || undefined,
+      };
+      const result = await analyzeContent(text, imageUrls, [], currentMessage, context);
 
       if (!result) {
         logger.debug('No analysis result returned');
@@ -547,6 +599,11 @@ export class AiModerationService {
         return;
       }
 
+      // Only the AI suspects it (no rule, no bad link): staff look, nothing is done to the member.
+      if (result.reviewOnly) {
+        await sendAiAlert(message, message.client, result, 'review', aiConfig).catch(() => {});
+        return;
+      }
       const action = getActionForClassification(aiConfig, result.classification);
 
       logger.warn(`🚨 AI MODERATION TRIGGERED: ${result.classification.toUpperCase()} (${Math.round(result.confidence * 100)}%)`, {

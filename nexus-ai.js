@@ -104,7 +104,10 @@ export class NexusAI {
    * @param {number} [config.temperature] - Default model temperature (0.0 to 2.0)
    * @param {string} [config.authorId] - Default Discord author ID for queries (e.g. VIP ID '1394001641899954368')
    */
-  constructor({ apiKey, baseUrl, persona, rules, temperature, authorId } = {}) {
+  constructor({ apiKey, baseUrl, persona, rules, temperature, authorId, raidshieldKey } = {}) {
+    // The RaidShield specialist's own key (analyzeThreat) — separate from the API key, which the engine accepts from
+    // anyone. Only the bot's moderation sets it (NEXUS_RAIDSHIELD_KEY).
+    this.raidshieldKey = raidshieldKey || (typeof process !== 'undefined' && process.env.NEXUS_RAIDSHIELD_KEY) || '';
     this.apiKey =
       apiKey ||
       (typeof process !== 'undefined' && (process.env.NEXUS_API_KEY || process.env.API_KEY)) ||
@@ -1025,6 +1028,37 @@ export class NexusAI {
       body: JSON.stringify({ messageText, authorId, imageUrl, imageData }),
     }, 170000);
     return await this._parseResponse(res, 'RaidShield API');
+  }
+
+  /**
+   * The RaidShield SPECIALIST — the full threat report, for the Discord bot's AI moderation only. Needs the RaidShield key
+   * (constructor `raidshieldKey` or NEXUS_RAIDSHIELD_KEY); without it this throws and callers keep using checkSecurity().
+   * It can't be reached through chat or changed by personas / rules.
+   *
+   * @param {Object} options
+   * @param {string} [options.messageText] - Raw message content
+   * @param {string} [options.imageUrl] - Discord attachment URL
+   * @param {string} [options.imageData] - Base64 Data URL
+   * @param {Object} [options.context] - { recentMessages?: string[], accountAgeDays?: number, joinedMinutesAgo?: number, channelName?: string }
+   * @returns {Promise<{
+   *   classification: 'safe'|'scam'|'phishing'|'malware'|'spam'|'raid'|'nsfw'|'harassment'|'bot',
+   *   legacyClassification: 'safe'|'scam'|'spam'|'bot'|'raid',
+   *   confidence: number, severity: 'none'|'low'|'medium'|'high'|'critical', threatType: string,
+   *   evidence: Array<{ type: string, value: string, why: string }>,
+   *   links: Array<{ url: string, domain: string, verdict: 'trusted'|'look-alike'|'suspicious'|'unknown', why: string }>,
+   *   actionRecommended: 'ALLOW'|'FLAG_FOR_REVIEW'|'DELETE'|'DELETE_AND_TIMEOUT'|'KICK'|'BAN', timeoutMinutes: number,
+   *   staffSummary: string, userMessage: string, falsePositiveRisk: 'low'|'medium'|'high', falsePositiveNote: string,
+   *   language: string, ruleScan: Object, aiReviewed: boolean, scannedImage: boolean, imageDescription?: string, timestamp: string
+   * }>}
+   */
+  async analyzeThreat({ messageText = '', imageUrl = '', imageData = '', context = {} } = {}) {
+    if (!this.raidshieldKey) throw new Error('RaidShield key not configured (NEXUS_RAIDSHIELD_KEY)');
+    const res = await this._fetchWithTimeout(`${this.baseUrl}/raidshield/analyze`, {
+      method: 'POST',
+      headers: this._getHeaders({ 'x-raidshield-key': this.raidshieldKey }),
+      body: JSON.stringify({ messageText, imageUrl, imageData, context }),
+    }, 170000);
+    return await this._parseResponse(res, 'RaidShield specialist');
   }
 
   /**
