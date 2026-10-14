@@ -347,6 +347,19 @@ function cleanInvisibleCharacters(str) {
   return str.replace(/[\s\u115f\u1160\u2800\u3164\uffa0\u200b-\u200f\ufeff\u00a0\u2000-\u200a\u202f\u205f\u3000\u00ad]/g, '');
 }
 
+// The engine's message parts, if they're usable: 2-3 short non-empty parts that together are the whole answer (the bot
+// never drops words — if anything looks off, the answer goes as one message like before).
+export function humanParts(parts, answer) {
+  if (!Array.isArray(parts)) return null;
+  // An emoji back for a pure reaction ("lol" → "💀") is a whole answer on its own.
+  if (parts.length === 1 && /^(?:\p{Extended_Pictographic}\uFE0F?){1,3}$/u.test(String(parts[0] || '').trim())) return [String(parts[0]).trim()];
+  if (parts.length < 2 || parts.length > 3) return null;
+  const clean = parts.map((p) => defuseMassMentions(String(p || '')).trim());
+  if (clean.some((p) => !p || p.length > 1900)) return null;
+  const squash = (t) => t.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+  return squash(clean.join('')) === squash(answer) ? clean : null;
+}
+
 /**
  * Splits text into safe chunks under the Discord 2000 character limit.
  */
@@ -639,17 +652,30 @@ export async function handleNexusAiMessage(message) {
     // The question may have been deleted by moderation while the engine was thinking — replying
     // to a deleted message would throw "Unknown message", so fall back to a plain channel send.
     const replyOptions = { failIfNotExists: false };
-    const chunks = splitIntoChunks(answer);
+    // Texting like a person (engine v2/texting.ts, 2026-10-13): a short chat reply can come as 2-3 messages ("nah" …
+    // "ur cooked"), each after a typing pause as long as it takes to type it; a long answer is still split by length.
+    const parts = humanParts(result.data?.parts, answer);
+    const chunks = parts || splitIntoChunks(answer);
     const firstMessage = await message.reply({
       content: chunks[0],
       allowedMentions: SAFE_REPLY_MENTIONS,
       ...replyOptions,
     });
     for (let i = 1; i < chunks.length; i++) {
-      // A short pause between parts: long answers (long code, long binary programs) arrive in order and stay well under
-      // Discord's rate limit (2026-10-11).
-      await new Promise((r) => setTimeout(r, 700));
+      if (parts) {
+        // Typing pace: ~40 ms a character, 0.6-3 s, with the typing indicator on.
+        message.channel.sendTyping().catch(() => {});
+        await new Promise((r) => setTimeout(r, Math.min(3000, Math.max(600, chunks[i].length * 40))));
+      } else {
+        // A short pause between parts: long answers (long code, long binary programs) arrive in order and stay well under
+        // Discord's rate limit (2026-10-11).
+        await new Promise((r) => setTimeout(r, 700));
+      }
       await message.channel.send({ content: chunks[i], allowedMentions: { parse: [] } });
+    }
+    // Now and then he also reacts to their message (💀 😭) — on top of the reply, never instead of it.
+    if (typeof result.data?.react === 'string' && /^\p{Extended_Pictographic}/u.test(result.data.react)) {
+      message.react(result.data.react).catch(() => {});
     }
 
     // Every real AI reply is tracked, so ANY member reaction on it (💀, 😂, 👎...) can reach the
