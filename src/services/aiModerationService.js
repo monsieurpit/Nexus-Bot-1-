@@ -3,6 +3,7 @@ import { checkRateLimit } from '../utils/rateLimiter.js';
 import { QuarantineService } from './quarantineService.js';
 import { createEmbed } from '../utils/embeds.js';
 import { NexusAI } from '../../nexus-ai.js';
+import { resolveNexusTrigger, isReplyToNexus } from './nexusAiService.js';
 
 // Talks to the same real, deployed Nexus AI RaidShield engine as nexusAiService.js, through the
 // official SDK instead of a duplicated raw fetch + local heuristic classifier - the central
@@ -49,6 +50,23 @@ const AI_RATE_LIMIT_WINDOW_MS = 60000;
 
 const MIN_CONTENT_LENGTH = 4;
 let lastEngineDownWarningAt = 0;
+let lastKeyRejectedWarningAt = 0;
+
+// Messages TO Nexus are not reviewed (Patrick, 2026-10-18: RaidShield kept alerting on people talking to Nexus — he
+// answers those himself, and the engine already checks scams inside his chat). "Talking to Nexus" = the same trigger
+// that makes him answer ("nexus …" / "… nexus" / a ping) or a Discord reply to one of his messages. A message that
+// carries a link or an invite is STILL scanned: "nexus" in front of a phishing link must not be a way around RaidShield.
+const LINK_RE = /(?:https?:\/\/|www\.|discord(?:app)?\.(?:gg|com\/invite)\/|\b[a-z0-9-]+\.(?:gg|ru|xyz|top|click|link|site|live|gift|shop|store|io|me|com|net|org)\/\S)/i;
+export function isDirectedAtNexus(message) {
+  try {
+    return Boolean(resolveNexusTrigger(message)) || isReplyToNexus(message);
+  } catch {
+    return false;
+  }
+}
+export function skipsReviewAsNexusChat(message) {
+  return isDirectedAtNexus(message) && !LINK_RE.test(message?.content || '');
+}
 
 // Higher sensitivity = acts on lower-confidence classifications.
 const SENSITIVITY_THRESHOLDS = { low: 0.95, medium: 0.90, high: 0.80 };
@@ -107,7 +125,16 @@ async function analyzeContent(text, imageUrls = [], recentMessages = [], current
         return classified;
       }
     } catch (err) {
-      logger.debug(`[AI Moderation] RaidShield specialist failed (${err.message}), using the 21-rule scan`);
+      // A 404 here means the engine REJECTED the key (it hides the endpoint) — an operational error, not a verdict.
+      // It used to be debug-only, so every scan quietly fell back to the 21-rule scan for days.
+      if (/\b404\b|not found/i.test(err.message || '')) {
+        if (Date.now() - lastKeyRejectedWarningAt > 10 * 60 * 1000) {
+          lastKeyRejectedWarningAt = Date.now();
+          logger.warn('[AI Moderation] The engine rejected NEXUS_RAIDSHIELD_KEY (wrong key) — the RaidShield specialist is OFF, using the 21-rule scan. Copy ~/.nexus-learning/raidshield-key from the engine Mac into the bot\'s NEXUS_RAIDSHIELD_KEY.');
+        }
+      } else {
+        logger.debug(`[AI Moderation] RaidShield specialist failed (${err.message}), using the 21-rule scan`);
+      }
     }
   }
 
@@ -499,6 +526,11 @@ export class AiModerationService {
       }
 
       logger.debug('🛡️ Nexus AI RaidShield: Processing message');
+
+      if (skipsReviewAsNexusChat(message)) {
+        logger.debug('AI moderation: message is talking to Nexus (no link), not reviewed');
+        return;
+      }
 
       const member = message.member?.id === message.author.id
         ? message.member
