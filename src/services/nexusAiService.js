@@ -6,6 +6,7 @@ import { getUserMemories, saveUserMemory, forgetUserMemories } from './memoryBra
 import { getChannelHistory, recordChannelMessage, clearChannelHistory } from './channelHistoryService.js';
 import { logTelemetry, logCrash, logPersonaTrigger } from './aiTelemetryService.js';
 import { PermissionFlagsBits } from 'discord.js';
+import { parseReactRequest, performReactRequest, REACT_FAIL_LINES } from './nexusReactService.js';
 
 // Talks to your real, deployed Nexus AI engine — the same custom engine that lives in the
 // Nexus-AI- repo (footballIntelligence.ts, bm25Engine.ts, reasoningEngine.ts, etc.), instead of
@@ -583,6 +584,16 @@ export async function handleNexusAiMessage(message) {
       return channel ? `#${channel.name}` : m;
     });
   const question = namedQuestion.trim() || (imageUrl ? 'Analyze this uploaded image attachment' : videoUrl ? 'what do you think of this video?' : bareMention ? 'nexus' : '');
+
+  // "nexus react 💀 to that": a real reaction, done here (nexusReactService.js) — he only says it worked if it did.
+  const reactReq = !imageUrl && !videoUrl ? parseReactRequest(question) : null;
+  if (reactReq) {
+    const done = await performReactRequest(message, reactReq);
+    logger.info(`[nexusReact] ${done.ok ? 'reacted' : `failed (${done.reason})`} ${reactReq.emoji || reactReq.customName} for ${message.author.id}`);
+    if (!done.ok) await message.reply({ content: REACT_FAIL_LINES[done.reason] || REACT_FAIL_LINES['api-error'], allowedMentions: SAFE_REPLY_MENTIONS, failIfNotExists: false }).catch(() => {});
+    else if (done.target?.id !== message.id) await message.react('👍').catch(() => {});
+    return true;
+  }
 
   // Send typing indicator while waiting for the Nexus API. Discord only displays the typing
   // indicator for ~10s before it silently expires — a single one-shot call here used to mean a
