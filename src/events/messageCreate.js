@@ -12,7 +12,8 @@ import { getAfk, clearAfk } from '../services/afkService.js';
 import { handleAutoSlowmode } from '../services/autoSlowmodeService.js';
 import { handleChaosTriggers } from '../services/chaosTriggerService.js';
 import { handleStickyNote } from '../services/stickyNoteService.js';
-import { handleNexusAiMessage, resolveNexusTrigger } from '../services/nexusAiService.js';
+import { handleNexusAiMessage, resolveNexusTrigger, isReplyToNexus } from '../services/nexusAiService.js';
+import { maybeJumpIn } from '../services/nexusJumpInService.js';
 import { recordChannelMessage } from '../services/channelHistoryService.js';
 import { recordWeeklyStat } from '../services/weeklySummaryService.js';
 import { handleDirectMessage } from '../services/dmService.js';
@@ -102,6 +103,10 @@ export default {
       // Reply-based personality triggers — silent in ticket channels, on messages addressed to
       // Nexus (Nexus answers those itself), and when the AFK handler already replied, so a single
       // message never gets a pile of different bot replies.
+      // He sometimes jumps into the conversation on his own (nexusJumpInService.js — rare, budgeted, dry-run by default).
+      if (!isTicketChannel && !isNexusQuery && !afkReplied && !isReplyToNexus(message)) {
+        maybeJumpIn(message).catch(() => {});
+      }
       if (!isTicketChannel && !isNexusQuery && !afkReplied) {
         await handleChaosTriggers(message).catch(err =>
           logger.debug('Error in chaos trigger handler:', err)

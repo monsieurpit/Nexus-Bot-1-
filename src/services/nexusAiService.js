@@ -157,7 +157,7 @@ function generateOfflineFallbackResponse(question, userContext) {
  * between separate messages) is wired in here when `userContext.client` is provided. Passing
  * `client` is optional: any caller that doesn't provide one just skips memory loading/saving.
  */
-async function requestNexusReply(question, userContext = {}) {
+export async function requestNexusReply(question, userContext = {}) {
   const isSuperChillUser = userContext.userId === '1394001641899954368' || Boolean(userContext.isSuperChillUser);
   const hasMemoryAccess = Boolean(userContext.client && userContext.userId);
   const startedAt = Date.now();
@@ -201,6 +201,7 @@ async function requestNexusReply(question, userContext = {}) {
       imageUrl: userContext.imageUrl || '',
       videoUrl: userContext.videoUrl || '',
       serverContext: userContext.serverContext || null,
+      unprompted: userContext.unprompted === true,
     });
     let reply = data?.response || data?.text || '';
     if (!reply) throw new Error('Empty response from Nexus API');
