@@ -123,6 +123,13 @@ export function buildServerContext(message) {
       askerRoles: member ? [...member.roles.cache.values()].filter((r) => r.id !== guild.id).sort((a, b) => b.position - a.position).slice(0, 8).map((r) => r.name) : [],
       askerStaffPermissions: perms(member),
       staffRoles,
+      // The room (2026-10-18, "maxed-out human" phase 4): the last few lines in this channel from OTHER people (and his own),
+      // so "what do u think of that" / "he's lying" / "lmaooo" make sense. The engine only uses it when the message points
+      // at the room — a plain "nexus …" question still starts fresh (Patrick, 2026-10-01).
+      room: getChannelHistory(message.channel?.id, 12, { excludeMessageId: message.id })
+        .filter((m) => m.content && m.content.trim() && (m.role === 'assistant' || m.authorId !== message.author?.id))
+        .slice(-6)
+        .map((m) => ({ name: m.role === 'assistant' ? 'Nexus' : m.username || 'someone', text: String(m.content).replace(/\s+/g, ' ').slice(0, 160), isNexus: m.role === 'assistant' })),
     };
   } catch {
     return null;
