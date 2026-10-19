@@ -17,6 +17,18 @@ const GUILD_PER_HOUR = 6;
 const QUIET_CHANNEL_RE = /ticket|staff|mod|admin|log|announce|rule|partner|apply|application|welcome|verify|giveaway|report|appeal|support|vent|serious/i;
 const SERIOUS_RE = /\b(?:died|passed\s+away|funeral|suicid\w*|kill\s+myself|self[\s-]?harm|abus\w*|hospital|cancer|depress\w*|panic\s+attack|police|harass\w*)\b/i;
 
+// Jump-ins only happen in channels whose name contains "chat" or "general" (Patrick, 2026-10-19) — whatever emojis,
+// separators or fancy letters surround it: "💬┃general", "『chat』", "ɢᴇɴᴇʀᴀʟ-ᴄʜᴀᴛ", "General_Chat_2". Anywhere else he never jumps in.
+const SMALL_CAPS = { 'ᴄ': 'c', 'ʜ': 'h', 'ᴀ': 'a', 'ᴛ': 't', 'ɢ': 'g', 'ᴇ': 'e', 'ɴ': 'n', 'ʀ': 'r', 'ʟ': 'l' };
+export function isJumpInChannel(name) {
+  const plain = String(name || '')
+    .normalize('NFKD')
+    .toLowerCase()
+    .replace(/[ᴄʜᴀᴛɢᴇɴʀʟ]/g, (c) => SMALL_CAPS[c])
+    .replace(/[^a-z]/g, '');
+  return plain.includes('chat') || plain.includes('general');
+}
+
 const lastInChannel = new Map(); // channelId → time
 const guildLog = new Map(); // guildId → [times]
 const pendingQuestions = new Map(); // channelId → timer
@@ -43,6 +55,8 @@ function budgetOk(message, now = Date.now()) {
   const ch = message.channel?.id;
   const g = message.guild?.id;
   if (!ch || !g) return false;
+  if (!isJumpInChannel(message.channel?.name)) return false;
+  // (even a "staff-chat" / "ticket-chat" stays off limits)
   if (QUIET_CHANNEL_RE.test(message.channel?.name || '')) return false;
   if (now - (lastInChannel.get(ch) || 0) < CHANNEL_COOLDOWN_MS) return false;
   const times = (guildLog.get(g) || []).filter((t) => now - t < 3600_000);
@@ -91,7 +105,7 @@ async function jumpIn(message, kind) {
 /** Called for every message NOT addressed to Nexus (messageCreate.js). Never throws. */
 export async function maybeJumpIn(message) {
   try {
-    if (!message?.guild || message.author?.bot || MODE() === 'off') return;
+    if (!message?.guild || message.author?.bot || MODE() === 'off' || !isJumpInChannel(message.channel?.name)) return;
     const botId = message.client?.user?.id;
     const c = candidateMoment(message, botId);
     if (c && Math.random() < c.chance) return void (await jumpIn(message, c.kind));
@@ -112,4 +126,4 @@ export async function maybeJumpIn(message) {
   }
 }
 
-export const __test = { candidateMoment, budgetOk, spend, lastInChannel, guildLog };
+export const __test = { candidateMoment, budgetOk, spend, lastInChannel, guildLog, isJumpInChannel };
