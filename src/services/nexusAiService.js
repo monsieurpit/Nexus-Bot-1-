@@ -133,6 +133,8 @@ export function buildServerContext(message) {
         .slice(-20)
         .map((m) => ({
           name: m.role === 'assistant' ? 'Nexus' : m.username || 'someone',
+          // who they are to him (the engine's who's who: a regular, new, back after days)
+          id: m.role === 'assistant' ? undefined : m.authorId,
           text: String(m.content).replace(/\s+/g, ' ').slice(0, 160),
           isNexus: m.role === 'assistant',
           self: m.role !== 'assistant' && m.authorId === message.author?.id,
