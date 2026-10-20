@@ -203,6 +203,7 @@ export async function requestNexusReply(question, userContext = {}) {
       serverContext: userContext.serverContext || null,
       unprompted: userContext.unprompted === true,
       openMode: userContext.openMode === true,
+      openChecked: userContext.openChecked === true,
     });
     let reply = data?.response || data?.text || '';
     if (!reply) throw new Error('Empty response from Nexus API');
@@ -608,6 +609,18 @@ export async function handleNexusAiMessage(message, opts = {}) {
     return true;
   }
 
+  // Open mode: decide FIRST, silently — "Nexus is typing…" only shows once he's actually going to reply (Patrick,
+  // 2026-10-19: seeing him type for messages he then ignored was annoying).
+  let openChecked = false;
+  if (openMode) {
+    const verdict = await nexusClient.openCheck({ message: question, username: message.author.username, room: buildServerContext(message)?.room || [] }).catch(() => null);
+    if (!verdict?.reply) {
+      logger.debug(`[openMode] stays out: ${verdict?.why || 'check failed'}`);
+      return false;
+    }
+    openChecked = true;
+  }
+
   // Send typing indicator while waiting for the Nexus API. Discord only displays the typing
   // indicator for ~10s before it silently expires — a single one-shot call here used to mean a
   // reply taking longer than that (a broad factual question, or the thorough/deep-cot reasoning
@@ -652,6 +665,7 @@ export async function handleNexusAiMessage(message, opts = {}) {
       videoUrl,
       serverContext: buildServerContext(message),
       openMode,
+      openChecked,
     });
     if (openMode && (result.error || !String(result.reply || '').trim() || /^\s*PASS\b/i.test(String(result.reply || '')))) return false;
     // allowedMentions already stops the actual ping, but "@everyone" still showed as text in the

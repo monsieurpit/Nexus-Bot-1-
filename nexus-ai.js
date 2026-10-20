@@ -518,6 +518,7 @@ export class NexusAI {
       unprompted: opts.unprompted === true ? true : undefined,
       // open mode (src/services/nexusOpenModeService.js): a chat message nobody aimed at anyone — he may PASS
       openMode: opts.openMode === true ? true : undefined,
+      openChecked: opts.openChecked === true ? true : undefined,
       memories: Array.isArray(opts.memories) ? opts.memories : [],
       rules: allRules.join('\n'),
       customRules: allRules.join('\n'),
@@ -1242,6 +1243,21 @@ export class NexusAI {
   /**
    * Check FIFO queue waitlist metrics.
    */
+  /**
+   * Open mode, step 1: should Nexus reply to this chat message at all? Asked before showing "typing…" so he never types
+   * for a message he then stays out of. Short timeout; on any failure the answer is "no".
+   * @param {{ message: string, username?: string, room?: Array<{name: string, text: string, isNexus?: boolean}> }} opts
+   * @returns {Promise<{ reply: boolean, why: string }>}
+   */
+  async openCheck({ message = '', username = '', room = [] } = {}) {
+    const res = await this._fetchWithTimeout(`${this.baseUrl}/nexus/open-check`, {
+      method: 'POST',
+      headers: this._getHeaders(),
+      body: JSON.stringify({ message, username, room }),
+    }, 20000, 0);
+    return await this._parseResponse(res, 'Open-mode check');
+  }
+
   async getQueueStatus() {
     const res = await this._fetchWithTimeout(`${this.baseUrl}/queue/status`, {
       method: 'GET',
