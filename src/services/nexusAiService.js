@@ -671,6 +671,8 @@ export async function handleNexusAiMessage(message, opts = {}) {
       openChecked,
     });
     if (openMode && (result.error || !String(result.reply || '').trim() || /^\s*PASS\b/i.test(String(result.reply || '')))) return false;
+    // "PASS" is the engine's "stay out of it" word — never a message, in any mode (2026-10-20: posted as a reply)
+    if (/^\s*PASS\b\W*$/i.test(String(result.reply || ''))) return false;
     // allowedMentions already stops the actual ping, but "@everyone" still showed as text in the
     // reply (live: a Casseurt rant said "he pings @everyone"). A zero-width space makes it plain text.
     // "forget me" while the engine is down: the bot's own facts ARE wiped, so say so instead of "can't reach my engine" —
