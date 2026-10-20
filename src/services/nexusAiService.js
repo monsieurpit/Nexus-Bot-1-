@@ -204,6 +204,8 @@ export async function requestNexusReply(question, userContext = {}) {
     }
     const data = await nexusClient.askJSON({
       prompt: question,
+      // what they replied to, said plainly (not just the last history line)
+      replyTo: ref?.content?.trim() ? { name: ref.isBot ? 'Nexus' : ref.username || 'someone', text: ref.content.trim().slice(0, 500), isNexus: Boolean(ref.isBot) } : undefined,
       authorId: userContext.userId,
       username: userContext.username,
       isSuperChillUser,
