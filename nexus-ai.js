@@ -516,6 +516,8 @@ export class NexusAI {
       history: opts.history || opts.messages || [],
       // jumping into a conversation on his own (src/services/nexusJumpInService.js) — he may answer PASS
       unprompted: opts.unprompted === true ? true : undefined,
+      // open mode (src/services/nexusOpenModeService.js): a chat message nobody aimed at anyone — he may PASS
+      openMode: opts.openMode === true ? true : undefined,
       memories: Array.isArray(opts.memories) ? opts.memories : [],
       rules: allRules.join('\n'),
       customRules: allRules.join('\n'),

@@ -202,6 +202,7 @@ export async function requestNexusReply(question, userContext = {}) {
       videoUrl: userContext.videoUrl || '',
       serverContext: userContext.serverContext || null,
       unprompted: userContext.unprompted === true,
+      openMode: userContext.openMode === true,
     });
     let reply = data?.response || data?.text || '';
     if (!reply) throw new Error('Empty response from Nexus API');
@@ -494,12 +495,15 @@ export function resolveNexusTrigger(message) {
  * Handles incoming Discord messages addressing Nexus.
  * Returns true if the message was handled as a Nexus AI query, false otherwise.
  */
-export async function handleNexusAiMessage(message) {
+export async function handleNexusAiMessage(message, opts = {}) {
   if (message.author?.bot) return false;
   if (!message.content || typeof message.content !== 'string') return false;
 
   const botUserId = message.client?.user?.id;
-  const triggerResult = resolveNexusTrigger(message);
+  // Open mode (nexusOpenModeService.js): nobody said "nexus" — the whole message is what he answers, and he stays silent
+  // whenever it doesn't work out (PASS, an error, a busy engine) instead of posting an error to a message not aimed at him.
+  const openMode = opts.openMode === true;
+  const triggerResult = openMode ? { matched: true, question: message.content } : resolveNexusTrigger(message);
   if (!triggerResult || !triggerResult.matched) return false;
 
   const rawQuestion = triggerResult.question || '';
@@ -520,7 +524,7 @@ export async function handleNexusAiMessage(message) {
   const videoUrl = videoAttachment?.url || '';
 
   // Check for deactivation / reactivation triggers (e.g. "Nexus, desactivate", "@Nexus activate").
-  const wantsDeactivate = DEACTIVATE_REGEX.test(rawQuestion.trim());
+  const wantsDeactivate = !openMode && DEACTIVATE_REGEX.test(rawQuestion.trim());
   const wantsActivate = !wantsDeactivate && ACTIVATE_REGEX.test(rawQuestion.trim());
   if (wantsDeactivate || wantsActivate) {
     if (!canToggleNexus(message)) {
@@ -546,13 +550,14 @@ export async function handleNexusAiMessage(message) {
 
   // "forget me": the bot's own small fact list is cleared here, then the message goes on to the engine, which deletes the
   // personal memory (saved messages + profile) and answers (2026-10-11).
-  const forgetMe = FORGET_ME_REGEX.test(rawQuestion.trim());
+  const forgetMe = !openMode && FORGET_ME_REGEX.test(rawQuestion.trim());
   if (forgetMe) {
     await forgetUserMemories(message.client, message.author?.id);
   }
 
   // If AI is currently disabled in this guild/channel, do not process regular prompts and notify the user
   const isDisabled = await isNexusAiDisabled(targetScopeId, message.client);
+  if (isDisabled && openMode) return false;
   if (isDisabled) {
     const randomDisabledMsg = disabledAiResponses[Math.floor(Math.random() * disabledAiResponses.length)];
     await message.reply({
@@ -625,7 +630,9 @@ export async function handleNexusAiMessage(message) {
       new Promise((resolve) => setTimeout(() => resolve(null), 2500)),
     ]);
     const ahead = queue ? Number(queue.aheadOfNewRequest ?? (queue.pendingInWaitlist || 0) + (queue.runningNow || 0)) || 0 : 0;
-    if (ahead >= 4) {
+    // open mode never adds to a busy engine — people who called him by name come first
+    if (openMode && ahead >= 2) return false;
+    if (ahead >= 4 && !openMode) {
       const eta = Number(queue?.estimatedWaitSeconds) || 0;
       await message.reply({
         content: `⏳ lots of people are talking to me rn — you're #${ahead + 1} in line, so my answer might take a bit longer${eta ? ` (~${Math.max(5, eta)}s)` : ''}. hang tight.`,
@@ -644,7 +651,9 @@ export async function handleNexusAiMessage(message) {
       imageUrl,
       videoUrl,
       serverContext: buildServerContext(message),
+      openMode,
     });
+    if (openMode && (result.error || !String(result.reply || '').trim() || /^\s*PASS\b/i.test(String(result.reply || '')))) return false;
     // allowedMentions already stops the actual ping, but "@everyone" still showed as text in the
     // reply (live: a Casseurt rant said "he pings @everyone"). A zero-width space makes it plain text.
     // "forget me" while the engine is down: the bot's own facts ARE wiped, so say so instead of "can't reach my engine" —

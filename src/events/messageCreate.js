@@ -14,6 +14,7 @@ import { handleChaosTriggers } from '../services/chaosTriggerService.js';
 import { handleStickyNote } from '../services/stickyNoteService.js';
 import { handleNexusAiMessage, resolveNexusTrigger, isReplyToNexus } from '../services/nexusAiService.js';
 import { maybeJumpIn } from '../services/nexusJumpInService.js';
+import { getOpenMode, shouldAnswerOpen, takeSlot, logDecision } from '../services/nexusOpenModeService.js';
 import { recordChannelMessage } from '../services/channelHistoryService.js';
 import { recordWeeklyStat } from '../services/weeklySummaryService.js';
 import { handleDirectMessage } from '../services/dmService.js';
@@ -67,6 +68,22 @@ export default {
           })
         : Promise.resolve(false);
 
+      // Open mode (/nexus-open, nexusOpenModeService.js): in servers that turned it on he reads every message and joins
+      // in ~75% of the time — never when people are talking to each other.
+      const openCfg = await getOpenMode(client, message.guild.id).catch(() => ({ enabled: false }));
+      let openAnswering = false;
+      if (openCfg.enabled && !isNexusQuery && !isTicketChannel) {
+        const decision = shouldAnswerOpen(message, openCfg);
+        logDecision(message, decision);
+        const release = decision.answer ? takeSlot(message) : null;
+        if (release) {
+          openAnswering = true;
+          handleNexusAiMessage(message, { openMode: true })
+            .catch(err => logger.debug('Error in Nexus open mode:', err))
+            .finally(release);
+        }
+      }
+
       await Promise.all([
         handleLeveling(message, client),
         handleMessageCoins(message).catch(err =>
@@ -104,10 +121,11 @@ export default {
       // Nexus (Nexus answers those itself), and when the AFK handler already replied, so a single
       // message never gets a pile of different bot replies.
       // He sometimes jumps into the conversation on his own (nexusJumpInService.js — rare, budgeted, dry-run by default).
-      if (!isTicketChannel && !isNexusQuery && !afkReplied && !isReplyToNexus(message)) {
+      // (open mode replaces jump-ins in that server)
+      if (!isTicketChannel && !isNexusQuery && !afkReplied && !isReplyToNexus(message) && !openCfg.enabled) {
         maybeJumpIn(message).catch(() => {});
       }
-      if (!isTicketChannel && !isNexusQuery && !afkReplied) {
+      if (!isTicketChannel && !isNexusQuery && !afkReplied && !openAnswering) {
         await handleChaosTriggers(message).catch(err =>
           logger.debug('Error in chaos trigger handler:', err)
         );
