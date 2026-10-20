@@ -49,6 +49,13 @@ export default {
         username: message.author.username,
         content: message.content,
         isBot: false,
+        // who it's aimed at (the engine's room summary, 2026-10-20) — the bot itself shows as "Nexus"
+        replyToUsername: message.reference?.messageId
+          ? (message.mentions?.repliedUser?.id === message.client?.user?.id ? 'Nexus' : message.mentions?.repliedUser?.username)
+          : undefined,
+        mentions: [...(message.mentions?.users?.values?.() || [])]
+          .filter((u) => u.id !== message.mentions?.repliedUser?.id || !message.reference?.messageId)
+          .map((u) => (u.id === message.client?.user?.id ? 'Nexus' : u.username)),
       });
 
       const isNexusQuery = Boolean(resolveNexusTrigger(message));

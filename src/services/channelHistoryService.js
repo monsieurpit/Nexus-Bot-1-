@@ -61,6 +61,10 @@ export function recordChannelMessage(channelId, entry) {
     // why this exists: positional adjacency in a busy multi-speaker channel can't reliably tell
     // who a reply was for once other people's messages land in between.
     replyToAuthorId: entry.replyToAuthorId,
+    // who a member's message was aimed at (2026-10-20, the engine's room summary): the person they replied to, the people
+    // they @mentioned
+    replyToUsername: entry.replyToUsername,
+    mentions: Array.isArray(entry.mentions) ? entry.mentions.slice(0, 5) : undefined,
     timestamp: Date.now(),
   });
   if (buffer.messages.length > MAX_MESSAGES_PER_CHANNEL) {
@@ -93,6 +97,9 @@ export function getChannelHistory(channelId, limit = MAX_MESSAGES_PER_CHANNEL, {
     authorId: m.authorId,
     username: m.username,
     replyToAuthorId: m.replyToAuthorId,
+    replyToUsername: m.replyToUsername,
+    mentions: m.mentions,
+    timestamp: m.timestamp,
   }));
 }
 

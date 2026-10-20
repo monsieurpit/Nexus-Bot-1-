@@ -126,10 +126,20 @@ export function buildServerContext(message) {
       // The room (2026-10-18, "maxed-out human" phase 4): the last few lines in this channel from OTHER people (and his own),
       // so "what do u think of that" / "he's lying" / "lmaooo" make sense. The engine only uses it when the message points
       // at the room — a plain "nexus …" question still starts fresh (Patrick, 2026-10-01).
-      room: getChannelHistory(message.channel?.id, 12, { excludeMessageId: message.id })
-        .filter((m) => m.content && m.content.trim() && (m.role === 'assistant' || m.authorId !== message.author?.id))
-        .slice(-6)
-        .map((m) => ({ name: m.role === 'assistant' ? 'Nexus' : m.username || 'someone', text: String(m.content).replace(/\s+/g, ' ').slice(0, 160), isNexus: m.role === 'assistant' })),
+      // 2026-10-20 (room summary): the last 20 from everyone — the asker's own earlier lines too (self), how long ago, and who
+      // each one was aimed at (replyTo / mentions) — so the engine knows who's talking to whom, about what, in what mood.
+      room: getChannelHistory(message.channel?.id, 24, { excludeMessageId: message.id })
+        .filter((m) => m.content && m.content.trim())
+        .slice(-20)
+        .map((m) => ({
+          name: m.role === 'assistant' ? 'Nexus' : m.username || 'someone',
+          text: String(m.content).replace(/\s+/g, ' ').slice(0, 160),
+          isNexus: m.role === 'assistant',
+          self: m.role !== 'assistant' && m.authorId === message.author?.id,
+          ago: m.timestamp ? Math.max(0, Math.round((Date.now() - m.timestamp) / 1000)) : undefined,
+          replyTo: m.replyToUsername || undefined,
+          mentions: m.mentions?.length ? m.mentions : undefined,
+        })),
     };
   } catch {
     return null;
