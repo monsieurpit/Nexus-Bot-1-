@@ -81,12 +81,15 @@ test('"nexus" as the object of the question is kept ("do u like nexus"), a trail
   assert.equal(parse('you good, nexus').question, 'you good');
 });
 
-test('resolveNexusTrigger: a reply to Nexus does NOT trigger him, you still have to say "nexus"', async () => {
+// (2026-10-19, Patrick: "every time we answer to his message he answers" — this used to assert the opposite)
+test('resolveNexusTrigger: a reply to one of Nexus\'s messages triggers him; a reply to someone else does not', async () => {
   const { resolveNexusTrigger, trackAiReply } = await import('../../src/services/nexusAiService.js');
   const base = { client: { user: { id: '999' } }, mentions: {} };
   trackAiReply('m1', { question: 'q', answer: 'a', guildId: 'g' });
-  assert.equal(resolveNexusTrigger({ ...base, content: 'lol fair', reference: { messageId: 'm1' } }), null);
-  assert.equal(resolveNexusTrigger({ ...base, content: 'and you?', reference: { messageId: 'x' }, mentions: { repliedUser: { id: '999' } } }), null);
+  assert.ok(resolveNexusTrigger({ ...base, content: 'lol fair', reference: { messageId: 'm1' } }));
+  assert.equal(resolveNexusTrigger({ ...base, content: 'lol fair', reference: { messageId: 'm1' } }).question, 'lol fair');
+  assert.ok(resolveNexusTrigger({ ...base, content: 'and you?', reference: { messageId: 'x' }, mentions: { repliedUser: { id: '999' } } }));
+  assert.equal(resolveNexusTrigger({ ...base, content: 'and you?', reference: { messageId: 'y' }, mentions: { repliedUser: { id: '123' } } }), null);
   assert.ok(resolveNexusTrigger({ ...base, content: 'nexus lol fair', reference: { messageId: 'm1' } }));
   assert.ok(resolveNexusTrigger({ ...base, content: 'lol fair nexus', reference: { messageId: 'm1' } }));
   assert.ok(resolveNexusTrigger({ ...base, content: 'nexus hi' }));

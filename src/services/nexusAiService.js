@@ -487,9 +487,12 @@ export function isReplyToNexus(message) {
  * does NOT trigger him anymore (it only gives him the recent conversation, see isReplyToNexus).
  */
 export function resolveNexusTrigger(message) {
-  // Patrick (2026-10-01): replying to Nexus is NOT enough, you still have to say "nexus" (or ping him) for him
-  // to answer. A reply only decides whether he reads the recent conversation (see isReplyToNexus).
-  return parseNexusTrigger(message.content, message.client?.user?.id);
+  // Patrick (2026-10-19): "every time we answer to his message he answers" — a Discord reply to one of his messages is
+  // talking to him, no "nexus" needed (this replaces the 2026-10-01 rule that a reply alone wasn't enough).
+  const named = parseNexusTrigger(message.content, message.client?.user?.id);
+  if (named) return named;
+  if (isReplyToNexus(message) && String(message.content || '').trim()) return { matched: true, question: message.content.trim() };
+  return null;
 }
 
 /**
