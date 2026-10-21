@@ -28,3 +28,11 @@ test('analyzeThreat refuses to run without the RaidShield key (callers fall back
   await assert.rejects(() => c.analyzeThreat({ messageText: 'hi' }), /RaidShield key not configured/);
   if (prev !== undefined) process.env.NEXUS_RAIDSHIELD_KEY = prev;
 });
+
+test('humanParts lets a slip + its "*fix" through (typo / name slip), nothing that changes the answer', () => {
+  assert.deepEqual(humanParts(['nah bro Olmi was cooking tonight', '*Olmo'], 'nah bro Olmo was cooking tonight'), ['nah bro Olmi was cooking tonight', '*Olmo']);
+  assert.deepEqual(humanParts(['that was seriosuly good', '*seriously'], 'that was seriously good'), ['that was seriosuly good', '*seriously']);
+  assert.equal(humanParts(['that was', '*bad'], 'that was seriously good'), null);
+  assert.equal(humanParts(['that was terrible', '*good'], 'that was terrific'), null);
+  assert.deepEqual(humanParts(['lmao u actually did that', '💀'], 'lmao u actually did that'), ['lmao u actually did that', '💀']);
+});

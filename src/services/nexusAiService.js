@@ -382,7 +382,15 @@ export function humanParts(parts, answer) {
   const clean = parts.map((p) => defuseMassMentions(String(p || '')).trim());
   if (clean.some((p) => !p || p.length > 1900)) return null;
   const squash = (t) => t.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
-  return squash(clean.join('')) === squash(answer) ? clean : null;
+  if (squash(clean.join('')) === squash(answer)) return clean;
+  // a slip + its fix as the last message ("Olmi was cooking" / "*Olmo", "seriosuly" / "*seriously", 2026-10-20): the rest
+  // must be the answer with just that one word changed (same length, at most 2 letters different)
+  const last = clean[clean.length - 1];
+  if (clean.length >= 2 && /^\*\S{2,30}$/.test(last)) {
+    const a = squash(clean.slice(0, -1).join('')), b = squash(answer);
+    if (a.length === b.length && [...a].filter((c, i) => c !== b[i]).length <= 2 && b.includes(squash(last))) return clean;
+  }
+  return null;
 }
 
 /**
