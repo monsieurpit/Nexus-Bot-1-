@@ -219,6 +219,8 @@ export async function requestNexusReply(question, userContext = {}) {
       unprompted: userContext.unprompted === true,
       openMode: userContext.openMode === true,
       openChecked: userContext.openChecked === true,
+      // the channel is age-restricted (Discord's NSFW flag) — the only place adult / gore pictures may be posted
+      channelNsfw: userContext.channelNsfw === true,
     });
     let reply = data?.response || data?.text || '';
     // a realistic picture comes alone, with no text (engine v2/photoEngine.ts) — that's a real answer, not an empty one
@@ -732,6 +734,7 @@ export async function handleNexusAiMessage(message, opts = {}) {
       serverContext: buildServerContext(message),
       openMode,
       openChecked,
+      channelNsfw: message.channel?.nsfw === true || message.channel?.parent?.nsfw === true,
     });
     if (openMode && (result.error || !String(result.reply || '').trim() || /^\s*PASS\b/i.test(String(result.reply || '')))) return false;
     // "PASS" is the engine's "stay out of it" word — never a message, in any mode (2026-10-20: posted as a reply)
