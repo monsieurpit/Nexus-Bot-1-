@@ -382,7 +382,7 @@ export function pictureFiles(images) {
   for (const img of images.slice(0, 3)) {
     if (!img || typeof img.data !== 'string' || !/^image\/(?:png|jpeg|webp)$/.test(img.mime || '')) continue;
     const buf = Buffer.from(img.data, 'base64');
-    if (!buf.length || buf.length > 7 * 1024 * 1024) continue;
+    if (!buf.length || buf.length > 9.5 * 1000 * 1000) continue; // Discord's 10 MB limit (the engine already keeps them ≤ 8 MB)
     const ext = img.mime === 'image/png' ? 'png' : img.mime === 'image/jpeg' ? 'jpg' : 'webp';
     out.push(new AttachmentBuilder(buf, { name: `${String(img.name || 'nexus-drawing').replace(/[^\w.-]/g, '').replace(/\.\w+$/, '') || 'nexus-drawing'}.${ext}` }));
   }
