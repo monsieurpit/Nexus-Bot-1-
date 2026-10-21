@@ -112,8 +112,24 @@ test('getReferencedMessage: returns the replied-to text and marks the bot\'s own
   const client = { user: { id: '999' } };
   assert.equal(await getReferencedMessage({ client, reference: null }), null);
   const fromBot = await getReferencedMessage({ client, reference: { messageId: 'm' }, fetchReference: async () => ({ content: "Guys, I'm scratching my balls.", author: { id: '999', username: 'Nexus' }, embeds: [] }) });
-  assert.deepEqual(fromBot, { content: "Guys, I'm scratching my balls.", authorId: '999', username: 'Nexus', isBot: true });
+  assert.deepEqual(fromBot, { content: "Guys, I'm scratching my balls.", authorId: '999', username: 'Nexus', isBot: true, imageUrl: '', videoUrl: '', mediaKind: '' });
   const fromUser = await getReferencedMessage({ client, reference: { messageId: 'm' }, fetchReference: async () => ({ content: 'long text to summarise', author: { id: '5', username: 'Bob' }, embeds: [] }) });
   assert.equal(fromUser.isBot, false);
   assert.equal(await getReferencedMessage({ client, reference: { messageId: 'm' }, fetchReference: async () => { throw new Error('gone'); } }), null);
+});
+
+test('mediaOf / getReferencedMessage: an image attachment, a GIF embed, a sticker — and a reply to a picture with no text keeps the picture', async () => {
+  const { mediaOf, getReferencedMessage } = await import('../../src/services/nexusAiService.js');
+  const attach = (arr) => ({ values: () => arr.values() });
+  assert.deepEqual(mediaOf({ attachments: attach([{ contentType: 'image/png', url: 'https://cdn/x.png' }]) }), { imageUrl: 'https://cdn/x.png', videoUrl: '', kind: 'attachment' });
+  assert.deepEqual(mediaOf({ attachments: attach([{ contentType: 'video/mp4', url: 'https://cdn/v.mp4', size: 5 * 1024 * 1024 }]) }), { imageUrl: '', videoUrl: 'https://cdn/v.mp4', kind: 'attachment' });
+  assert.equal(mediaOf({ attachments: attach([{ contentType: 'video/mp4', url: 'https://cdn/big.mp4', size: 200 * 1024 * 1024 }]) }).videoUrl, '');
+  assert.deepEqual(mediaOf({ attachments: attach([]), embeds: [{ thumbnail: { url: 'https://media.tenor.com/f.png' } }] }), { imageUrl: 'https://media.tenor.com/f.png', videoUrl: '', kind: 'embed' });
+  assert.deepEqual(mediaOf({ attachments: attach([]), embeds: [], stickers: attach([{ format: 1, url: 'https://cdn/s.png' }]) }), { imageUrl: 'https://cdn/s.png', videoUrl: '', kind: 'sticker' });
+  assert.equal(mediaOf({ attachments: attach([]), embeds: [], stickers: attach([{ format: 3, url: 'https://cdn/s.json' }]) }).imageUrl, '');
+  const client = { user: { id: '999' } };
+  const pic = await getReferencedMessage({ client, reference: { messageId: 'm' }, fetchReference: async () => ({ content: '', author: { id: '5', username: 'Bob' }, embeds: [], attachments: attach([{ contentType: 'image/jpeg', url: 'https://cdn/p.jpg' }]) }) });
+  assert.equal(pic.imageUrl, 'https://cdn/p.jpg');
+  assert.equal(pic.content, '');
+  assert.equal(await getReferencedMessage({ client, reference: { messageId: 'm' }, fetchReference: async () => ({ content: '', author: { id: '5' }, embeds: [], attachments: attach([]) }) }), null);
 });

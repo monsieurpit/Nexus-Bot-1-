@@ -525,6 +525,8 @@ export class NexusAI {
       rules: allRules.join('\n'),
       customRules: allRules.join('\n'),
       imageUrl: opts.imageUrl || opts.image || opts.attachmentUrl || '',
+      // where the picture came from: 'own' | 'embed' | 'sticker' | 'reply' (the message they replied to)
+      imageFrom: typeof opts.imageFrom === 'string' ? opts.imageFrom : undefined,
       imageData: opts.imageData || '',
       videoUrl: opts.videoUrl || '',
       videoData: opts.videoData || '',

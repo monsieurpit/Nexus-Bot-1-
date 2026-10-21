@@ -205,7 +205,7 @@ export async function requestNexusReply(question, userContext = {}) {
     const data = await nexusClient.askJSON({
       prompt: question,
       // what they replied to, said plainly (not just the last history line)
-      replyTo: ref?.content?.trim() ? { name: ref.isBot ? 'Nexus' : ref.username || 'someone', text: ref.content.trim().slice(0, 500), isNexus: Boolean(ref.isBot) } : undefined,
+      replyTo: ref?.content?.trim() || ref?.imageUrl || ref?.videoUrl ? { name: ref.isBot ? 'Nexus' : ref.username || 'someone', text: ref.content?.trim() ? ref.content.trim().slice(0, 500) : ref.videoUrl ? '(posted a video)' : '(posted a picture)', isNexus: Boolean(ref.isBot) } : undefined,
       authorId: userContext.userId,
       username: userContext.username,
       isSuperChillUser,
@@ -214,6 +214,7 @@ export async function requestNexusReply(question, userContext = {}) {
       // A Discord image attachment is forwarded to the engine's vision pipeline.
       imageUrl: userContext.imageUrl || '',
       videoUrl: userContext.videoUrl || '',
+      imageFrom: userContext.imageFrom || undefined,
       serverContext: userContext.serverContext || null,
       unprompted: userContext.unprompted === true,
       openMode: userContext.openMode === true,
@@ -483,15 +484,34 @@ export function parseNexusTrigger(content, botUserId = null) {
  * True when the message is a Discord reply to one of Nexus's own messages (one this process tracked, or one
  * Discord marks as replying to the bot). Only then does Nexus look at the recent conversation.
  */
-// The message this one replies to, as { content, authorId, username, isBot } (null when not a reply or not fetchable).
+// The picture / clip a message carries (2026-10-20, "images MAX priority"): its own image attachment, a video attachment, a
+// GIF / link embed's picture (Tenor, Giphy, Imgur, a link preview), or a sticker. Before, only the message's OWN attachment
+// was ever sent — "what is it from" / "what's dis" as a REPLY to someone's image got no image at all.
+export function mediaOf(msg) {
+  const att = [...(msg?.attachments?.values?.() || [])];
+  const img = att.find((a) => a.contentType?.startsWith('image/'));
+  if (img) return { imageUrl: img.url, videoUrl: '', kind: 'attachment' };
+  const vid = att.find((a) => a.contentType?.startsWith('video/') && (a.size || 0) <= 100 * 1024 * 1024);
+  if (vid) return { imageUrl: '', videoUrl: vid.url, kind: 'attachment' };
+  for (const e of msg?.embeds || []) {
+    const u = e.image?.url || e.thumbnail?.url;
+    if (u && /^https?:\/\//.test(u)) return { imageUrl: u, videoUrl: '', kind: 'embed' };
+  }
+  const st = [...(msg?.stickers?.values?.() || [])].find((x) => x.format !== 3 && x.url); // 3 = Lottie (not an image)
+  if (st) return { imageUrl: st.url, videoUrl: '', kind: 'sticker' };
+  return { imageUrl: '', videoUrl: '', kind: '' };
+}
+
+// The message this one replies to, as { content, authorId, username, isBot, imageUrl, videoUrl } (null when not a reply or not fetchable).
 export async function getReferencedMessage(message) {
   if (!message?.reference?.messageId) return null;
   try {
     const ref = await message.fetchReference();
     if (!ref) return null;
     const text = [ref.content, ...(ref.embeds || []).map((e) => [e.title, e.description].filter(Boolean).join(': '))].filter(Boolean).join('\n').trim();
-    if (!text) return null;
-    return { content: text, authorId: ref.author?.id, username: ref.author?.username, isBot: ref.author?.id === message.client?.user?.id };
+    const media = mediaOf(ref);
+    if (!text && !media.imageUrl && !media.videoUrl) return null;
+    return { content: text, authorId: ref.author?.id, username: ref.author?.username, isBot: ref.author?.id === message.client?.user?.id, imageUrl: media.imageUrl, videoUrl: media.videoUrl, mediaKind: media.kind };
   } catch {
     return null;
   }
@@ -542,12 +562,16 @@ export async function handleNexusAiMessage(message, opts = {}) {
   // Nexus-AI-'s /api/v1/nexus endpoint already has a real vision pipeline wired up and waiting for
   // exactly this. Takes the first image-type attachment only (a genuine multi-image message is
   // rare enough in practice, and the engine's own vision call only ever looks at one image anyway).
-  const imageAttachment = message.attachments?.find((a) => a.contentType?.startsWith('image/'));
-  const imageUrl = imageAttachment?.url || '';
   // Videos (2026-10-05): the engine downloads the attachment and analyses it (metadata, 12 frames, speech transcript;
   // ~20-30 s for a 2-minute clip). Max 100 MB.
-  const videoAttachment = !imageUrl ? message.attachments?.find((a) => a.contentType?.startsWith('video/') && (a.size || 0) <= 100 * 1024 * 1024) : null;
-  const videoUrl = videoAttachment?.url || '';
+  // 2026-10-20: also a GIF / link embed's picture, a sticker, and — when the message has none — the one in the message it
+  // REPLIES to (imageFrom tells the engine which: 'own' | 'embed' | 'sticker' | 'reply').
+  const ownMedia = mediaOf(message);
+  const refMessage = await getReferencedMessage(message);
+  const useRefMedia = !ownMedia.imageUrl && !ownMedia.videoUrl;
+  const imageUrl = ownMedia.imageUrl || (useRefMedia ? refMessage?.imageUrl || '' : '');
+  const videoUrl = ownMedia.videoUrl || (useRefMedia && !imageUrl ? refMessage?.videoUrl || '' : '');
+  const imageFrom = ownMedia.imageUrl || ownMedia.videoUrl ? (ownMedia.kind === 'attachment' ? 'own' : ownMedia.kind) : imageUrl || videoUrl ? 'reply' : '';
 
   // Check for deactivation / reactivation triggers (e.g. "Nexus, desactivate", "@Nexus activate").
   const wantsDeactivate = !openMode && DEACTIVATE_REGEX.test(rawQuestion.trim());
@@ -622,7 +646,7 @@ export async function handleNexusAiMessage(message, opts = {}) {
       const channel = message.mentions?.channels?.get(id) || message.guild?.channels?.cache?.get(id);
       return channel ? `#${channel.name}` : m;
     });
-  const question = namedQuestion.trim() || (imageUrl ? 'Analyze this uploaded image attachment' : videoUrl ? 'what do you think of this video?' : bareMention ? 'nexus' : '');
+  const question = namedQuestion.trim() || (imageUrl ? (imageFrom === 'reply' ? 'what do you think of this?' : 'Analyze this uploaded image attachment') : videoUrl ? 'what do you think of this video?' : bareMention ? 'nexus' : '');
 
   // "nexus react 💀 to that": a real reaction, done here (nexusReactService.js) — he only says it worked if it did.
   const reactReq = !imageUrl && !videoUrl ? parseReactRequest(question) : null;
@@ -685,9 +709,10 @@ export async function handleNexusAiMessage(message, opts = {}) {
       channelId: message.channel.id,
       messageId: message.id,
       useHistory: isReplyToNexus(message),
-      referencedMessage: await getReferencedMessage(message),
+      referencedMessage: refMessage,
       imageUrl,
       videoUrl,
+      imageFrom,
       serverContext: buildServerContext(message),
       openMode,
       openChecked,
