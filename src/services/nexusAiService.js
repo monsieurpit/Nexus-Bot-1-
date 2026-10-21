@@ -5,7 +5,7 @@ import { NexusAI } from '../../nexus-ai.js';
 import { getUserMemories, saveUserMemory, forgetUserMemories } from './memoryBrainService.js';
 import { getChannelHistory, recordChannelMessage, clearChannelHistory } from './channelHistoryService.js';
 import { logTelemetry, logCrash, logPersonaTrigger } from './aiTelemetryService.js';
-import { PermissionFlagsBits } from 'discord.js';
+import { PermissionFlagsBits, AttachmentBuilder } from 'discord.js';
 import { parseReactRequest, performReactRequest, REACT_FAIL_LINES } from './nexusReactService.js';
 
 // Talks to your real, deployed Nexus AI engine — the same custom engine that lives in the
@@ -375,6 +375,20 @@ function cleanInvisibleCharacters(str) {
 
 // The engine's message parts, if they're usable: 2-3 short non-empty parts that together are the whole answer (the bot
 // never drops words — if anything looks off, the answer goes as one message like before).
+// The engine's drawn pictures ([{ mime, name, data(base64) }]) as Discord attachments — only real PNG/JPEG/WebP, ≤ 7 MB, max 3.
+export function pictureFiles(images) {
+  if (!Array.isArray(images)) return [];
+  const out = [];
+  for (const img of images.slice(0, 3)) {
+    if (!img || typeof img.data !== 'string' || !/^image\/(?:png|jpeg|webp)$/.test(img.mime || '')) continue;
+    const buf = Buffer.from(img.data, 'base64');
+    if (!buf.length || buf.length > 7 * 1024 * 1024) continue;
+    const ext = img.mime === 'image/png' ? 'png' : img.mime === 'image/jpeg' ? 'jpg' : 'webp';
+    out.push(new AttachmentBuilder(buf, { name: `${String(img.name || 'nexus-drawing').replace(/[^\w.-]/g, '').replace(/\.\w+$/, '') || 'nexus-drawing'}.${ext}` }));
+  }
+  return out;
+}
+
 export function humanParts(parts, answer) {
   if (!Array.isArray(parts)) return null;
   // An emoji back for a pure reaction ("lol" → "💀") is a whole answer on its own.
@@ -748,6 +762,14 @@ export async function handleNexusAiMessage(message, opts = {}) {
     const replyOptions = { failIfNotExists: false };
     // Texting like a person (engine v2/texting.ts, 2026-10-13): a short chat reply can come as 2-3 messages ("nah" …
     // "ur cooked"), each after a typing pause as long as it takes to type it; a long answer is still split by length.
+    // A picture he drew (engine v2/drawEngine.ts, 2026-10-21): sent as a real attachment so it shows in the channel, with his line as the text.
+    const drawn = pictureFiles(result.data?.images);
+    if (drawn.length) {
+      await message.reply({ content: (answer || '').slice(0, 1900), files: drawn, allowedMentions: SAFE_REPLY_MENTIONS, ...replyOptions }).catch(async () => {
+        await message.channel.send({ content: (answer || '').slice(0, 1900), files: drawn, allowedMentions: { parse: [] } });
+      });
+      return true;
+    }
     const parts = humanParts(result.data?.parts, answer);
     const chunks = parts || splitIntoChunks(answer);
     const firstMessage = await message.reply({

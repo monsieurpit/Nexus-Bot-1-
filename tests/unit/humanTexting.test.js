@@ -36,3 +36,15 @@ test('humanParts lets a slip + its "*fix" through (typo / name slip), nothing th
   assert.equal(humanParts(['that was terrible', '*good'], 'that was terrific'), null);
   assert.deepEqual(humanParts(['lmao u actually did that', '💀'], 'lmao u actually did that'), ['lmao u actually did that', '💀']);
 });
+
+test('pictureFiles turns the engine\'s drawn pictures into Discord attachments and ignores anything unsafe', async () => {
+  const { pictureFiles } = await import('../../src/services/nexusAiService.js');
+  const png = Buffer.from('89504e470d0a1a0a', 'hex').toString('base64');
+  const ok = pictureFiles([{ mime: 'image/png', name: 'nexus-drawing.png', data: png }]);
+  assert.equal(ok.length, 1);
+  assert.equal(ok[0].name, 'nexus-drawing.png');
+  assert.equal(pictureFiles([{ mime: 'text/html', data: png }]).length, 0);
+  assert.equal(pictureFiles([{ mime: 'image/png', data: '' }]).length, 0);
+  assert.equal(pictureFiles(undefined).length, 0);
+  assert.equal(pictureFiles('nope').length, 0);
+});
