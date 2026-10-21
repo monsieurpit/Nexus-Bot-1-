@@ -221,7 +221,9 @@ export async function requestNexusReply(question, userContext = {}) {
       openChecked: userContext.openChecked === true,
     });
     let reply = data?.response || data?.text || '';
-    if (!reply) throw new Error('Empty response from Nexus API');
+    // a realistic picture comes alone, with no text (engine v2/photoEngine.ts) — that's a real answer, not an empty one
+    const hasPicture = Array.isArray(data?.images) && data.images.length > 0;
+    if (!reply && !hasPicture) throw new Error('Empty response from Nexus API');
     // Personal memory (2026-10-11): the engine attaches its privacy notice the first time someone talks to Nexus after the
     // update. It's DMed once (they started the interaction, so it isn't an unsolicited mass DM); if their DMs are closed,
     // a small line goes under the reply instead.
@@ -765,8 +767,8 @@ export async function handleNexusAiMessage(message, opts = {}) {
     // A picture he drew (engine v2/drawEngine.ts, 2026-10-21): sent as a real attachment so it shows in the channel, with his line as the text.
     const drawn = pictureFiles(result.data?.images);
     if (drawn.length) {
-      await message.reply({ content: (answer || '').slice(0, 1900), files: drawn, allowedMentions: SAFE_REPLY_MENTIONS, ...replyOptions }).catch(async () => {
-        await message.channel.send({ content: (answer || '').slice(0, 1900), files: drawn, allowedMentions: { parse: [] } });
+      await message.reply({ ...(answer ? { content: answer.slice(0, 1900) } : {}), files: drawn, allowedMentions: SAFE_REPLY_MENTIONS, ...replyOptions }).catch(async () => {
+        await message.channel.send({ ...(answer ? { content: answer.slice(0, 1900) } : {}), files: drawn, allowedMentions: { parse: [] } });
       });
       return true;
     }
