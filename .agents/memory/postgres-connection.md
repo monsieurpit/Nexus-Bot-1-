@@ -3,7 +3,7 @@ name: PostgreSQL connection on Replit
 description: How the bot connects to Railway PostgreSQL from Replit — which env var to use and why
 ---
 
-## Rule
+## Rules
 Always prefer `DATABASE_PUBLIC_URL` for the PostgreSQL connection string. Never use `POSTGRES_URL` as the primary source — it is a Railway internal hostname (`postgres.railway.internal`) that only resolves inside Railway's private network.
 
 **Priority order in `src/config/postgres.js`:**
