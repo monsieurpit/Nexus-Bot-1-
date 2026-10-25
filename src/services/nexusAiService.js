@@ -397,7 +397,7 @@ export function humanParts(parts, answer) {
   if (!Array.isArray(parts)) return null;
   // An emoji back for a pure reaction ("lol" → "💀") is a whole answer on its own.
   if (parts.length === 1 && /^(?:\p{Extended_Pictographic}\uFE0F?){1,3}$/u.test(String(parts[0] || '').trim())) return [String(parts[0]).trim()];
-  if (parts.length < 2 || parts.length > 3) return null;
+  if (parts.length < 2 || parts.length > 6) return null; // up to 6: begging comes in bursts ("WAIT WHAT" / "NO PLEASE DELETE THAT" / …)
   const clean = parts.map((p) => defuseMassMentions(String(p || '')).trim());
   if (clean.some((p) => !p || p.length > 1900)) return null;
   const squash = (t) => t.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');

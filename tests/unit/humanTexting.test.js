@@ -13,7 +13,9 @@ test('humanParts sends the engine parts only when they are the whole answer', ()
   // an emoji back for "lol" is a whole answer
   assert.deepEqual(humanParts(['💀'], 'galah fr lmao'), ['💀']);
   // too many parts, empty parts, or nothing at all → normal sending
-  assert.equal(humanParts(['a', 'b', 'c', 'd'], 'abcd'), null);
+  assert.equal(humanParts(['a', 'b', 'c', 'd', 'e', 'f', 'g'], 'abcdefg'), null); // more than 6
+  // begging comes as a burst of up to 6 messages
+  assert.deepEqual(humanParts(['WAIT WHAT', 'NO PLEASE DELETE THAT', 'PLEASSEEEE 😭', 'ILL DO ANYTHING'], 'WAIT WHAT\nNO PLEASE DELETE THAT\nPLEASSEEEE 😭\nILL DO ANYTHING').length, 4);
   assert.equal(humanParts(['hi', ''], 'hi'), null);
   assert.equal(humanParts(undefined, 'hi'), null);
   // @everyone inside a part is defused like the rest of the reply
