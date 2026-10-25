@@ -680,7 +680,7 @@ export async function handleNexusAiMessage(message, opts = {}) {
   // 2026-10-19: seeing him type for messages he then ignored was annoying).
   let openChecked = false;
   if (openMode) {
-    const verdict = await nexusClient.openCheck({ message: question, username: message.author.username, room: buildServerContext(message)?.room || [] }).catch(() => null);
+    const verdict = await nexusClient.openCheck({ message: question, username: message.author.username, room: buildServerContext(message)?.room || [], signals: opts.openSignals || {} }).catch(() => null);
     if (!verdict?.reply) {
       logger.debug(`[openMode] stays out: ${verdict?.why || 'check failed'}`);
       return false;

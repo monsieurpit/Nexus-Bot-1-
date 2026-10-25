@@ -19,29 +19,26 @@ function msg(content, { channel = 'general', ch = 'c1', author = 'me', mentions 
 }
 const said = (ch, author, content, role = 'user') => recordChannelMessage(ch, { messageId: `h${++n}`, authorId: author, username: author, content, isBot: role === 'assistant' });
 
-test('open mode answers the room rarely (25% dice + 3-min channel cooldown), never "lol" / no-context lines unless he is in the conversation, off = never', () => {
+test('open mode: no dice — anything that passes the certain rules goes to the specialist with signals; off / other bots / a burst = never', () => {
   clearChannelHistory('c1'); __test.lastOpenReply.clear();
-  assert.equal(shouldAnswerOpen(msg('anyone watching the barca game tonight'), ON, 0.2).answer, true);
-  assert.equal(shouldAnswerOpen(msg('anyone watching the barca game tonight'), ON, 0.5).answer, false); // was yes at 75%
-  assert.equal(shouldAnswerOpen(msg('lol'), ON, 0.01).why, 'tiny');
-  assert.equal(shouldAnswerOpen(msg('that was so funny'), ON, 0.01).why, 'no-context');
-  assert.equal(shouldAnswerOpen(msg('he really did that'), ON, 0.01).why, 'no-context');
-  assert.equal(shouldAnswerOpen(msg('lmao same'), ON, 0.01).why, 'tiny');
-  assert.equal(shouldAnswerOpen(msg('cooked fr'), ON, 0.01).why, 'too-short');
-  assert.equal(shouldAnswerOpen(msg('anyone watching the game'), { enabled: false }, 0.1).answer, false);
-  for (const c of ['owo daily', 'Owo 8b will i have 11 kids', '!play never gonna give you up', 'pls beg', '.rank', 't!daily']) assert.equal(shouldAnswerOpen(msg(c), ON, 0.01).why, 'bot-command');
-  // cooldown after he answered in this channel
+  const d = shouldAnswerOpen(msg('anyone watching the barca game tonight'), ON, 0.99);
+  assert.equal(d.answer, true); assert.equal(d.why, 'ask-specialist');
+  assert.equal(shouldAnswerOpen(msg('anyone watching the barca game tonight'), ON, 0.01).answer, true); // the dice is gone
+  assert.equal(shouldAnswerOpen(msg('that was so funny'), ON).signals.needsContext, true);
+  assert.equal(shouldAnswerOpen(msg('lol'), ON).signals.tiny, true);
+  assert.equal(shouldAnswerOpen(msg('anyone watching the game'), { enabled: false }).answer, false);
+  for (const c of ['owo daily', 'Owo 8b will i have 11 kids', '!play never gonna give you up', 'pls beg', '.rank', 't!daily']) assert.equal(shouldAnswerOpen(msg(c), ON).why, 'bot-command');
+  // he just spoke unprompted in this channel: not another one within a minute (unless he's in the conversation)
   __test.lastOpenReply.set('c1', Date.now());
-  assert.equal(shouldAnswerOpen(msg('who thinks messi is better than ronaldo'), ON, 0.01).why, 'cooldown');
+  assert.equal(shouldAnswerOpen(msg('who thinks messi is better than ronaldo'), ON).why, 'just-spoke');
   __test.lastOpenReply.clear();
-  // he's IN the conversation (spoke just now): small lines are fine and the chance is high
   clearChannelHistory('c5');
   said('c5', BOT, 'barca are winning it this year', 'assistant');
-  assert.equal(shouldAnswerOpen(msg('lol true', { ch: 'c5' }), ON, 0.8).answer, true);
-  // other people mid-conversation without him: stays out
+  const w = shouldAnswerOpen(msg('lol true', { ch: 'c5' }), ON);
+  assert.equal(w.answer, true); assert.equal(w.signals.inConversation, true);
   clearChannelHistory('c6');
   said('c6', 'josh', 'did u see the match'); said('c6', 'sam', 'ye pedri was insane'); said('c6', 'josh', 'that pass in the 80th'); said('c6', 'sam', 'goated');
-  assert.equal(shouldAnswerOpen(msg('honestly best game this season', { ch: 'c6', author: 'kai' }), ON, 0.01).why, 'others-talking');
+  assert.equal(shouldAnswerOpen(msg('honestly best game this season', { ch: 'c6', author: 'kai' }), ON).signals.othersTalking, true);
 });
 
 test('he stays out when people talk to each other: a ping, a reply to someone, their name, a back-and-forth', () => {

@@ -1256,11 +1256,11 @@ export class NexusAI {
    * @param {{ message: string, username?: string, room?: Array<{name: string, text: string, isNexus?: boolean}> }} opts
    * @returns {Promise<{ reply: boolean, why: string }>}
    */
-  async openCheck({ message = '', username = '', room = [] } = {}) {
+  async openCheck({ message = '', username = '', room = [], signals = {} } = {}) {
     const res = await this._fetchWithTimeout(`${this.baseUrl}/nexus/open-check`, {
       method: 'POST',
       headers: this._getHeaders(),
-      body: JSON.stringify({ message, username, room }),
+      body: JSON.stringify({ message, username, room, signals }),
     }, 20000, 0);
     return await this._parseResponse(res, 'Open-mode check');
   }

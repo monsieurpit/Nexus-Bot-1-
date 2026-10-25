@@ -84,7 +84,6 @@ export function talksToSomeoneElse(message, now = Date.now()) {
 const inFlightChannels = new Set();
 const guildMinute = new Map(); // guildId → [times]
 const GUILD_PER_MINUTE = 3; // was 10 — Patrick (2026-10-25): "Nexus answers too often and even to things he doesn't have context"
-const CHANNEL_COOLDOWN_MS = 3 * 60_000; // one unprompted reply per channel every 3 min (unless he's already in the conversation)
 const lastOpenReply = new Map(); // channelId → time of his last open-mode reply
 
 // "that", "this", "he", "lmao same", "exactly" — a line that only makes sense if you saw what came before
@@ -124,18 +123,13 @@ export function shouldAnswerOpen(message, cfg, rand = Math.random(), now = Date.
   // a Discord reply to one of his messages: always
   if (message.reference?.messageId && message.mentions?.repliedUser?.id === botId) return { answer: true, why: 'reply-to-nexus' };
   if (talksToSomeoneElse(message, now)) return { answer: false, why: 'someone-else' };
+  // No dice any more (Patrick, 2026-10-25: "I don't want a % that he answers, I want a specialist that analyses the messages").
+  // Everything that passes the certain rules above goes to the engine's open-mode specialist (/nexus/open-check), with these
+  // signals so it can judge like a person reading the chat.
   const withHim = inConversation(message, now) || /\bnexus\b/i.test(t);
-  // never butts in on "lol" / "bet" / "fr" unless he's the one they're talking with
-  if (TINY_RE.test(t) && !withHim) return { answer: false, why: 'tiny' };
-  if (!withHim) {
-    // he'd need context he doesn't have
-    if (NEEDS_CONTEXT_RE.test(t)) return { answer: false, why: 'no-context' };
-    if (!/\?/.test(t) && t.split(/\s+/).length <= 3 && !hasImage) return { answer: false, why: 'too-short' };
-    if (othersMidConversation(message)) return { answer: false, why: 'others-talking' };
-    if (now - (lastOpenReply.get(message.channel?.id) || 0) < CHANNEL_COOLDOWN_MS) return { answer: false, why: 'cooldown' };
-  }
-  const chance = withHim ? 0.85 : 0.25; // was 0.75 for anything
-  return rand < chance ? { answer: true, why: withHim ? 'in-conversation' : 'open' } : { answer: false, why: 'dice' };
+  // a burst of unprompted replies in one channel is never human: at most one a minute unless he's in the conversation
+  if (!withHim && now - (lastOpenReply.get(message.channel?.id) || 0) < 60_000) return { answer: false, why: 'just-spoke' };
+  return { answer: true, why: 'ask-specialist', signals: { inConversation: withHim, needsContext: NEEDS_CONTEXT_RE.test(t), tiny: TINY_RE.test(t), othersTalking: othersMidConversation(message) } };
 }
 
 /** The budget gate; call right before answering. Returns a release function, or null when over budget. */

@@ -75,8 +75,8 @@ export default {
           })
         : Promise.resolve(false);
 
-      // Open mode (/nexus-open, nexusOpenModeService.js): in servers that turned it on he reads every message and joins
-      // in rarely (25%, 3-min cooldown, never on "lol" or lines he'd need context for) — often only when he's already in the conversation.
+      // Open mode (/nexus-open, nexusOpenModeService.js): in servers that turned it on he reads every message; the engine's
+      // open-mode specialist decides whether to answer (no dice).
       const openCfg = await getOpenMode(client, message.guild.id).catch(() => ({ enabled: false }));
       let openAnswering = false;
       if (openCfg.enabled && !isNexusQuery && !isTicketChannel) {
@@ -85,7 +85,7 @@ export default {
         const release = decision.answer ? takeSlot(message) : null;
         if (release) {
           openAnswering = true;
-          handleNexusAiMessage(message, { openMode: true })
+          handleNexusAiMessage(message, { openMode: true, openSignals: decision.signals })
             .catch(err => logger.debug('Error in Nexus open mode:', err))
             .finally(release);
         }
