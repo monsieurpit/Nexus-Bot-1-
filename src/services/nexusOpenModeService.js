@@ -118,6 +118,8 @@ export function shouldAnswerOpen(message, cfg, rand = Math.random(), now = Date.
   const t = String(message.content || '').trim();
   const hasImage = Boolean(message.attachments?.some?.((a) => a.contentType?.startsWith('image/')));
   if (!t && !hasImage) return { answer: false, why: 'empty' };
+  // another bot's command ("owo daily", "owo kill", "!play", "pls beg", ".rank") — not talk, never his business (2026-10-22 log)
+  if (/^(?:owo|uwu|pls|dank|mudae)\s+\S/i.test(t) || /^(?:[!.$;%&+>\-]|[a-z]{1,2}!)[a-z]/i.test(t)) return { answer: false, why: 'bot-command' };
   const botId = message.client?.user?.id;
   // a Discord reply to one of his messages: always
   if (message.reference?.messageId && message.mentions?.repliedUser?.id === botId) return { answer: true, why: 'reply-to-nexus' };

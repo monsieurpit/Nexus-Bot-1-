@@ -29,6 +29,7 @@ test('open mode answers the room rarely (25% dice + 3-min channel cooldown), nev
   assert.equal(shouldAnswerOpen(msg('lmao same'), ON, 0.01).why, 'tiny');
   assert.equal(shouldAnswerOpen(msg('cooked fr'), ON, 0.01).why, 'too-short');
   assert.equal(shouldAnswerOpen(msg('anyone watching the game'), { enabled: false }, 0.1).answer, false);
+  for (const c of ['owo daily', 'Owo 8b will i have 11 kids', '!play never gonna give you up', 'pls beg', '.rank', 't!daily']) assert.equal(shouldAnswerOpen(msg(c), ON, 0.01).why, 'bot-command');
   // cooldown after he answered in this channel
   __test.lastOpenReply.set('c1', Date.now());
   assert.equal(shouldAnswerOpen(msg('who thinks messi is better than ronaldo'), ON, 0.01).why, 'cooldown');
