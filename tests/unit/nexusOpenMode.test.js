@@ -19,13 +19,28 @@ function msg(content, { channel = 'general', ch = 'c1', author = 'me', mentions 
 }
 const said = (ch, author, content, role = 'user') => recordChannelMessage(ch, { messageId: `h${++n}`, authorId: author, username: author, content, isBot: role === 'assistant' });
 
-test('open mode answers the room ~75% of the time (dice), small "lol" lines less, off = never', () => {
-  clearChannelHistory('c1');
-  assert.equal(shouldAnswerOpen(msg('anyone watching the barca game tonight'), ON, 0.5).answer, true);
-  assert.equal(shouldAnswerOpen(msg('anyone watching the barca game tonight'), ON, 0.9).answer, false);
-  assert.equal(shouldAnswerOpen(msg('lol'), ON, 0.5).answer, false); // tiny line: 30%
-  assert.equal(shouldAnswerOpen(msg('lol'), ON, 0.1).answer, true);
+test('open mode answers the room rarely (25% dice + 3-min channel cooldown), never "lol" / no-context lines unless he is in the conversation, off = never', () => {
+  clearChannelHistory('c1'); __test.lastOpenReply.clear();
+  assert.equal(shouldAnswerOpen(msg('anyone watching the barca game tonight'), ON, 0.2).answer, true);
+  assert.equal(shouldAnswerOpen(msg('anyone watching the barca game tonight'), ON, 0.5).answer, false); // was yes at 75%
+  assert.equal(shouldAnswerOpen(msg('lol'), ON, 0.01).why, 'tiny');
+  assert.equal(shouldAnswerOpen(msg('that was so funny'), ON, 0.01).why, 'no-context');
+  assert.equal(shouldAnswerOpen(msg('he really did that'), ON, 0.01).why, 'no-context');
+  assert.equal(shouldAnswerOpen(msg('lmao same'), ON, 0.01).why, 'tiny');
+  assert.equal(shouldAnswerOpen(msg('cooked fr'), ON, 0.01).why, 'too-short');
   assert.equal(shouldAnswerOpen(msg('anyone watching the game'), { enabled: false }, 0.1).answer, false);
+  // cooldown after he answered in this channel
+  __test.lastOpenReply.set('c1', Date.now());
+  assert.equal(shouldAnswerOpen(msg('who thinks messi is better than ronaldo'), ON, 0.01).why, 'cooldown');
+  __test.lastOpenReply.clear();
+  // he's IN the conversation (spoke just now): small lines are fine and the chance is high
+  clearChannelHistory('c5');
+  said('c5', BOT, 'barca are winning it this year', 'assistant');
+  assert.equal(shouldAnswerOpen(msg('lol true', { ch: 'c5' }), ON, 0.8).answer, true);
+  // other people mid-conversation without him: stays out
+  clearChannelHistory('c6');
+  said('c6', 'josh', 'did u see the match'); said('c6', 'sam', 'ye pedri was insane'); said('c6', 'josh', 'that pass in the 80th'); said('c6', 'sam', 'goated');
+  assert.equal(shouldAnswerOpen(msg('honestly best game this season', { ch: 'c6', author: 'kai' }), ON, 0.01).why, 'others-talking');
 });
 
 test('he stays out when people talk to each other: a ping, a reply to someone, their name, a back-and-forth', () => {

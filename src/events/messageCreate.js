@@ -76,7 +76,7 @@ export default {
         : Promise.resolve(false);
 
       // Open mode (/nexus-open, nexusOpenModeService.js): in servers that turned it on he reads every message and joins
-      // in ~75% of the time — never when people are talking to each other.
+      // in rarely (25%, 3-min cooldown, never on "lol" or lines he'd need context for) — often only when he's already in the conversation.
       const openCfg = await getOpenMode(client, message.guild.id).catch(() => ({ enabled: false }));
       let openAnswering = false;
       if (openCfg.enabled && !isNexusQuery && !isTicketChannel) {

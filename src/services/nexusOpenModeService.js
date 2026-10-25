@@ -83,7 +83,28 @@ export function talksToSomeoneElse(message, now = Date.now()) {
 // ── budget ──
 const inFlightChannels = new Set();
 const guildMinute = new Map(); // guildId → [times]
-const GUILD_PER_MINUTE = 10;
+const GUILD_PER_MINUTE = 3; // was 10 — Patrick (2026-10-25): "Nexus answers too often and even to things he doesn't have context"
+const CHANNEL_COOLDOWN_MS = 3 * 60_000; // one unprompted reply per channel every 3 min (unless he's already in the conversation)
+const lastOpenReply = new Map(); // channelId → time of his last open-mode reply
+
+// "that", "this", "he", "lmao same", "exactly" — a line that only makes sense if you saw what came before
+const NEEDS_CONTEXT_RE = /^(?:(?:lmao|lol|bro|nah|yeah|ye|wait|ok|so|and|but)[\s,]+)*(?:that|this|it|its|it's|he|she|they|them|him|her|his|those|these|there|same|exactly|agreed|true|fr|real|facts|this\s+guy|that\s+guy|bro\s+what|what\s+happened|who(?:'s|s|\s+is|\s+was)\s+(?:that|this|he|she|they|him|her)|why\s+(?:tho|though)|did\s+(?:he|she|they)|is\s+(?:he|she|that)|was\s+(?:he|she|that))\b/i;
+
+/** Is he part of this conversation right now? (he spoke in the last 2 min, among the channel's last few lines) */
+function inConversation(message, now = Date.now()) {
+  const botId = message.client?.user?.id;
+  const last = getChannelHistory(message.channel?.id, 5);
+  return last.some((m) => (m.role === 'assistant' || m.authorId === botId) && (!m.timestamp || now - m.timestamp < 120_000));
+}
+
+/** Other people have been talking among themselves (4+ lines, 2+ people, none from him) — he walked in late. */
+function othersMidConversation(message) {
+  const botId = message.client?.user?.id;
+  const last = getChannelHistory(message.channel?.id, 6).filter((m) => m.authorId !== message.author?.id || true);
+  if (last.length < 4) return false;
+  if (last.some((m) => m.role === 'assistant' || m.authorId === botId)) return false;
+  return new Set(last.map((m) => m.authorId)).size >= 2;
+}
 
 export function channelAllowed(channelName, scope = 'chat') {
   if (QUIET_CHANNEL_RE.test(channelName || '')) return false;
@@ -101,8 +122,18 @@ export function shouldAnswerOpen(message, cfg, rand = Math.random(), now = Date.
   // a Discord reply to one of his messages: always
   if (message.reference?.messageId && message.mentions?.repliedUser?.id === botId) return { answer: true, why: 'reply-to-nexus' };
   if (talksToSomeoneElse(message, now)) return { answer: false, why: 'someone-else' };
-  const chance = TINY_RE.test(t) ? 0.3 : 0.75;
-  return rand < chance ? { answer: true, why: 'open' } : { answer: false, why: 'dice' };
+  const withHim = inConversation(message, now) || /\bnexus\b/i.test(t);
+  // never butts in on "lol" / "bet" / "fr" unless he's the one they're talking with
+  if (TINY_RE.test(t) && !withHim) return { answer: false, why: 'tiny' };
+  if (!withHim) {
+    // he'd need context he doesn't have
+    if (NEEDS_CONTEXT_RE.test(t)) return { answer: false, why: 'no-context' };
+    if (!/\?/.test(t) && t.split(/\s+/).length <= 3 && !hasImage) return { answer: false, why: 'too-short' };
+    if (othersMidConversation(message)) return { answer: false, why: 'others-talking' };
+    if (now - (lastOpenReply.get(message.channel?.id) || 0) < CHANNEL_COOLDOWN_MS) return { answer: false, why: 'cooldown' };
+  }
+  const chance = withHim ? 0.85 : 0.25; // was 0.75 for anything
+  return rand < chance ? { answer: true, why: withHim ? 'in-conversation' : 'open' } : { answer: false, why: 'dice' };
 }
 
 /** The budget gate; call right before answering. Returns a release function, or null when over budget. */
@@ -116,6 +147,7 @@ export function takeSlot(message, now = Date.now()) {
     return null;
   }
   guildMinute.set(g, [...times, now]);
+  lastOpenReply.set(ch, now);
   inFlightChannels.add(ch);
   return () => inFlightChannels.delete(ch);
 }
@@ -124,4 +156,4 @@ export function logDecision(message, d) {
   logger.debug(`[openMode] #${message.channel?.name}: ${d.answer ? 'answer' : 'skip'} (${d.why})`);
 }
 
-export const __test = { talksToSomeoneElse, shouldAnswerOpen, takeSlot, channelAllowed, inFlightChannels, guildMinute, cache };
+export const __test = { talksToSomeoneElse, shouldAnswerOpen, takeSlot, channelAllowed, inFlightChannels, guildMinute, cache, lastOpenReply, NEEDS_CONTEXT_RE };
