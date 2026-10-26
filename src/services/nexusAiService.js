@@ -770,7 +770,9 @@ export async function handleNexusAiMessage(message, opts = {}) {
     reportTelemetry(message, question, result);
 
     // Check if answer is missing or consists entirely of invisible blank characters
-    if (!answer || cleanInvisibleCharacters(answer).length === 0) {
+    // (a picture he drew / made comes with no text on purpose — that's a real answer, sent as an attachment below)
+    const hasPicture = pictureFiles(result.data?.images).length > 0;
+    if (!hasPicture && (!answer || cleanInvisibleCharacters(answer).length === 0)) {
       await message.reply({
         content: await voiced('error', "Nah bro, I ran into a fucking error, Try again when I want to work..."),
         allowedMentions: SAFE_REPLY_MENTIONS,
