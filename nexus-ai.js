@@ -522,6 +522,8 @@ export class NexusAI {
       channelNsfw: opts.channelNsfw === true ? true : undefined,
       // this client can show a picture with no text (2026-10-21) — the engine then sends the realistic picture alone
       pictureOnlyOk: true,
+      // this server switched Nexus off and someone talked to him anyway → "on strike" (engine emotionEngine)
+      strike: opts.strike === true ? true : undefined,
       // the message they replied to, whoever wrote it (2026-10-20: he read their reply without knowing what it answered)
       replyTo: opts.replyTo && typeof opts.replyTo.text === 'string' ? { name: String(opts.replyTo.name || 'someone').slice(0, 64), text: opts.replyTo.text.slice(0, 500), isNexus: opts.replyTo.isNexus === true } : undefined,
       memories: Array.isArray(opts.memories) ? opts.memories : [],

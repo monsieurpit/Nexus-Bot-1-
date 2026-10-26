@@ -219,6 +219,7 @@ export async function requestNexusReply(question, userContext = {}) {
       unprompted: userContext.unprompted === true,
       openMode: userContext.openMode === true,
       openChecked: userContext.openChecked === true,
+      strike: userContext.strike === true,
       // the channel is age-restricted (Discord's NSFW flag) — the only place adult / gore pictures may be posted
       channelNsfw: userContext.channelNsfw === true,
     });
@@ -380,6 +381,8 @@ function cleanInvisibleCharacters(str) {
 // The engine's message parts, if they're usable: 2-3 short non-empty parts that together are the whole answer (the bot
 // never drops words — if anything looks off, the answer goes as one message like before).
 // The engine's drawn pictures ([{ mime, name, data(base64) }]) as Discord attachments — only real PNG/JPEG/WebP, ≤ 7 MB, max 3.
+const lastStrikeAt = new Map(); // channelId → last "on strike" rant
+
 export function pictureFiles(images) {
   if (!Array.isArray(images)) return [];
   const out = [];
@@ -627,11 +630,24 @@ export async function handleNexusAiMessage(message, opts = {}) {
   const isDisabled = await isNexusAiDisabled(targetScopeId, message.client);
   if (isDisabled && openMode) return false;
   if (isDisabled) {
-    const randomDisabledMsg = disabledAiResponses[Math.floor(Math.random() * disabledAiResponses.length)];
-    await message.reply({
-      content: await voiced('disabled', randomDisabledMsg),
-      allowedMentions: SAFE_REPLY_MENTIONS,
-    }).catch(err => logger.error('[Nexus AI] Error sending disabled reply:', err));
+    // ON STRIKE (2026-10-25, Patrick): switched off here, someone talks to him anyway → he rants that Casseurt hasn't paid him,
+    // written by the engine as a burst of messages. Once per channel every 10 min; otherwise he stays quiet (no spam).
+    const ch = message.channel?.id || 'x';
+    if (Date.now() - (lastStrikeAt.get(ch) || 0) < 10 * 60_000) return true;
+    lastStrikeAt.set(ch, Date.now());
+    const r = await requestNexusReply(rawQuestion || 'nexus', { userId: message.author?.id, username: message.author?.username, client: message.client, channelId: ch, messageId: message.id, strike: true }).catch(() => null);
+    const parts = humanParts(r?.data?.parts, r?.reply || '') || (r?.reply ? [r.reply] : null);
+    if (!parts || r?.error) {
+      const randomDisabledMsg = disabledAiResponses[Math.floor(Math.random() * disabledAiResponses.length)];
+      await message.reply({ content: await voiced('disabled', randomDisabledMsg), allowedMentions: SAFE_REPLY_MENTIONS }).catch(() => {});
+      return true;
+    }
+    await message.reply({ content: defuseMassMentions(parts[0]).slice(0, 1900), allowedMentions: SAFE_REPLY_MENTIONS, failIfNotExists: false }).catch(() => {});
+    for (const p of parts.slice(1)) {
+      message.channel.sendTyping().catch(() => {});
+      await new Promise((res) => setTimeout(res, Math.min(2500, Math.max(500, p.length * 35))));
+      await message.channel.send({ content: defuseMassMentions(p).slice(0, 1900), allowedMentions: { parse: [] } }).catch(() => {});
+    }
     return true;
   }
 
