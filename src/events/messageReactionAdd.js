@@ -1,6 +1,6 @@
 import { Events } from 'discord.js';
 import { logger } from '../utils/logger.js';
-import { getTrackedAiReply, nexusClient } from '../services/nexusAiService.js';
+import { getTrackedAiReply, nexusClient, NEXUS_AI_CHAT_DISABLED } from '../services/nexusAiService.js';
 import { logNegativeFeedback } from '../services/aiTelemetryService.js';
 
 // Reactions on Nexus's own replies are the clearest feedback members give:
@@ -37,6 +37,7 @@ export default {
       const message = reaction.message;
       if (!message.guild) return;
 
+      if (NEXUS_AI_CHAT_DISABLED) return; // AI chat off: no feedback to the engine
       const tracked = getTrackedAiReply(message.id);
       if (!tracked) return;
 

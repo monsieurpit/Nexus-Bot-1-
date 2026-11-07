@@ -1,7 +1,7 @@
 import { Events } from "discord.js";
 import { logger, startupLog } from "../utils/logger.js";
 import { reconcileReactionRoleMessages } from "../services/reactionRoleService.js";
-import { nexusClient } from "../services/nexusAiService.js";
+import { nexusClient, NEXUS_AI_CHAT_DISABLED } from "../services/nexusAiService.js";
 
 const PRESENCE_INTERVAL_MS = 10 * 60 * 1000;
 
@@ -31,6 +31,7 @@ function statusForMood(label) {
 }
 
 async function buildMoodPresence() {
+  if (NEXUS_AI_CHAT_DISABLED) return null; // AI chat off: no engine call, static presences only
   try {
     const mood = await nexusClient.getMood();
     if (!mood || !mood.label) return null;

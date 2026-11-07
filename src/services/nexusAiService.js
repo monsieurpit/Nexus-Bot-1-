@@ -21,6 +21,15 @@ export const nexusClient = new NexusAI({
   baseUrl: process.env.NEXUS_API_URL,
 });
 
+// ─── TEMPORARY MASTER SWITCH: Nexus chat AI is OFF (the engine host is unavailable) ─────────────────
+// While this is true every Nexus AI feature except RaidShield is silent: no replies (not even an
+// "I can't reach my engine" message, so nothing about the setup is exposed), no open mode, no
+// jump-ins, no mood presence, no reaction feedback, no dashboard/API AI endpoints.
+// RaidShield (aiModerationService.js, raidDetectionService.js, scamDetectionService.js) does NOT read this flag.
+// All the original code below is kept intact. To turn the AI back on, set NEXUS_AI_CHAT_ENABLED=true
+// in the service's variables (or change this line to `false`).
+export const NEXUS_AI_CHAT_DISABLED = process.env.NEXUS_AI_CHAT_ENABLED !== 'true';
+
 const disabledGuilds = new Set(); // targetId (guildId or channelId) -> boolean
 
 // Only requires the command word to START the message (after "Nexus" is already stripped by
@@ -47,6 +56,7 @@ const FORGET_ME_REGEX = /^(?:please\s+|pls\s+)?(?:forget\s+(?:everything\s+|all\
 // Nexus's own words for the bot's system moments, written by the engine; the fixed lines below are only the fallback
 // when the engine can't answer within a few seconds (Patrick, 2026-10-04: "make sure there are no hardcoded answers").
 export async function voiced(situation, fallback) {
+  if (NEXUS_AI_CHAT_DISABLED) return fallback; // AI chat off: use the fixed line, never call the engine
   const line = await nexusClient.voiceLine(situation).catch(() => null);
   return line || fallback;
 }
@@ -170,6 +180,11 @@ function generateOfflineFallbackResponse(question, userContext) {
  * `client` is optional: any caller that doesn't provide one just skips memory loading/saving.
  */
 export async function requestNexusReply(question, userContext = {}) {
+  // AI chat off: never call the engine and never produce a user-visible "can't reach engine" text.
+  // Callers already treat an error/empty reply as "stay silent".
+  if (NEXUS_AI_CHAT_DISABLED) {
+    return { reply: '', data: null, latencyMs: 0, error: new Error('Nexus AI chat is disabled'), rateLimited: false };
+  }
   const isSuperChillUser = userContext.userId === '1394001641899954368' || Boolean(userContext.isSuperChillUser);
   const hasMemoryAccess = Boolean(userContext.client && userContext.userId);
   const startedAt = Date.now();
@@ -272,6 +287,7 @@ export async function requestNexusReply(question, userContext = {}) {
  * Falls back to the minimal offline response if the remote API call fails.
  */
 export async function askNexusAi(question, userContext = {}) {
+  if (NEXUS_AI_CHAT_DISABLED) throw new Error('AI features are currently unavailable.');
   const { reply } = await requestNexusReply(question, userContext);
   return reply;
 }
@@ -564,6 +580,7 @@ export function resolveNexusTrigger(message) {
  */
 export async function handleNexusAiMessage(message, opts = {}) {
   if (message.author?.bot) return false;
+  if (NEXUS_AI_CHAT_DISABLED) return false; // AI chat off: stay completely silent (also covers open mode)
   if (!message.content || typeof message.content !== 'string') return false;
 
   const botUserId = message.client?.user?.id;
