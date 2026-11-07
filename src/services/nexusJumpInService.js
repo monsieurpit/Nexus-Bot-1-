@@ -8,7 +8,7 @@
 // while the channel is busy with something serious. The engine can PASS (nothing worth adding) → he stays silent.
 // Mode (NEXUS_JUMPIN): "dry" (default — logs what he WOULD have said, sends nothing) · "live" · "off".
 import { logger } from '../utils/logger.js';
-import { parseNexusTrigger, requestNexusReply, buildServerContext, trackAiReply } from './nexusAiService.js';
+import { NEXUS_AI_CHAT_DISABLED, parseNexusTrigger, requestNexusReply, buildServerContext, trackAiReply } from './nexusAiService.js';
 import { getChannelHistory } from './channelHistoryService.js';
 
 const MODE = () => (process.env.NEXUS_JUMPIN || 'dry').toLowerCase();
@@ -73,6 +73,7 @@ function spend(message, now = Date.now()) {
 }
 
 async function jumpIn(message, kind) {
+  if (NEXUS_AI_CHAT_DISABLED) return; // AI chat off
   const mode = MODE();
   if (mode === 'off' || !budgetOk(message)) return;
   spend(message); // spent even on PASS / dry, so he never tries twice in a row

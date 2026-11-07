@@ -2,7 +2,7 @@ import { SlashCommandBuilder, PermissionFlagsBits, MessageFlags } from 'discord.
 import { createEmbed } from '../../utils/embeds.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { logger } from '../../utils/logger.js';
-import { nexusClient } from '../../services/nexusAiService.js';
+import { nexusClient, NEXUS_AI_CHAT_DISABLED } from '../../services/nexusAiService.js';
 import { getGuildConfig } from '../../services/guildConfig.js';
 
 // Guild-only test-server tooling — never registered globally, see announce.js's comment /
@@ -20,6 +20,10 @@ export default {
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
     async execute(interaction) {
+        if (NEXUS_AI_CHAT_DISABLED) {
+            // AI chat off: benchmark would only hit the engine
+            return interaction.reply({ content: 'This command is currently unavailable.', flags: MessageFlags.Ephemeral });
+        }
         if (!interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
             return interaction.reply({
                 embeds: [createEmbed({

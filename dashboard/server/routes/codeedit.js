@@ -3,7 +3,7 @@
 // the GitHub token the user pastes in on every request, which is never stored server-side and is
 // the only thing that actually determines what repo can be pushed to.
 import express from 'express';
-import { nexusClient } from '../../../src/services/nexusAiService.js';
+import { nexusClient, NEXUS_AI_CHAT_DISABLED } from '../../../src/services/nexusAiService.js';
 import { proposeEdit, applyEdit, rejectEdit, getPendingRequest } from '../services/repoEditService.js';
 
 const router = express.Router();
@@ -20,6 +20,7 @@ async function generateEdit(oldContent, filePath, instruction) {
     `nothing before or after the file content.\n\n` +
     `Instruction: ${instruction}\n\n` +
     `--- Current file content ---\n${oldContent}\n--- End of file ---`;
+  if (NEXUS_AI_CHAT_DISABLED) throw new Error('AI features are currently unavailable.'); // AI chat off
   const result = await nexusClient.askCodeEdit({ prompt });
   // askCodeEdit resolves to the plain response string (see nexus-ai.js) — strip accidental
   // markdown fences defensively in case the model wraps the file anyway.

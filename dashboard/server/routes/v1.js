@@ -1,5 +1,5 @@
 import express from 'express';
-import { askNexusAi, nexusClient } from '../../../src/services/nexusAiService.js';
+import { askNexusAi, nexusClient, NEXUS_AI_CHAT_DISABLED } from '../../../src/services/nexusAiService.js';
 import { globalAiQueue } from '../../../src/utils/requestQueue.js';
 
 const router = express.Router();
@@ -13,6 +13,8 @@ const router = express.Router();
  * implementation to update instead of a second local copy silently staying fake forever.
  */
 async function analyzeVision({ image, prompt = '', isSecurityScan = false } = {}) {
+  // AI chat off: general vision is disabled; security scans (RaidShield-style) stay available
+  if (NEXUS_AI_CHAT_DISABLED && !isSecurityScan) throw new Error('AI features are currently unavailable.');
   try {
     const result = await nexusClient.analyzeImage({
       imageUrl: typeof image === 'string' && image.startsWith('http') ? image : undefined,

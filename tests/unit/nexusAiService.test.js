@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 // made the fallback assertions fail. A dead address (set before the service module creates its
 // client, hence the dynamic import) makes the test independent of what's running locally.
 process.env.NEXUS_API_URL = 'http://127.0.0.1:9/api/v1';
+process.env.NEXUS_AI_CHAT_ENABLED = 'true'; // these tests cover the AI code path, which is switched off by default
 const { askNexusAi, parseNexusTrigger, isNexusAiDisabled, setNexusAiDisabled } = await import('../../src/services/nexusAiService.js');
 
 test('parseNexusTrigger detects bot mention and prefixes', () => {
