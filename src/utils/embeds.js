@@ -1,5 +1,17 @@
 import { EmbedBuilder } from 'discord.js';
-import { getColor } from '../config/bot.js';
+import { getColor, BotConfig } from '../config/bot.js';
+import { getBotClient } from './botRegistry.js';
+
+// ─── Nexus embed theme ──────────────────────────────────────────────────────────
+// Every bot-authored embed gets the same signature: theme colour, a branded footer with the
+// bot's avatar ("Nexus"), and a timestamp. Pass `footer: false` for content written by server
+// staff (embed builder, sticky notes, welcome templates, /say) so it isn't branded as the bot's.
+export function brandFooter(extra = null) {
+  const name = BotConfig?.embeds?.footer?.text || 'Nexus';
+  const text = extra ? `${name} • ${extra}` : name;
+  const iconURL = BotConfig?.embeds?.footer?.icon || getBotClient()?.user?.displayAvatarURL?.({ size: 64 }) || undefined;
+  return iconURL ? { text: text.substring(0, 2048), iconURL } : { text: text.substring(0, 2048) };
+}
 
 export function createEmbed({
   title = '',
@@ -7,7 +19,7 @@ export function createEmbed({
   color = 'primary',
   fields = [],
   author = null,
-  footer = null,
+  footer = 'auto',
   thumbnail = null,
   image = null,
   timestamp = true,
@@ -27,7 +39,8 @@ export function createEmbed({
   
   
   try {
-    const embedColor = getColor(color) || '#000000';
+    // Accepts a theme name ('primary', 'economy', 'ticket.open'), a hex string or a number.
+    const embedColor = typeof color === 'number' ? color : (getColor(color) || '#000000');
     embed.setColor(embedColor);
   } catch (error) {
     embed.setColor('#000000');
@@ -63,10 +76,14 @@ export function createEmbed({
   }
 
   
+  if (footer === null || footer === undefined) footer = 'auto';
   if (footer) {
     try {
-      if (typeof footer === 'string' && footer.length > 0) {
-        embed.setFooter({ text: footer.substring(0, 2048) });
+      if (footer === 'auto') {
+        embed.setFooter(brandFooter());
+      } else if (typeof footer === 'string' && footer.length > 0) {
+        // A plain footer string keeps the Nexus signature in front of it.
+        embed.setFooter(brandFooter(footer));
       } else if (footer && typeof footer.text === 'string') {
         embed.setFooter(footer);
       }
@@ -156,12 +173,29 @@ export function resolveTitleAndMessage(first, second) {
   return { title: second, message: first };
 }
 
+const STATUS_ICONS = { success: '✅', error: '❌', warning: '⚠️', info: 'ℹ️' };
+
+/** Every status title carries its status icon, unless it already starts with an emoji. */
+export function withStatusIcon(title, color) {
+  const icon = STATUS_ICONS[color];
+  if (!icon || typeof title !== 'string' || !title.trim()) return title;
+  return EMOJI_START.test(title.trim()) ? title : `${icon} ${title.trim()}`;
+}
+
 function buildStatusEmbed(first, second, { defaultTitle, color }) {
   if (typeof first === 'string' && typeof second === 'string' && second.length > 0) {
     const { title, message } = resolveTitleAndMessage(first, second);
-    return createEmbed({ title, description: message, color, timestamp: true });
+    return createEmbed({ title: withStatusIcon(title, color), description: message, color, timestamp: true });
   }
-  return createEmbed({ title: defaultTitle, description: first, color, timestamp: true });
+  return createEmbed({ title: defaultTitle, description: stripLeadingIcon(first, color), color, timestamp: true });
+}
+
+// "❌ Error" title over "❌ You can't…" showed the icon twice; the title already carries it.
+function stripLeadingIcon(text, color) {
+  const icon = STATUS_ICONS[color];
+  if (typeof text !== 'string' || !icon) return text;
+  const trimmed = text.trimStart();
+  return trimmed.startsWith(icon) ? trimmed.slice(icon.length).trimStart() : text;
 }
 
 export function errorEmbed(message, error = null, options = {}) {
@@ -173,7 +207,7 @@ export function errorEmbed(message, error = null, options = {}) {
   // errorEmbed('What went wrong', errorObject) — the error's own text is debug detail, shown
   // outside production only.
   const { showDetails = process.env.NODE_ENV !== 'production' } = options;
-  let description = message;
+  let description = stripLeadingIcon(message, 'error');
 
   if (error && showDetails) {
     const detailText = typeof error === 'string' ? error : (error.message || String(error));
@@ -251,10 +285,44 @@ export function formatList(items, ordered = false) {
 }
 
 export function formatProgressBar(current, max, size = 10) {
-  const progress = Math.min(Math.max(0, current / max), 1);
+  const progress = max > 0 ? Math.min(Math.max(0, current / max), 1) : 0;
   const filled = Math.round(size * progress);
-  const empty = size - filled;
-  return `[${'█'.repeat(filled)}${'░'.repeat(empty)}] ${Math.round(progress * 100)}%`;
+  return `${'▰'.repeat(filled)}${'▱'.repeat(size - filled)} **${Math.round(progress * 100)}%**`;
+}
+
+/** 12345 → "12,345". */
+export function formatNumber(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n.toLocaleString('en-US') : String(value ?? '0');
+}
+
+/** Field helper: field('Name', value, true). Empty values render as an em dash. */
+export function field(name, value, inline = false) {
+  const text = value === undefined || value === null || String(value).length === 0 ? '—' : String(value);
+  return { name: String(name), value: text, inline };
+}
+
+/** "• a\n• b" with an optional cap ("…and 3 more"). */
+export function bulletList(items, max = 15) {
+  const list = (items || []).filter(Boolean);
+  if (list.length === 0) return '—';
+  const shown = list.slice(0, max).map((i) => `• ${i}`);
+  if (list.length > max) shown.push(`*…and ${list.length - max} more*`);
+  return shown.join('\n');
+}
+
+/**
+ * The standard "action result" layout used by moderation/admin replies:
+ * a coloured embed with the target, the moderator, the reason and an optional case number.
+ */
+export function actionEmbed({ title, color = 'moderation', target = null, moderator = null, reason = null, caseId = null, extra = [], thumbnail = null, description = null }) {
+  const fields = [];
+  if (target) fields.push(field('Member', target, true));
+  if (moderator) fields.push(field('Moderator', moderator, true));
+  if (caseId !== null && caseId !== undefined) fields.push(field('Case', `\`#${caseId}\``, true));
+  if (reason) fields.push(field('Reason', `> ${String(reason).slice(0, 1000)}`, false));
+  fields.push(...extra);
+  return createEmbed({ title, description, color, fields, thumbnail });
 }
 
 

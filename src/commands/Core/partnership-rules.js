@@ -1,5 +1,6 @@
 import { SlashCommandBuilder, EmbedBuilder } from 'discord.js';
 import { handleInteractionError } from '../../utils/errorHandler.js';
+import { createEmbed } from '../../utils/embeds.js';
 
 const BARCA_BLUE = 0x004D98;
 
@@ -11,7 +12,7 @@ export default {
 
     async execute(interaction) {
         try {
-            const embed = new EmbedBuilder()
+            const embed = createEmbed({ timestamp: false, footer: false })
                 .setColor(BARCA_BLUE)
                 .setTitle('🤝 PARTNERSHIP REQUIREMENTS & RULES 🤝')
                 .setDescription(

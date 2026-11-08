@@ -86,7 +86,6 @@ export default {
         `✨ **You got:** ${reward.label}\n\n` +
         `📦 Remaining **${packDef.name}** in inventory: **${remaining}**`
       );
-      embed.setFooter({ text: '🧪 In beta (Testing)' });
 
       await InteractionHelper.safeEditReply(interaction, { embeds: [embed] });
     } catch (error) {

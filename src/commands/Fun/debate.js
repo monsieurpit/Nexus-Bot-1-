@@ -11,6 +11,7 @@ import { logger } from '../../utils/logger.js';
 import { handleInteractionError } from '../../utils/errorHandler.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { activeDebates } from '../../services/debateService.js';
+import { createEmbed } from '../../utils/embeds.js';
 
 /** Build the live debate embed with current vote counts. */
 export function buildDebateEmbed(topic, forCount, againstCount, minutesLeft = null, ended = false) {
@@ -33,7 +34,7 @@ export function buildDebateEmbed(topic, forCount, againstCount, minutesLeft = nu
         desc += `\n\n${verdict}`;
     }
 
-    return new EmbedBuilder()
+    return createEmbed({ timestamp: false })
         .setTitle(ended ? '⚔️ Debate — Closed / Cerrado' : '⚔️ Debate')
         .setDescription(desc)
         .setColor(ended ? '#95a5a6' : '#f39c12')

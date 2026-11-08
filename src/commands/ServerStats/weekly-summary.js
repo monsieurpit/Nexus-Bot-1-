@@ -3,6 +3,7 @@ import { getGuildConfig, setGuildConfig } from '../../services/guildConfig.js';
 import { postWeeklySummary, getWeeklyStats, buildWeeklySummaryEmbed } from '../../services/weeklySummaryService.js';
 import { getColor } from '../../config/bot.js';
 import { logger } from '../../utils/logger.js';
+import { createEmbed } from '../../utils/embeds.js';
 
 export default {
   data: new SlashCommandBuilder()
@@ -113,7 +114,7 @@ export default {
           weeklySummary: updatedWeekly
         });
 
-        const embed = new EmbedBuilder()
+        const embed = createEmbed({ timestamp: false })
           .setColor(getColor('success'))
           .setTitle('✅ Weekly Server Summary Configured')
           .setDescription(`Automated weekly summaries have been enabled!`)
@@ -134,14 +135,14 @@ export default {
         const sentMsg = await postWeeklySummary(client, guildId, targetChannel, true);
 
         if (sentMsg) {
-          const embed = new EmbedBuilder()
+          const embed = createEmbed({ timestamp: false })
             .setColor(getColor('success'))
             .setTitle('🚀 Weekly Summary Sent!')
             .setDescription(`Successfully generated and posted the weekly summary in ${targetChannel}.`);
 
           return await interaction.editReply({ embeds: [embed] });
         } else {
-          const embed = new EmbedBuilder()
+          const embed = createEmbed({ timestamp: false })
             .setColor(getColor('error'))
             .setTitle('❌ Post Failed')
             .setDescription(`Could not post the weekly summary to ${targetChannel}. Please verify bot permissions (Send Messages & Embed Links).`);
@@ -159,7 +160,7 @@ export default {
         const stats = await getWeeklyStats(client, guildId);
         const liveEmbed = await buildWeeklySummaryEmbed(client, interaction.guild, stats);
 
-        const statusEmbed = new EmbedBuilder()
+        const statusEmbed = createEmbed({ timestamp: false })
           .setColor(getColor('info'))
           .setTitle('📊 Weekly Summary Configuration & Status')
           .addFields(
@@ -176,7 +177,7 @@ export default {
       if (subcommand === 'history') {
         const { history } = await getWeeklyStats(client, guildId);
         if (!history || history.length === 0) {
-          const embed = new EmbedBuilder()
+          const embed = createEmbed({ timestamp: false })
             .setColor(getColor('info'))
             .setTitle('📜 Weekly Summary History')
             .setDescription('No previous weekly summaries have been archived yet.');
@@ -184,7 +185,7 @@ export default {
         }
 
         const embeds = [];
-        const overviewEmbed = new EmbedBuilder()
+        const overviewEmbed = createEmbed({ timestamp: false })
           .setColor(getColor('info'))
           .setTitle('📜 Archived Weekly Summaries (Last 3 Weeks)')
           .setDescription(`Showing the **${history.length}** most recent archived weekly summaries for **${interaction.guild.name}**.`);
@@ -193,8 +194,8 @@ export default {
         for (let i = 0; i < history.length; i++) {
           const item = history[i];
           const dateStr = item.archivedAt ? new Date(item.archivedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : `Summary #${i + 1}`;
-          const summaryEmbed = new EmbedBuilder()
-            .setColor(getColor('bot'))
+          const summaryEmbed = createEmbed({ timestamp: false })
+            .setColor(getColor('primary'))
             .setTitle(`🗓️ Weekly Summary #${i + 1} (${dateStr})`)
             .addFields(
               { name: '👥 Member Activity', value: `Joins: **${item.joins || 0}** | Leaves: **${item.leaves || 0}**`, inline: true },
@@ -215,7 +216,7 @@ export default {
           }
         });
 
-        const embed = new EmbedBuilder()
+        const embed = createEmbed({ timestamp: false })
           .setColor(getColor('warning'))
           .setTitle('⏸️ Weekly Summaries Disabled')
           .setDescription('Automated weekly server summaries have been disabled.');
@@ -224,7 +225,7 @@ export default {
       }
     } catch (error) {
       logger.error('Error handling /weekly-summary command:', error);
-      const embed = new EmbedBuilder()
+      const embed = createEmbed({ timestamp: false })
         .setColor(getColor('error'))
         .setTitle('❌ Command Error')
         .setDescription('An error occurred while managing weekly summary settings.');

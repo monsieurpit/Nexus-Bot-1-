@@ -5,7 +5,7 @@ import { getLoggingStatus } from '../../services/loggingService.js';
 import { getLevelingConfig } from '../../services/leveling.js';
 import { getConfiguration as getJoinToCreateConfiguration } from '../../services/joinToCreateService.js';
 import { getWelcomeConfig, getApplicationSettings } from '../../utils/database.js';
-import { errorEmbed } from '../../utils/embeds.js';
+import { createEmbed, errorEmbed } from '../../utils/embeds.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { logger } from '../../utils/logger.js';
 
@@ -59,7 +59,7 @@ export default {
                     formatChannelMention(interaction.guild, guildConfig.reportChannelId),
                 ]);
 
-            const embed = new EmbedBuilder()
+            const embed = createEmbed({ timestamp: false })
                 .setTitle('🖥️ System Overview')
                 .setDescription(`Read-only snapshot for **${interaction.guild.name}**. Use the relevant command's dashboard to make changes.`)
                 .setColor(getColor('primary'))

@@ -52,7 +52,7 @@ export default {
             );
 
             // Create the moderation profile embed
-            const embed = new EmbedBuilder()
+            const embed = createEmbed({ timestamp: false })
                 .setColor(getColor('moderation'))
                 .setTitle(` Moderation Profile / Perfil de Moderacion`)
                 .setDescription(`Moderation history for **${targetUser.tag}**\n\nHistorial de moderacion para **${targetUser.tag}**`)

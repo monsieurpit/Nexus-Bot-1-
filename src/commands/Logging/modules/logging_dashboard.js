@@ -3,7 +3,7 @@ import { getColor } from '../../../config/bot.js';
 import { getGuildConfig } from '../../../services/guildConfig.js';
 import { getLoggingStatus, EVENT_TYPES } from '../../../services/loggingService.js';
 import { createLoggingDashboardComponents } from '../../../utils/loggingUi.js';
-import { errorEmbed } from '../../../utils/embeds.js';
+import { createEmbed, errorEmbed } from '../../../utils/embeds.js';
 import { InteractionHelper } from '../../../utils/interactionHelper.js';
 import { logger } from '../../../utils/logger.js';
 
@@ -61,7 +61,7 @@ export async function buildLoggingDashboardView(interaction, client) {
         return `${on ? '✅' : '❌'} ${label}`;
     }).join('\n');
 
-    const embed = new EmbedBuilder()
+    const embed = createEmbed({ timestamp: false })
         .setTitle('📋 Logging Dashboard')
         .setDescription(`Manage audit logging for **${interaction.guild.name}**. Category buttons toggle logging instantly.`)
         .setColor(auditEnabled ? getColor('success') : getColor('warning'))

@@ -9,6 +9,7 @@ import { logger } from '../utils/logger.js';
 import { checkAndAnnounceMilestone } from '../services/milestoneService.js';
 import { RaidDetectionService } from '../services/raidDetectionService.js';
 import { recordWeeklyStat } from '../services/weeklySummaryService.js';
+import { createEmbed } from '../utils/embeds.js';
 
 export default {
   name: Events.GuildMemberAdd,
@@ -110,7 +111,7 @@ async function sendWelcomeMessage(member, welcomeConfig) {
         return;
     }
 
-    const embed = new EmbedBuilder()
+    const embed = createEmbed({ timestamp: false, footer: false })
         .setColor(welcomeConfig.welcomeEmbed?.color || getColor('success'))
         .setTitle(embedTitle.slice(0, 256))
         .setDescription(welcomeMessage.slice(0, 4096))

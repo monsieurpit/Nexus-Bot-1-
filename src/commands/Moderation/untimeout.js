@@ -1,5 +1,5 @@
 import { SlashCommandBuilder, PermissionFlagsBits } from 'discord.js';
-import { successEmbed } from '../../utils/embeds.js';
+import { successEmbed, actionEmbed } from '../../utils/embeds.js';
 import { logger } from '../../utils/logger.js';
 import { ModerationService } from '../../services/moderationService.js';
 import { handleInteractionError } from '../../utils/errorHandler.js';
@@ -35,9 +35,13 @@ export default {
 
                 await InteractionHelper.safeEditReply(interaction, {
                     embeds: [
-                        successEmbed(
-                            `🔓 **Removed timeout** from ${targetUser.tag}`,
-                        ),
+                        actionEmbed({
+                            title: `🔊 ${targetUser.username} can talk again`,
+                            color: 'success',
+                            target: `${targetUser} \`${targetUser.id}\``,
+                            moderator: `${interaction.user}`,
+                            thumbnail: targetUser.displayAvatarURL?.({ size: 128 }),
+                        }),
                     ],
                 });
         } catch (error) {

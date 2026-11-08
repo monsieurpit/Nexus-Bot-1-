@@ -162,7 +162,7 @@ async function handleList(interaction) {
 
         saves.sort((a, b) => b.createdAt - a.createdAt);
 
-        const embed = new EmbedBuilder()
+        const embed = createEmbed({ timestamp: false })
             .setColor(getColor('primary'))
             .setTitle('Server Backups / Copias de Seguridad del Servidor')
             .setDescription(`Found **${saves.length}** saved snapshot(s) for this server.`)
@@ -228,7 +228,7 @@ async function handleNotify(interaction, sub, client) {
             });
         }
 
-        const embed = new EmbedBuilder()
+        const embed = createEmbed({ timestamp: false })
             .setColor(getColor('success'))
             .setTitle('✅ Auto-Save Notifications Configured')
             .setDescription(`Automatic backup notifications will now be sent to ${channel}.\nThe server is automatically backed up every **3 days**.`)
@@ -239,7 +239,7 @@ async function handleNotify(interaction, sub, client) {
 
     if (sub === 'clear') {
         await setAutoSaveConfig(client, guild.id, { channelId: null });
-        const embed = new EmbedBuilder()
+        const embed = createEmbed({ timestamp: false })
             .setColor(getColor('warning'))
             .setTitle('🔕 Notifications Disabled')
             .setDescription('Auto-save notifications have been disabled. The server will still be backed up every 3 days.')
@@ -253,7 +253,7 @@ async function handleNotify(interaction, sub, client) {
         const lastSave = cfg.lastSaveAt ? `<t:${Math.floor(cfg.lastSaveAt / 1000)}:F> (<t:${Math.floor(cfg.lastSaveAt / 1000)}:R>)` : 'Never';
         const nextSave = cfg.lastSaveAt ? `<t:${Math.floor((cfg.lastSaveAt + 3 * 24 * 60 * 60 * 1000) / 1000)}:R>` : 'Within 24 hours';
 
-        const embed = new EmbedBuilder()
+        const embed = createEmbed({ timestamp: false })
             .setColor(getColor('info'))
             .setTitle('🔒 Auto-Save Status')
             .addFields(

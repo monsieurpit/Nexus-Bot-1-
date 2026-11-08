@@ -1,6 +1,7 @@
 import { SlashCommandBuilder, PermissionFlagsBits } from 'discord.js';
 import { logger } from '../../utils/logger.js';
 import { setBotAlertsConfig, disableBotAlerts, getBotAlertsConfig } from '../../services/scamDetectionService.js';
+import { getColor } from '../../config/bot.js';
 
 export default {
   data: new SlashCommandBuilder()
@@ -59,7 +60,7 @@ export default {
 
         if (success) {
           const embed = {
-            color: 0x00FF00,
+            color: getColor('success'),
             title: 'Bot Alerts Configured',
             description: `Scam detection alerts are now enabled.`,
             fields: [

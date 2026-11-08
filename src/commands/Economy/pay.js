@@ -1,5 +1,5 @@
 import { SlashCommandBuilder } from 'discord.js';
-import { createEmbed, errorEmbed } from '../../utils/embeds.js';
+import { createEmbed, errorEmbed, field, formatNumber } from '../../utils/embeds.js';
 import { handleInteractionError } from '../../utils/errorHandler.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { transferCoins, getEconomyConfig } from '../../services/economy.js';
@@ -29,7 +29,7 @@ export default {
 
       if (target.bot) {
         return InteractionHelper.safeEditReply(interaction, {
-          embeds: [errorEmbed("❌ You can't pay a bot.")],
+          embeds: [errorEmbed("Can't pay a bot", 'Bots have no use for coins — pick a member instead.')],
         });
       }
 
@@ -38,27 +38,28 @@ export default {
       if (!result.success) {
         if (result.reason === 'self') {
           return InteractionHelper.safeEditReply(interaction, {
-            embeds: [errorEmbed("❌ You can't pay yourself.")],
+            embeds: [errorEmbed("Can't pay yourself", 'Choose another member to send coins to.')],
           });
         }
         if (result.reason === 'funds') {
           return InteractionHelper.safeEditReply(interaction, {
-            embeds: [errorEmbed(`❌ Insufficient funds. You only have **${(result.have || 0).toLocaleString()} ${config.currencyEmoji}**.`)],
+            embeds: [errorEmbed('Not enough coins', `You only have **${formatNumber(result.have || 0)}** ${config.currencyEmoji} in your wallet.`)],
           });
         }
         return InteractionHelper.safeEditReply(interaction, {
-          embeds: [errorEmbed('❌ Transfer failed.')],
+          embeds: [errorEmbed('Transfer failed', 'Amounts must be whole, positive numbers. Nothing was sent.')],
         });
       }
 
       const embed = createEmbed({
-        title: `${config.currencyEmoji} Payment Sent!`,
-        description:
-          `You sent **${amount.toLocaleString()} ${config.currencyName}** to ${target}!\n\n` +
-          `💰 Your new balance: **${result.fromTotal.toLocaleString()} ${config.currencyName}**`,
-        color: 'success',
-        thumbnail: target.displayAvatarURL({ size: 64 }),
-        footer: { text: '🧪 In beta (Testing)' },
+        title: `${config.currencyEmoji} Payment sent`,
+        description: `${interaction.user} → ${target}`,
+        color: 'economy',
+        thumbnail: target.displayAvatarURL({ size: 128 }),
+        fields: [
+          field('Amount', `**${formatNumber(amount)}** ${config.currencyEmoji}`, true),
+          field('Your balance', `**${formatNumber(result.fromTotal)}** ${config.currencyEmoji}`, true),
+        ],
       });
 
       await InteractionHelper.safeEditReply(interaction, { embeds: [embed] });

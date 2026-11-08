@@ -1,6 +1,7 @@
 import { EmbedBuilder } from 'discord.js';
 import { logger } from '../utils/logger.js';
 import { getGuildConfig, setGuildConfig } from './guildConfig.js';
+import { createEmbed } from '../utils/embeds.js';
 
 const STANDINGS_API_URL = 'https://site.api.espn.com/apis/v2/sports/soccer/esp.1/standings';
 
@@ -100,7 +101,7 @@ export function buildStandingsEmbed(rows) {
   const bottom = rows.slice(10, 20);
   const nowUtcStr = new Date().toISOString().slice(0, 16).replace('T', ' ');
 
-  const embed = new EmbedBuilder()
+  const embed = createEmbed({ timestamp: false })
     .setColor(0xEE8707) // LaLiga orange
     .setTitle('🇪🇸 LaLiga Standings / Clasificación')
     .setDescription('🔵 Champions League · 🟠 Europa League · 🟢 Conference League · 🔴 Relegation');

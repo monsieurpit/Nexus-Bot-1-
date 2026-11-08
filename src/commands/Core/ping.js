@@ -57,11 +57,13 @@ export default {
             const latency = Date.now() - interaction.createdTimestamp;
             const apiLatency = Math.round(interaction.client.ws.ping);
 
-            const embed = createEmbed({ title: "🏓 Pong!", description: null }).addFields(
-                { name: "Bot Latency", value: `${latency}ms`, inline: true },
-                { name: "API Latency", value: `${apiLatency}ms`, inline: true },
-                ...buildHealthFields(),
-            );
+            const dot = (ms) => (ms < 0 ? '⚪' : ms < 150 ? '🟢' : ms < 400 ? '🟡' : '🔴');
+            const embed = createEmbed({
+                title: "🏓 Pong!",
+                description: `${dot(latency)} Round trip **${latency}ms** · ${dot(apiLatency)} Gateway **${apiLatency >= 0 ? `${apiLatency}ms` : 'n/a'}**`,
+                color: latency < 400 ? 'success' : 'warning',
+                fields: buildHealthFields(),
+            });
 
             await InteractionHelper.safeEditReply(interaction, {
                 content: null,

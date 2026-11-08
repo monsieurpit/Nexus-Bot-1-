@@ -1,7 +1,8 @@
 import { EmbedBuilder } from 'discord.js';
 import { getEconomyConfig, purchaseShopItem, refundShopPurchase } from '../../services/economy.js';
-import { errorEmbed, successEmbed } from '../../utils/embeds.js';
+import { createEmbed, errorEmbed, successEmbed } from '../../utils/embeds.js';
 import { logger } from '../../utils/logger.js';
+import { getColor } from '../../config/bot.js';
 
 async function handleShopBuy(interaction, guildId) {
   await interaction.deferReply({ ephemeral: true });
@@ -140,9 +141,9 @@ async function notifyAdmin(interaction, config, item, userId, errorReason, refun
       ? `\n🏷️ **Role:** <@&${item.roleId}> (\`${item.roleId}\`)`
       : '';
 
-    const embed = new EmbedBuilder()
+    const embed = createEmbed({ timestamp: false })
       .setTitle(`🛒 Shop Purchase — Admin Notification`)
-      .setColor('#F4A700')
+      .setColor(getColor('economy'))
       .setDescription(
         `<@${userId}> purchased **${itemEmoji} ${item.name}** and requires manual delivery.` +
         typeInfo +

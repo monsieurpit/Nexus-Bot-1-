@@ -1,6 +1,6 @@
 import { getColor } from '../../config/bot.js';
 import { SlashCommandBuilder, PermissionFlagsBits, ChannelType, EmbedBuilder, MessageFlags } from 'discord.js';
-import { errorEmbed } from '../../utils/embeds.js';
+import { createEmbed, errorEmbed } from '../../utils/embeds.js';
 import { getWelcomeConfig, updateWelcomeConfig } from '../../utils/database.js';
 import { formatWelcomeMessage } from '../../utils/welcome.js';
 import { logger } from '../../utils/logger.js';
@@ -117,7 +117,7 @@ export default {
                     guild
                 });
 
-                const embed = new EmbedBuilder()
+                const embed = createEmbed({ timestamp: false })
                     .setColor(getColor('success'))
                     .setTitle('✅ Goodbye System Configured')
                     .setDescription(`Goodbye messages will now be sent to ${channel}`)

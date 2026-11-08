@@ -26,43 +26,45 @@ export default {
       }
 
       const user = interaction.options.getUser("target") || interaction.user;
-      const member = interaction.guild.members.cache.get(user.id);
+      // Cache-only lookups showed members as "Not in server" whenever they weren't cached.
+      const member = interaction.guild.members.cache.get(user.id)
+        || await interaction.guild.members.fetch(user.id).catch(() => null);
 
-      const createdTimestamp = Math.floor(user.createdAt.getTime() / 1000);
-      const joinedTimestamp = member?.joinedAt ? Math.floor(member.joinedAt.getTime() / 1000) : null;
+      const ts = (d) => Math.floor(new Date(d).getTime() / 1000);
+      const created = ts(user.createdAt ?? user.createdTimestamp);
+      const joined = member?.joinedAt || member?.joinedTimestamp ? ts(member.joinedAt ?? member.joinedTimestamp) : null;
 
-      const embed = createEmbed({ title: `👤 User Info: ${user.username}` })
-        .setThumbnail(user.displayAvatarURL({ size: 256 }))
-        .addFields(
-          { name: "ID", value: user.id, inline: true },
-          { name: "Bot", value: user.bot ? "Yes" : "No", inline: true },
-          {
-            name: "Roles",
-            value:
-              member && member.roles.cache.size > 1
-                ? member.roles.cache
-                    .map((r) => r.name)
-                    .slice(0, 5)
-                    .join(", ")
-                : "None",
-            inline: true,
-          },
-          {
-            name: "Account Created",
-            value: `<t:${createdTimestamp}:R>`,
-            inline: false,
-          },
-          {
-            name: "Joined Server",
-            value: joinedTimestamp ? `<t:${joinedTimestamp}:R>` : "Not in server",
-            inline: false,
-          },
-          {
-            name: "Highest Role",
-            value: member?.roles?.highest?.name || "None",
-            inline: true,
-          },
-        );
+      const roles = member
+        ? [...member.roles.cache.values()]
+            .filter((r) => r.id !== interaction.guild.id)
+            .sort((a, b) => b.position - a.position)
+        : [];
+      const roleList = roles.length
+        ? roles.slice(0, 12).map((r) => `${r}`).join(" ") + (roles.length > 12 ? ` *+${roles.length - 12} more*` : "")
+        : "*No roles*";
+
+      const badges = [
+        user.bot ? "🤖 Bot" : null,
+        interaction.guild.ownerId === user.id ? "👑 Server owner" : null,
+        member?.permissions?.has?.("Administrator") && interaction.guild.ownerId !== user.id ? "🛡️ Administrator" : null,
+        member?.premiumSince ? "💎 Server booster" : null,
+        member?.communicationDisabledUntilTimestamp > Date.now() ? "🔇 Timed out" : null,
+      ].filter(Boolean);
+
+      const highest = member?.roles?.highest;
+      const embed = createEmbed({
+        author: { name: user.tag || user.username, iconURL: user.displayAvatarURL({ size: 64 }) },
+        title: member?.displayName && member.displayName !== user.username ? member.displayName : user.globalName || user.username,
+        description: `${user} · \`${user.id}\`${badges.length ? `\n${badges.join("  ·  ")}` : ""}`,
+        color: highest?.color ? highest.color : "primary",
+        thumbnail: user.displayAvatarURL({ size: 256 }),
+        fields: [
+          { name: "📅 Account created", value: `<t:${created}:D> (<t:${created}:R>)`, inline: true },
+          { name: "📥 Joined server", value: joined ? `<t:${joined}:D> (<t:${joined}:R>)` : "*Not a member*", inline: true },
+          { name: "⭐ Top role", value: highest && highest.id !== interaction.guild.id ? `${highest}` : "*None*", inline: true },
+          ...(member ? [{ name: `🎭 Roles (${roles.length})`, value: roleList, inline: false }] : []),
+        ],
+      });
 
       await InteractionHelper.safeEditReply(interaction, { embeds: [embed] });
       logger.info(`UserInfo command executed`, {

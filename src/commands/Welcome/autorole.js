@@ -2,12 +2,12 @@ import { getColor } from '../../config/bot.js';
 import { SlashCommandBuilder, PermissionFlagsBits, ChannelType, EmbedBuilder, MessageFlags } from 'discord.js';
 import { getWelcomeConfig, updateWelcomeConfig } from '../../utils/database.js';
 import { logger } from '../../utils/logger.js';
-import { errorEmbed } from '../../utils/embeds.js';
+import { createEmbed, errorEmbed } from '../../utils/embeds.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { getGuildConfig, updateGuildConfig } from '../../services/guildConfig.js';
 
 function createAutoroleInfoEmbed(description) {
-    return new EmbedBuilder()
+    return createEmbed({ timestamp: false })
         .setColor(getColor('primary'))
         .setDescription(description)
         .setFooter({ text: new Date().toLocaleString() });
@@ -233,7 +233,7 @@ export default {
                 }
 
                 const roleList = validRoles.map((r, i) => `${i + 1}. ${r}`).join('\n');
-                const embed = new EmbedBuilder()
+                const embed = createEmbed({ timestamp: false })
                     .setColor(getColor('info'))
                     .setTitle('Auto-Assigned Roles')
                     .setDescription(`${roleList}${conflictSummary ? `\n\n⚠️ Setup blockers:\n${conflictSummary}` : ''}`)

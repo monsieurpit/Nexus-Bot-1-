@@ -7,6 +7,7 @@ import { scheduleCounterRefresh } from '../services/serverstatsService.js';
 import { deleteUserLevelData } from '../services/leveling.js';
 import { logger } from '../utils/logger.js';
 import { recordWeeklyStat } from '../services/weeklySummaryService.js';
+import { createEmbed } from '../utils/embeds.js';
 
 export default {
   name: Events.GuildMemberRemove,
@@ -108,7 +109,7 @@ async function sendGoodbyeMessage(member, welcomeConfig) {
         return;
     }
 
-    const embed = new EmbedBuilder()
+    const embed = createEmbed({ timestamp: false, footer: false })
         .setTitle(embedTitle.slice(0, 256))
         .setDescription(goodbyeMessage.slice(0, 4096))
         .setColor(welcomeConfig.leaveEmbed?.color || getColor('error'))

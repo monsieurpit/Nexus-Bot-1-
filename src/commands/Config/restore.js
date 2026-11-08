@@ -104,7 +104,7 @@ export default {
                                    results.categoriesCreated === 0 &&
                                    results.channelsCreated === 0;
 
-            const embed = new EmbedBuilder()
+            const embed = createEmbed({ timestamp: false })
                 .setColor(getColor('success'))
                 .setTitle('Restoration Complete / Restauracion Completa')
                 .setDescription(

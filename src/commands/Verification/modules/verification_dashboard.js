@@ -16,7 +16,7 @@ import {
     EmbedBuilder,
 } from 'discord.js';
 import { InteractionHelper } from '../../../utils/interactionHelper.js';
-import { successEmbed, errorEmbed } from '../../../utils/embeds.js';
+import { createEmbed, successEmbed, errorEmbed } from '../../../utils/embeds.js';
 import { logger } from '../../../utils/logger.js';
 import { NexusBotError, ErrorTypes } from '../../../utils/errorHandler.js';
 import { getGuildConfig, setGuildConfig } from '../../../services/guildConfig.js';
@@ -33,7 +33,7 @@ async function updateLivePanel(guild, cfg) {
         const msg = await channel.messages.fetch(cfg.messageId).catch(() => null);
         if (!msg) return;
 
-        const verifyEmbed = new EmbedBuilder()
+        const verifyEmbed = createEmbed({ timestamp: false })
             .setTitle('✅ Server Verification')
             .setDescription(cfg.message || botConfig.verification.defaultMessage)
             .setColor(getColor('success'));
@@ -61,7 +61,7 @@ function buildDashboardEmbed(cfg, guild, verifiedUserCount = 0, conflictSummary 
     const msgPreview = `\`${rawMsg.length > 60 ? rawMsg.substring(0, 60) + '…' : rawMsg}\``;
     const buttonText = cfg.buttonText || botConfig.verification.defaultButtonText;
 
-    const embed = new EmbedBuilder()
+    const embed = createEmbed({ timestamp: false })
         .setTitle('🔒 Verification System Dashboard')
         .setDescription(`Manage verification settings for **${guild.name}**.\nSelect an option below to modify a setting.`)
         .setColor(getColor('info'))
@@ -327,7 +327,7 @@ export default {
                     const channel = interaction.guild.channels.cache.get(cfg.channelId);
                     if (channel) {
                         try {
-                            const verifyEmbed = new EmbedBuilder()
+                            const verifyEmbed = createEmbed({ timestamp: false })
                                 .setTitle('✅ Server Verification')
                                 .setDescription(cfg.message || botConfig.verification.defaultMessage)
                                 .setColor(getColor('success'));
@@ -371,7 +371,7 @@ export default {
                     try {
                         await InteractionHelper.safeEditReply(interaction, {
                             embeds: [
-                                new EmbedBuilder()
+                                createEmbed({ timestamp: false })
                                     .setTitle('⏰ Dashboard Timed Out')
                                     .setDescription('This dashboard has been closed due to inactivity. Please run the command again to continue.')
                                     .setColor(getColor('error'))
@@ -409,7 +409,7 @@ async function handleChannel(selectInteraction, rootInteraction, cfg, guildId, c
 
     await selectInteraction.followUp({
         embeds: [
-            new EmbedBuilder()
+            createEmbed({ timestamp: false })
                 .setTitle('📢 Change Verification Channel')
                 .setDescription(
                     `**Current:** ${cfg.channelId ? `<#${cfg.channelId}>` : '`Not set`'}\n\nSelect the channel where the verification panel will be posted.\n\n> ⚠️ The existing panel will be deleted and re-posted in the new channel.`,
@@ -461,7 +461,7 @@ async function handleChannel(selectInteraction, rootInteraction, cfg, guildId, c
         // Post new panel in the new channel (only if system is enabled)
         if (cfg.enabled !== false) {
             try {
-                const verifyEmbed = new EmbedBuilder()
+                const verifyEmbed = createEmbed({ timestamp: false })
                     .setTitle('✅ Server Verification')
                     .setDescription(cfg.message || botConfig.verification.defaultMessage)
                     .setColor(getColor('success'));
@@ -518,7 +518,7 @@ async function handleRole(selectInteraction, rootInteraction, cfg, guildId, clie
 
     await selectInteraction.followUp({
         embeds: [
-            new EmbedBuilder()
+            createEmbed({ timestamp: false })
                 .setTitle('🏷️ Change Verified Role')
                 .setDescription(
                     `**Current:** ${cfg.roleId ? `<@&${cfg.roleId}>` : '`Not set`'}\n\nSelect the role to assign when a user verifies.`,

@@ -17,7 +17,7 @@ import {
     EmbedBuilder,
 } from 'discord.js';
 import { InteractionHelper } from '../../../utils/interactionHelper.js';
-import { successEmbed, errorEmbed } from '../../../utils/embeds.js';
+import { createEmbed, successEmbed, errorEmbed } from '../../../utils/embeds.js';
 import { logger } from '../../../utils/logger.js';
 import { NexusBotError, ErrorTypes } from '../../../utils/errorHandler.js';
 import { getLevelingConfig, saveLevelingConfig } from '../../../services/leveling.js';
@@ -44,7 +44,7 @@ function buildDashboardEmbed(cfg, guild) {
     const ignoredChValue = ignoredChannels.length > 0 ? ignoredChannels.map(id => `<#${id}>`).join(', ') : '`None`';
     const ignoredRoValue = ignoredRoles.length > 0 ? ignoredRoles.map(id => `<@&${id}>`).join(', ') : '`None`';
 
-    return new EmbedBuilder()
+    return createEmbed({ timestamp: false })
         .setTitle('📊 Leveling System Dashboard')
         .setDescription(`Manage leveling settings for **${guild.name}**.\nSelect an option below to modify a setting.`)
         .setColor(getColor('info'))
@@ -281,7 +281,7 @@ export default {
             collector.on('end', async (collected, reason) => {
                 if (reason === 'time') {
                     btnCollector.stop();
-                    const timeoutEmbed = new EmbedBuilder()
+                    const timeoutEmbed = createEmbed({ timestamp: false })
                         .setTitle('⏰ Dashboard Timed Out')
                         .setDescription('This dashboard has been closed due to inactivity. Please run the command again to continue.')
                         .setColor(getColor('error'));
@@ -295,7 +295,7 @@ export default {
 
             btnCollector.on('end', async (collected, reason) => {
                 if (reason === 'time') {
-                    const timeoutEmbed = new EmbedBuilder()
+                    const timeoutEmbed = createEmbed({ timestamp: false })
                         .setTitle('⏰ Dashboard Timed Out')
                         .setDescription('This dashboard has been closed due to inactivity. Please run the command again to continue.')
                         .setColor(getColor('error'));

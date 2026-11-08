@@ -1,8 +1,9 @@
 import { Events, EmbedBuilder, MessageFlags, PermissionFlagsBits } from 'discord.js';
 import { getReactionRoleMessage, addReactionRole, removeReactionRole } from '../services/reactionRoleService.js';
 import { logEvent, EVENT_TYPES } from '../services/loggingService.js';
-import { errorEmbed } from '../utils/embeds.js';
+import { createEmbed, errorEmbed } from '../utils/embeds.js';
 import { logger } from '../utils/logger.js';
+import { getColor } from '../config/bot.js';
 
 
 
@@ -235,9 +236,9 @@ export async function handleReactionRoles(interaction) {
 
                 await interaction.reply({
                     embeds: [
-                        new EmbedBuilder()
+                        createEmbed({ timestamp: false })
                             .setDescription(`✅ Added reaction role for ${emoji} to <@&${role.id}>`)
-                            .setColor('#00ff00')
+                            .setColor(getColor('success'))
                     ],
                     flags: MessageFlags.Ephemeral
                 });

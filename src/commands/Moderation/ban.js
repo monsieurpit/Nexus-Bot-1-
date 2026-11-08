@@ -1,5 +1,5 @@
 import { SlashCommandBuilder, PermissionFlagsBits } from 'discord.js';
-import { successEmbed } from '../../utils/embeds.js';
+import { successEmbed, actionEmbed } from '../../utils/embeds.js';
 import { logger } from '../../utils/logger.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { ModerationService } from '../../services/moderationService.js';
@@ -38,10 +38,15 @@ export default {
 
             await InteractionHelper.universalReply(interaction, {
                 embeds: [
-                    successEmbed(
-                        `🚫 **Banned** ${user.tag}`,
-                        `**Reason:** ${reason}\n**Case ID:** #${result.caseId}`,
-                    ),
+                    actionEmbed({
+                        title: `🔨 ${user.username} was banned`,
+                        color: 'error',
+                        target: `${user} \`${user.id}\``,
+                        moderator: `${interaction.user}`,
+                        caseId: result.caseId,
+                        reason,
+                        thumbnail: user.displayAvatarURL?.({ size: 128 }),
+                    }),
                 ],
             });
         } catch (error) {

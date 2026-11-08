@@ -20,13 +20,25 @@ export default {
   async execute(interaction) {
     try {
       const user = interaction.options.getUser("target") || interaction.user;
-      const avatarUrl = user.displayAvatarURL({ size: 2048, dynamic: true });
+      const avatarUrl = user.displayAvatarURL({ size: 2048 });
+      const fmt = (extension) => user.displayAvatarURL({ size: 2048, extension, forceStatic: extension !== 'gif' });
+      const animated = typeof user.avatar === 'string' && user.avatar.startsWith('a_');
+      const links = ['png', 'jpg', 'webp', ...(animated ? ['gif'] : [])]
+        .map((ext) => `[${ext.toUpperCase()}](${fmt(ext)})`)
+        .join(' · ');
 
-      const embed = createEmbed({ 
-        title: `${user.username}'s Avatar`, 
-        description: `[Download Link](${avatarUrl})` 
-      })
-        .setImage(avatarUrl);
+      // A server-specific avatar, when the member set one.
+      const member = interaction.guild ? await interaction.guild.members.fetch(user.id).catch(() => null) : null;
+      const serverAvatar = member?.avatar ? member.displayAvatarURL({ size: 2048 }) : null;
+
+      const embed = createEmbed({
+        author: { name: user.tag || user.username, iconURL: user.displayAvatarURL({ size: 64 }) },
+        title: `🖼️ ${user.globalName || user.username}'s avatar`,
+        description: `Download: ${links}${serverAvatar ? `\nThis member also has a [server avatar](${serverAvatar}) (shown as thumbnail).` : ''}`,
+        color: 'primary',
+        image: avatarUrl,
+        thumbnail: serverAvatar,
+      });
 
       await InteractionHelper.safeReply(interaction, { embeds: [embed] });
       logger.info(`Avatar command executed`, {

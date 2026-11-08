@@ -1,5 +1,6 @@
 import { logger } from '../utils/logger.js';
 import { getFromDb, setInDb } from '../utils/database.js';
+import { getColor } from '../config/bot.js';
 
 const SCAM_KEYWORDS = [
   // Crypto gambling scams (high confidence)
@@ -320,7 +321,7 @@ export async function handleScamDetection(message, client) {
 
     const response = getRandomScamResponse();
     const embed = {
-      color: 0xFF0000,
+      color: getColor('security'),
       title: 'Potential Scam Detected',
       description: `A potential scam message was detected in ${message.channel}.`,
       fields: [

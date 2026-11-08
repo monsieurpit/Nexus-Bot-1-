@@ -6,6 +6,7 @@ import { getFromDb, setInDb, deleteFromDb, getFromDbStrict } from '../utils/data
 import { getColor } from '../config/bot.js';
 import { sanitizeMarkdown } from '../utils/sanitization.js';
 import { Mutex } from '../utils/mutex.js';
+import { createEmbed } from '../utils/embeds.js';
 
 const QUARANTINE_DB_PREFIX = 'quarantine';
 
@@ -88,7 +89,7 @@ function formatBilingualField(name, value, inline = false) {
 }
 
 function formatBilingualEmbed({ title, description, color, fields = [], footer, timestamp }) {
-  const embed = new EmbedBuilder();
+  const embed = createEmbed({ timestamp: false });
   embed.setTitle(`${title.en}\n${title.es}`);
   embed.setDescription(description);
   embed.setColor(color);

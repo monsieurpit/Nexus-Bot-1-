@@ -4,6 +4,7 @@ import { logger } from '../../utils/logger.js';
 import { handleInteractionError } from '../../utils/errorHandler.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { getAllMatches, getFootballConfig } from '../../services/footballService.js';
+import { createEmbed } from '../../utils/embeds.js';
 
 export default {
     allowDM: true,
@@ -69,7 +70,7 @@ export default {
                     : 'No upcoming matches found in the current calendar. Run `/football sync-api` to refresh.';
             }
 
-            const embed = new EmbedBuilder()
+            const embed = createEmbed({ timestamp: false })
                 .setColor(getColor('primary'))
                 .setTitle(titleText)
                 .setDescription(headerDesc)

@@ -1,4 +1,5 @@
-import { createEmbed } from '../utils/embeds.js';
+import { createEmbed, brandFooter } from '../utils/embeds.js';
+import { categoryMeta } from '../utils/helpCategories.js';
 import { createButton, getPaginationRow } from '../utils/components.js';
 import fs from 'fs/promises';
 import path from 'path';
@@ -13,26 +14,9 @@ const BACK_BUTTON_ID = "help-back-to-main";
 const ALL_COMMANDS_ID = "help-all-commands";
 const PAGINATION_PREFIX = "help-page";
 const CATEGORY_SELECT_ID = "help-category-select";
-const FOOTER_TEXT = "Made with ❤️ / Hecho con ❤️";
 const SUBCOMMAND_TYPE = 1;
 const SUBCOMMAND_GROUP_TYPE = 2;
 
-const CATEGORY_ICONS = {
-    Core: "ℹ️",
-    Moderation: "🛡️",
-    Fun: "🎮",
-    Leveling: "📊",
-    Utility: "🔧",
-    Ticket: "🎫",
-    Welcome: "👋",
-    Giveaway: "🎉",
-    Counter: "🔢",
-    Tools: "🛠️",
-    Search: "🔍",
-    Reaction_Roles: "🎭",
-    Community: "👥",
-    Config: "⚙️",
-};
 
 function buildHelpEntries(command, category) {
     const commandData = normalizeCommandData(command);
@@ -108,9 +92,9 @@ function normalizeCommandData(command) {
 }
 
 async function createCategoryCommandsMenu(category, client) {
-    const categoryName =
-        category.charAt(0).toUpperCase() + category.slice(1).toLowerCase();
-    const icon = CATEGORY_ICONS[categoryName] || "🔍";
+    const meta = categoryMeta(category);
+    const categoryName = meta.name;
+    const icon = meta.icon;
 
     const categoryCommands = [];
 
@@ -157,62 +141,39 @@ async function createCategoryCommandsMenu(category, client) {
         logger.error('Error fetching registered commands:', error);
     }
 
-    const embed = createEmbed({
-        title: `${icon} ${categoryName} Commands / Comandos`,
-        description: categoryCommands.length > 0
-            ? `Click any command mention below to use it: / Haz clic en cualquier mencion de comando para usarlo:`
-            : `No commands found in the **${categoryName}** category. / No se encontraron comandos en la categoria **${categoryName}**.`
+    const lines = categoryCommands.map((cmd) => {
+        const registeredCmd = registeredCommands.get(cmd.baseName);
+        const mention = registeredCmd?.id ? `</${cmd.displayName}:${registeredCmd.id}>` : `\`/${cmd.displayName}\``;
+        return `${mention} — ${cmd.description}`;
     });
-
-    if (categoryCommands.length > 0) {
-        const commandMentions = categoryCommands
-            .map((cmd) => {
-                const registeredCmd = registeredCommands.get(cmd.baseName);
-                if (registeredCmd && registeredCmd.id) {
-                    return `</${cmd.displayName}:${registeredCmd.id}> · ${cmd.description}`;
-                }
-                return `\`/${cmd.displayName}\` · ${cmd.description}`;
-            })
-            .join("\n");
-
-        const maxLength = 1000;
-        if (commandMentions.length <= maxLength) {
-            embed.addFields({
-                name: "Commands / Comandos",
-                value: commandMentions,
-                inline: false,
-            });
-        } else {
-            const chunks = [];
-            let currentChunk = "";
-            const lines = commandMentions.split("\n");
-
-            for (const line of lines) {
-                if ((currentChunk + "\n" + line).length > maxLength) {
-                    if (currentChunk) chunks.push(currentChunk);
-                    currentChunk = line;
-                } else {
-                    currentChunk += (currentChunk ? "\n" : "") + line;
-                }
-            }
-            if (currentChunk) chunks.push(currentChunk);
-
-            chunks.forEach((chunk, index) => {
-                embed.addFields({
-                    name: `Commands / Comandos (Part ${index + 1})`,
-                    value: chunk,
-                    inline: false,
-                });
-            });
-        }
+    // Commands live in the description (4,096 chars) instead of 1,024-char fields split into
+    // "Part 1/2/3"; anything beyond that continues in fields.
+    let description = categoryCommands.length > 0
+        ? `${meta.blurb ? `*${meta.blurb}*\n\n` : ""}`
+        : `No commands found in **${categoryName}**.`;
+    const overflow = [];
+    for (const line of lines) {
+        if ((description + line + "\n").length <= 3900 && overflow.length === 0) description += `${line}\n`;
+        else overflow.push(line);
     }
 
-    embed.setFooter({ text: FOOTER_TEXT });
-    embed.setTimestamp();
+    const embed = createEmbed({
+        title: `${icon} ${categoryName} · ${meta.es}`,
+        description,
+        color: meta.color,
+    });
+    for (let i = 0; i < overflow.length && i < 200; ) {
+        let chunk = "";
+        while (i < overflow.length && (chunk + overflow[i] + "\n").length <= 1000) chunk += `${overflow[i++]}\n`;
+        if (!chunk) { i++; continue; }
+        embed.addFields({ name: "\u200b", value: chunk, inline: false });
+    }
+
+    embed.setFooter(brandFooter(`${categoryCommands.length} command${categoryCommands.length === 1 ? "" : "s"}`));
 
     const backButton = createButton(
         BACK_BUTTON_ID,
-        "Back / Atras",
+        "Back",
         "primary",
         "⬅️",
         false,
@@ -301,7 +262,7 @@ export async function createAllCommandsMenu(page = 1, client) {
         description: `(${allCommands.length} total commands, including subcommands / comandos totales, incluyendo subcomandos)`
     });
 
-    embed.setFooter({ text: FOOTER_TEXT });
+    embed.setFooter(brandFooter());
     embed.setTimestamp();
 
     if (pageCommands.length > 0) {

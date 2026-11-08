@@ -88,7 +88,6 @@ export default {
           `Removed **${amount.toLocaleString()} ${config.currencyEmoji}** from ${target}.\n\n` +
           `Before: **${(before.coins || 0).toLocaleString()}** → After: **${result.coins.toLocaleString()} ${config.currencyEmoji}**`
         );
-        removeEmbed.setFooter({ text: '🧪 In beta (Testing)' });
         return InteractionHelper.safeEditReply(interaction, { embeds: [removeEmbed] });
       }
 
@@ -103,7 +102,6 @@ export default {
           `Added **${amount.toLocaleString()} ${config.currencyEmoji}** to ${target}.\n\n` +
           `Before: **${(before.coins || 0).toLocaleString()}** → After: **${result.coins.toLocaleString()} ${config.currencyEmoji}**`
         );
-        addEmbed.setFooter({ text: '🧪 In beta (Testing)' });
         return InteractionHelper.safeEditReply(interaction, { embeds: [addEmbed] });
       }
 
@@ -118,7 +116,6 @@ export default {
           `Set ${target}'s wallet to **${amount.toLocaleString()} ${config.currencyEmoji}**.\n\n` +
           `Before: **${(before.coins || 0).toLocaleString()}** → After: **${amount.toLocaleString()} ${config.currencyEmoji}**`
         );
-        setEmbed.setFooter({ text: '🧪 In beta (Testing)' });
         return InteractionHelper.safeEditReply(interaction, { embeds: [setEmbed] });
       }
 
@@ -142,7 +139,6 @@ export default {
               `Wallet was: **${(before.coins || 0).toLocaleString()} ${config.currencyEmoji}**\n` +
               `Bank was: **${(before.bankCoins || 0).toLocaleString()} ${config.currencyEmoji}**`,
             color: 'warning',
-            footer: { text: '🧪 In beta (Testing)' },
           })],
         });
       }

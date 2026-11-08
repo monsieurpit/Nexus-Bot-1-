@@ -13,3 +13,8 @@ export function registerBotClient(client) {
 export function getReadyBotClient() {
   return botClient && typeof botClient.isReady === 'function' && botClient.isReady() ? botClient : null;
 }
+
+/** The registered bot client even before it is ready (null if none) — for branding only. */
+export function getBotClient() {
+  return botClient;
+}

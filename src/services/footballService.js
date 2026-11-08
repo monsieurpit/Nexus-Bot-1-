@@ -3,6 +3,7 @@ import path from 'path';
 import { PermissionFlagsBits, EmbedBuilder } from 'discord.js';
 import { logger } from '../utils/logger.js';
 import { getGuildConfig, setGuildConfig } from './guildConfig.js';
+import { createEmbed } from '../utils/embeds.js';
 
 const CACHE_FILE_PATH = path.resolve(process.cwd(), 'data/barca_fixtures.json');
 
@@ -1172,7 +1173,7 @@ export async function updateLiveScheduleBoard(client, guildId, customChannel = n
 
         const nextMatchUnix = nextMatch ? Math.floor(new Date(nextMatch.kickoffUtc).getTime() / 1000) : null;
 
-        const embed = new EmbedBuilder()
+        const embed = createEmbed({ timestamp: false })
             .setColor(0xA50044) // FC Barcelona Blaugrana
             .setTitle('⚽ FC BARCELONA – 2026/2027 LIVE MATCH SCHEDULE')
             .setDescription(

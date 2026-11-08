@@ -1,5 +1,5 @@
 import { SlashCommandBuilder, EmbedBuilder } from 'discord.js';
-import { errorEmbed } from '../../utils/embeds.js';
+import { createEmbed, errorEmbed } from '../../utils/embeds.js';
 import { handleInteractionError } from '../../utils/errorHandler.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { playUltraGamble, getEconomyConfig } from '../../services/economy.js';
@@ -142,7 +142,7 @@ export default {
 
       const netPrefix = isWin ? '📈' : isEven ? '➡️' : '📉';
 
-      const embed = new EmbedBuilder()
+      const embed = createEmbed({ timestamp: false })
         .setColor(style.color)
         .setAuthor({
           name: `${interaction.user.displayName} rolled the Ultra Gamble`,
@@ -199,7 +199,6 @@ export default {
             inline: false,
           }
         )
-        .setFooter({ text: '🧪 In beta (Testing) — Ultra Gamble' })
         .setTimestamp();
 
       await InteractionHelper.safeEditReply(interaction, { embeds: [embed] });
@@ -209,7 +208,7 @@ export default {
         try {
           const channel = await interaction.guild?.channels.fetch(config.jackpotChannelId).catch(() => null);
           if (channel?.isTextBased() && channel.guildId === guildId) {
-            const announceEmbed = new EmbedBuilder()
+            const announceEmbed = createEmbed({ timestamp: false })
               .setColor(style.color)
               .setTitle(outcome.id === 'ultra' ? '🌟 ULTRA JACKPOT HIT! 🌟' : '🌌 COSMIC WIN! 🌌')
               .setDescription(
@@ -219,7 +218,6 @@ export default {
                 `*Think you can do it? Try \`/ultragamble\`!*`
               )
               .setThumbnail(interaction.user.displayAvatarURL({ size: 128 }))
-              .setFooter({ text: '🧪 In beta (Testing)' })
               .setTimestamp();
             await channel.send({ embeds: [announceEmbed] });
           }

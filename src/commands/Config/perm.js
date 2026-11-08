@@ -6,7 +6,7 @@ import {
 } from 'discord.js';
 import { getColor } from '../../config/bot.js';
 import { logger } from '../../utils/logger.js';
-import { errorEmbed } from '../../utils/embeds.js';
+import { createEmbed, errorEmbed } from '../../utils/embeds.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { handleInteractionError } from '../../utils/errorHandler.js';
 import { guardDefer, guardPermission } from '../../utils/commandGuards.js';
@@ -100,7 +100,7 @@ export default {
 
                 return await InteractionHelper.safeEditReply(interaction, {
                     embeds: [
-                        new EmbedBuilder()
+                        createEmbed({ timestamp: false })
                             .setColor(getColor('success'))
                             .setTitle('✅ Permission Granted / Permiso Concedido')
                             .setDescription(
@@ -138,7 +138,7 @@ export default {
 
                 return await InteractionHelper.safeEditReply(interaction, {
                     embeds: [
-                        new EmbedBuilder()
+                        createEmbed({ timestamp: false })
                             .setColor(getColor('warning'))
                             .setTitle('🚫 Permission Revoked / Permiso Revocado')
                             .setDescription(
@@ -159,7 +159,7 @@ export default {
                 if (userIds.length === 0) {
                     return await InteractionHelper.safeEditReply(interaction, {
                         embeds: [
-                            new EmbedBuilder()
+                            createEmbed({ timestamp: false })
                                 .setColor(getColor('info'))
                                 .setTitle('🛡️ Perm Guard Access List')
                                 .setDescription(
@@ -177,7 +177,7 @@ export default {
 
                 return await InteractionHelper.safeEditReply(interaction, {
                     embeds: [
-                        new EmbedBuilder()
+                        createEmbed({ timestamp: false })
                             .setColor(getColor('info'))
                             .setTitle('🛡️ Perm Guard Access List')
                             .setDescription(

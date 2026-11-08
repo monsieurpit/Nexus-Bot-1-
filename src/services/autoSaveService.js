@@ -3,6 +3,7 @@ import { getFromDb, setInDb } from '../utils/database.js';
 import { saveServerSnapshot, captureServerLayout, getServerSaves, MAX_SAVES_PER_GUILD } from './serverBackupService.js';
 import { EmbedBuilder } from 'discord.js';
 import { getColor } from '../config/bot.js';
+import { createEmbed } from '../utils/embeds.js';
 
 const AUTO_SAVE_INTERVAL_MS = 3 * 24 * 60 * 60 * 1000; // 3 days
 
@@ -96,7 +97,7 @@ export async function runAutoSave(client) {
             const totalCategories = snapshot.categories.filter(c => c.id !== null).length;
             const totalRoles = snapshot.roles?.length ?? 0;
 
-            const embed = new EmbedBuilder()
+            const embed = createEmbed({ timestamp: false })
                 .setColor(getColor('success'))
                 .setTitle('🔒 Automatic Server Backup / Copia de Seguridad Automática')
                 .setDescription(

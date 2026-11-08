@@ -4,6 +4,7 @@ import { logger } from './logger.js';
 import { getFromDb, setInDb, getFromDbStrict } from './database.js';
 import { getColor } from '../config/bot.js';
 import { recordWeeklyStat } from '../services/weeklySummaryService.js';
+import { createEmbed } from './embeds.js';
 
 
 
@@ -63,12 +64,14 @@ export async function logEvent({ client, guild, guildId, event }) {
       'Case Created': { color: getColor('info'), icon: '📋' },
       'Case Updated': { color: getColor('moderation'), icon: '📝' },
       'DM Sent': { color: getColor('info'), icon: '✉️' },
-      'Log Channel Activated': { color: getColor('success'), icon: '📝' }
+      'Log Channel Activated': { color: getColor('success'), icon: '📝' },
+      'Member Unbanned': { color: getColor('success'), icon: '🕊️' },
+      'Timeout Removed': { color: getColor('success'), icon: '🔊' }
     };
 
     const style = actionStyles[event.action] || { color: getColor('primary'), icon: '🔨' };
 
-    const embed = new EmbedBuilder()
+    const embed = createEmbed({ timestamp: false })
       .setColor(event.color || style.color)
       .setTitle(`${style.icon} ${event.action}`)
       .addFields(
@@ -76,9 +79,9 @@ export async function logEvent({ client, guild, guildId, event }) {
         { name: "Moderator", value: event.executor, inline: true }
       )
       .setTimestamp()
-      .setFooter({ 
-        text: `Guild ID: ${guild.id} | Moderator ID: ${event.executor.match(/\((\d+)\)/)?.[1] || 'Unknown'}`,
-        iconURL: guild.iconURL()
+      .setFooter({
+        text: `Nexus moderation log • Moderator ID ${event.executor.match(/\((\d+)\)/)?.[1] || 'unknown'}`,
+        iconURL: guild.iconURL() || undefined
       });
 
     if (event.reason) {
@@ -97,22 +100,24 @@ export async function logEvent({ client, guild, guildId, event }) {
       });
     }
 
+    // Metadata used to become one field per raw key ("UserId", "ModeratorId", "MassBan: true").
+    // IDs already shown above are skipped; the rest is one readable "Details" field.
     if (event.metadata) {
-      Object.entries(event.metadata).forEach(([key, value]) => {
-        if (value !== undefined && value !== null) {
-          embed.addFields({
-            name: key.charAt(0).toUpperCase() + key.slice(1),
-            value: String(value).length > 1024 ? String(value).substring(0, 1021) + '...' : String(value),
-            inline: true
-          });
-        }
-      });
+      const humanize = (k) => k.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/^./, (c) => c.toUpperCase());
+      const fmt = (v) => (v === true ? 'Yes' : v === false ? 'No' : String(v));
+      const details = Object.entries(event.metadata)
+        .filter(([k, v]) => v !== undefined && v !== null && !['userId', 'moderatorId'].includes(k))
+        .map(([k, v]) => `**${humanize(k)}:** ${fmt(v).slice(0, 200)}`);
+      if (details.length) {
+        const value = details.join('\n');
+        embed.addFields({ name: 'Details', value: value.length > 1024 ? `${value.slice(0, 1021)}...` : value, inline: false });
+      }
     }
 
     if (event.caseId) {
       embed.addFields({
-        name: "Case ID",
-        value: `#${event.caseId}`,
+        name: "Case",
+        value: `\`#${event.caseId}\``,
         inline: true
       });
     }

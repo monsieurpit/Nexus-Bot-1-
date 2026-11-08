@@ -2,6 +2,7 @@ import { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder } from 'discord.
 import { sendDirectMessage } from '../../services/dmService.js';
 import { getColor } from '../../config/bot.js';
 import { logger } from '../../utils/logger.js';
+import { createEmbed } from '../../utils/embeds.js';
 
 export default {
   data: new SlashCommandBuilder()
@@ -29,7 +30,7 @@ export default {
     const messageContent = interaction.options.getString('message');
 
     if (targetUser.bot) {
-      const embed = new EmbedBuilder()
+      const embed = createEmbed({ timestamp: false })
         .setColor(getColor('error'))
         .setTitle('❌ Invalid Target')
         .setDescription('You cannot send direct messages to bot accounts.');
@@ -40,7 +41,7 @@ export default {
       const result = await sendDirectMessage(client, interaction.user, targetUser, messageContent);
 
       if (result.success) {
-        const embed = new EmbedBuilder()
+        const embed = createEmbed({ timestamp: false })
           .setColor(getColor('success'))
           .setTitle('✉️ Direct Message Sent')
           .setDescription(`Successfully sent your message to **${targetUser.tag}**.\n\nAny reply from ${targetUser} will be automatically forwarded back to your DMs.`)
@@ -52,7 +53,7 @@ export default {
 
         return await interaction.editReply({ embeds: [embed] });
       } else {
-        const embed = new EmbedBuilder()
+        const embed = createEmbed({ timestamp: false })
           .setColor(getColor('error'))
           .setTitle('❌ Delivery Failed')
           .setDescription(`Could not send direct message to **${targetUser.tag}**.\n\n*Reason: ${result.error || 'User has direct messages closed or has blocked the bot.'}*`);
@@ -61,7 +62,7 @@ export default {
       }
     } catch (error) {
       logger.error(`Error in /dm command execution by ${interaction.user.tag}:`, error);
-      const embed = new EmbedBuilder()
+      const embed = createEmbed({ timestamp: false })
         .setColor(getColor('error'))
         .setTitle('❌ Command Error')
         .setDescription('An unexpected error occurred while attempting to send the direct message.');

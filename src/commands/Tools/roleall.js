@@ -1,7 +1,7 @@
 import { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder } from 'discord.js';
 import { getColor } from '../../config/bot.js';
 import { logger } from '../../utils/logger.js';
-import { errorEmbed } from '../../utils/embeds.js';
+import { createEmbed, errorEmbed } from '../../utils/embeds.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { handleInteractionError } from '../../utils/errorHandler.js';
 import { guardDefer, guardPermission } from '../../utils/commandGuards.js';
@@ -107,7 +107,7 @@ export default {
             // Fetch all members (handles large servers via pagination automatically)
             await InteractionHelper.safeEditReply(interaction, {
                 embeds: [
-                    new EmbedBuilder()
+                    createEmbed({ timestamp: false })
                         .setColor(getColor('primary'))
                         .setTitle('⏳ Fetching members... / Obteniendo miembros...')
                         .setDescription(
@@ -129,7 +129,7 @@ export default {
             if (total === 0) {
                 return await InteractionHelper.safeEditReply(interaction, {
                     embeds: [
-                        new EmbedBuilder()
+                        createEmbed({ timestamp: false })
                             .setColor(getColor('success'))
                             .setTitle('✅ Nothing to do / Nada que hacer')
                             .setDescription(
@@ -178,7 +178,7 @@ export default {
                     const done = Math.min(i + BATCH_SIZE, total);
                     await InteractionHelper.safeEditReply(interaction, {
                         embeds: [
-                            new EmbedBuilder()
+                            createEmbed({ timestamp: false })
                                 .setColor(getColor('primary'))
                                 .setTitle('⏳ In progress... / En progreso...')
                                 .setDescription(
@@ -198,7 +198,7 @@ export default {
 
             logger.info(`[Roleall] Completed: role=${role.name}, succeeded=${succeeded}, failed=${failed}, guild=${guild.name}`);
 
-            const embed = new EmbedBuilder()
+            const embed = createEmbed({ timestamp: false })
                 .setColor(failed === 0 ? getColor('success') : getColor('warning'))
                 .setTitle('✅ Role Assignment Complete / Asignación de Rol Completa')
                 .addFields(

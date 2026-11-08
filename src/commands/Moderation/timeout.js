@@ -1,5 +1,5 @@
 import { SlashCommandBuilder, PermissionFlagsBits } from 'discord.js';
-import { successEmbed } from '../../utils/embeds.js';
+import { successEmbed, actionEmbed, field } from '../../utils/embeds.js';
 import { logModerationAction } from '../../utils/moderation.js';
 import { logger } from '../../utils/logger.js';
 import { NexusBotError, ErrorTypes, handleInteractionError } from '../../utils/errorHandler.js';
@@ -97,10 +97,19 @@ export default {
 
             await InteractionHelper.safeEditReply(interaction, {
                 embeds: [
-                    successEmbed(
-                        `⏳ **Timed out** ${targetUser.tag} for ${durationDisplay}.`,
-                        `**Reason:** ${reason}\n**Case ID:** #${caseId}`,
-                    ),
+                    actionEmbed({
+                        title: `🔇 ${targetUser.username} was timed out`,
+                        color: 'moderation',
+                        target: `${targetUser} \`${targetUser.id}\``,
+                        moderator: `${interaction.user}`,
+                        caseId,
+                        reason,
+                        extra: [
+                            field('Duration', durationDisplay, true),
+                            field('Ends', `<t:${Math.floor((Date.now() + durationMs) / 1000)}:R>`, true),
+                        ],
+                        thumbnail: targetUser.displayAvatarURL?.({ size: 128 }),
+                    }),
                 ],
             });
         } catch (error) {

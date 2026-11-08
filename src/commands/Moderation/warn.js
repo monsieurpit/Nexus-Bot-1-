@@ -1,5 +1,5 @@
 import { SlashCommandBuilder, PermissionFlagsBits } from 'discord.js';
-import { successEmbed } from '../../utils/embeds.js';
+import { successEmbed, actionEmbed, field } from '../../utils/embeds.js';
 import { logModerationAction } from '../../utils/moderation.js';
 import { logger } from '../../utils/logger.js';
 import { WarningService } from '../../services/warningService.js';
@@ -78,10 +78,15 @@ export default {
 
                 await InteractionHelper.safeEditReply(interaction, {
                     embeds: [
-                        successEmbed(
-                            `⚠️ **Warned** ${target.tag}`,
-                            `**Reason:** ${reason}\n**Total Warns:** ${totalWarns}`,
-                        ),
+                        actionEmbed({
+                            title: `⚠️ ${target.username} was warned`,
+                            color: 'warning',
+                            target: `${target} \`${target.id}\``,
+                            moderator: `${interaction.user}`,
+                            reason,
+                            extra: [field('Total warnings', `**${totalWarns}**`, true)],
+                            thumbnail: target.displayAvatarURL?.({ size: 128 }),
+                        }),
                     ],
                 });
         } catch (error) {

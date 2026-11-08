@@ -2,6 +2,7 @@ import { EmbedBuilder, ChannelType } from 'discord.js';
 import { getGuildConfig } from '../services/guildConfig.js';
 import { EVENT_TYPES } from '../services/loggingService.js';
 import { logger } from './logger.js';
+import { createEmbed } from './embeds.js';
 
 
 
@@ -114,7 +115,7 @@ function mapTicketEventType(eventType) {
 
 
 async function createTicketLogEmbed(guild, event) {
-  const embed = new EmbedBuilder();
+  const embed = createEmbed({ timestamp: false });
   
   const eventColors = {
 open: 0x2ecc71,

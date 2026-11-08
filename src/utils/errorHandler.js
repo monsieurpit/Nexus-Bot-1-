@@ -233,28 +233,36 @@ export async function handleInteractionError(interaction, error, context = {}) {
         });
     }
 
+    // The new strict database layer raises these when a read/write fails; the operation was
+    // aborted before anything changed, so say exactly that.
+    const dbFailure = error?.code === 'DB_READ_FAILED' || error?.code === 'DB_WRITE_FAILED';
+    const description = dbFailure
+        ? "I couldn't reach my database, so **nothing was changed**. Please try again in a moment."
+        : userMessage;
+
     const embed = createEmbed({
         title: getErrorTitle(errorType),
-        description: userMessage,
-        color: 'error',
+        description,
+        // Yellow = something about the request; red = something on our side broke.
+        color: isUserError ? 'warning' : 'error',
         timestamp: true
     });
 
-    if (errorType === ErrorTypes.RATE_LIMIT) {
-        embed.addFields({
-            name: "💡 Tip",
-            value: "Rate limits help prevent spam. Wait a moment before trying again."
-        });
-    } else if (errorType === ErrorTypes.PERMISSION) {
-        embed.addFields({
-            name: "🔧 Need Help?",
-            value: "Contact a server administrator if you believe this is an error."
-        });
-    } else if (errorType === ErrorTypes.CONFIGURATION) {
-        embed.addFields({
-            name: "📋 Configuration",
-            value: "This feature needs to be configured by a server administrator."
-        });
+    const nextStep = {
+        [ErrorTypes.RATE_LIMIT]: 'Wait a few seconds, then try again.',
+        [ErrorTypes.PERMISSION]: 'Ask a server admin if you think you should have access.',
+        [ErrorTypes.CONFIGURATION]: 'A server admin needs to set this feature up first.',
+        [ErrorTypes.VALIDATION]: 'Check the command options and try again.',
+        [ErrorTypes.USER_INPUT]: 'Check the user/channel you picked and try again.',
+    }[errorType];
+    if (nextStep) {
+        embed.addFields({ name: "💡 What to do", value: nextStep });
+    }
+
+    // A short reference on system errors lets staff find the matching log line. Only the
+    // trace ID is shown — never the error text, stack or any configuration.
+    if (!isUserError && traceId) {
+        embed.addFields({ name: "🧾 Reference", value: `\`${String(traceId).slice(0, 12)}\``, inline: true });
     }
 
     try {
@@ -333,15 +341,15 @@ export async function handleInteractionError(interaction, error, context = {}) {
 
 function getErrorTitle(errorType) {
     const titles = {
-        [ErrorTypes.VALIDATION]: "❌ Invalid Input",
-        [ErrorTypes.PERMISSION]: "🚫 Permission Denied",
-        [ErrorTypes.CONFIGURATION]: "⚙️ Configuration Error",
-        [ErrorTypes.DATABASE]: "🗄️ Database Error",
-        [ErrorTypes.NETWORK]: "🌐 Network Error",
-        [ErrorTypes.DISCORD_API]: "🔌 API Error",
-        [ErrorTypes.USER_INPUT]: "💬 Input Error",
-        [ErrorTypes.RATE_LIMIT]: "⏱️ Slow Down!",
-        [ErrorTypes.UNKNOWN]: "❓ Unexpected Error"
+        [ErrorTypes.VALIDATION]: "✋ That didn't work",
+        [ErrorTypes.PERMISSION]: "🔒 Not allowed",
+        [ErrorTypes.CONFIGURATION]: "⚙️ Not set up yet",
+        [ErrorTypes.DATABASE]: "🗄️ Database unavailable",
+        [ErrorTypes.NETWORK]: "🌐 Connection problem",
+        [ErrorTypes.DISCORD_API]: "🔌 Discord didn't respond",
+        [ErrorTypes.USER_INPUT]: "💬 Check your input",
+        [ErrorTypes.RATE_LIMIT]: "⏱️ Slow down",
+        [ErrorTypes.UNKNOWN]: "💥 Something went wrong"
     };
     
     return titles[errorType] || titles[ErrorTypes.UNKNOWN];

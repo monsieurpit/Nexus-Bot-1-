@@ -216,8 +216,8 @@ export default {
                 if (!levelingConfig?.enabled) {
                     return await InteractionHelper.safeEditReply(interaction, {
                         embeds: [
-                            new EmbedBuilder()
-                                .setColor('#f1c40f')
+                            createEmbed({ timestamp: false })
+                                .setColor(getColor('leveling'))
                                 .setDescription('The leveling system is currently disabled on this server.')
                         ]
                     });
@@ -243,8 +243,8 @@ export default {
                 if (!levelingConfig?.enabled) {
                     return await InteractionHelper.safeEditReply(interaction, {
                         embeds: [
-                            new EmbedBuilder()
-                                .setColor('#f1c40f')
+                            createEmbed({ timestamp: false })
+                                .setColor(getColor('leveling'))
                                 .setDescription('The leveling system is currently disabled on this server.')
                         ]
                     });
@@ -270,8 +270,8 @@ export default {
                 if (!levelingConfig?.enabled) {
                     return await InteractionHelper.safeEditReply(interaction, {
                         embeds: [
-                            new EmbedBuilder()
-                                .setColor('#f1c40f')
+                            createEmbed({ timestamp: false })
+                                .setColor(getColor('leveling'))
                                 .setDescription('The leveling system is currently disabled on this server.')
                         ]
                     });

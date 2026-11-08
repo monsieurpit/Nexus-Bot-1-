@@ -1,5 +1,5 @@
 import { SlashCommandBuilder } from 'discord.js';
-import { createEmbed, errorEmbed } from '../../utils/embeds.js';
+import { createEmbed, field, formatNumber } from '../../utils/embeds.js';
 import { handleInteractionError } from '../../utils/errorHandler.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { getUserBalance, getUserInventory, getEconomyConfig } from '../../services/economy.js';
@@ -43,43 +43,28 @@ export default {
         : `<t:${Math.floor((balance.lastRob + robCooldown) / 1000)}:R>`;
 
       const bankCoins = balance.bankCoins || 0;
+      const wallet = balance.coins || 0;
+      const cur = (n) => `**${formatNumber(n)}** ${config.currencyEmoji}`;
+      const dailyAt = balance.lastDaily ? balance.lastDaily + 86400000 : 0;
+      const dailyText = !dailyAt || dailyAt <= Date.now() ? '✅ Ready' : `<t:${Math.floor(dailyAt / 1000)}:R>`;
+      const streak = balance.dailyStreak || 0;
+
       const embed = createEmbed({
-        title: `${config.currencyEmoji} ${isSelf ? 'Your Wallet' : `${target.displayName}'s Wallet`}`,
-        description:
-          `👝 **Wallet: ${(balance.coins || 0).toLocaleString()} ${config.currencyName}**\n` +
-          `🏦 **Bank: ${bankCoins.toLocaleString()} ${config.currencyName}**`,
-        color: 'primary',
+        author: { name: isSelf ? 'Your wallet' : `${target.displayName}'s wallet`, iconURL: target.displayAvatarURL({ size: 64 }) },
+        title: `${config.currencyEmoji} ${formatNumber(wallet + bankCoins)} ${config.currencyName}`,
+        description: `Net worth across wallet and bank.`,
+        color: 'economy',
+        thumbnail: target.displayAvatarURL({ size: 128 }),
         fields: [
-          {
-            name: '📦 Packs',
-            value: `${packCount} pack${packCount !== 1 ? 's' : ''} in inventory`,
-            inline: true,
-          },
-          {
-            name: '🔥 Daily Streak',
-            value: `${balance.dailyStreak || 0} day${(balance.dailyStreak || 0) !== 1 ? 's' : ''}`,
-            inline: true,
-          },
-          {
-            name: '⏰ Next Daily',
-            value: balance.lastDaily
-              ? `<t:${Math.floor((balance.lastDaily + 86400000) / 1000)}:R>`
-              : '✅ Ready!',
-            inline: true,
-          },
-          {
-            name: '💼 Next Work',
-            value: workText,
-            inline: true,
-          },
-          ...(isSelf ? [{
-            name: '🦹 Next Rob',
-            value: robText,
-            inline: true,
-          }] : []),
+          field('👝 Wallet', cur(wallet), true),
+          field('🏦 Bank', cur(bankCoins), true),
+          field('📦 Packs', `**${packCount}**`, true),
+          field('🔥 Streak', `**${streak}** day${streak === 1 ? '' : 's'}`, true),
+          field('⏰ Daily', dailyText, true),
+          field('💼 Work', workText.replace('✅ Ready!', '✅ Ready'), true),
+          ...(isSelf ? [field('🦹 Rob', robText.replace('✅ Ready!', '✅ Ready'), true)] : []),
         ],
-        thumbnail: target.displayAvatarURL({ size: 64 }),
-        footer: { text: '🧪 In beta (Testing)' },
+        footer: wallet > 0 ? 'Tip: /bank deposit protects coins from /rob' : null,
       });
 
       await InteractionHelper.safeEditReply(interaction, { embeds: [embed] });

@@ -1,5 +1,5 @@
 import { SlashCommandBuilder } from 'discord.js';
-import { createEmbed, errorEmbed } from '../../utils/embeds.js';
+import { createEmbed, errorEmbed, field, formatNumber } from '../../utils/embeds.js';
 import { handleInteractionError } from '../../utils/errorHandler.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { playSlots, getEconomyConfig } from '../../services/economy.js';
@@ -27,37 +27,31 @@ export default {
 
       if (!result.success) {
         return InteractionHelper.safeEditReply(interaction, {
-          embeds: [errorEmbed(`❌ You don't have enough ${config.currencyName} to bet **${bet.toLocaleString()}**.`)],
+          embeds: [errorEmbed('Not enough coins', `You can't bet **${formatNumber(bet)}** ${config.currencyEmoji} — check your wallet with \`/coins\`.`)],
         });
       }
 
-      const reelDisplay = `╔══════════════╗\n║  ${result.reels.join('  ')}  ║\n╚══════════════╝`;
-
-      let outcomeText = '';
-      let color = 'error';
-
-      if (result.outcome === 'jackpot') {
-        outcomeText = `🎰 **JACKPOT! 7️⃣7️⃣7️⃣** — ${result.multiplier}x payout!\n✨ You won **+${Math.abs(result.netChange).toLocaleString()} ${config.currencyEmoji}**!`;
-        color = 'success';
-      } else if (result.outcome === 'three_match') {
-        outcomeText = `🎉 **Three of a kind!** — ${result.multiplier}x payout!\n✨ You won **+${Math.abs(result.netChange).toLocaleString()} ${config.currencyEmoji}**!`;
-        color = 'success';
-      } else if (result.outcome === 'two_match') {
-        outcomeText = `😅 **Two matching** — 0.5x consolation prize.\n✨ You won back **+${Math.abs(result.netChange).toLocaleString()} ${config.currencyEmoji}**.`;
-        color = 'warning';
-      } else {
-        outcomeText = `😔 **No match** — better luck next time.\n💸 You lost **-${bet.toLocaleString()} ${config.currencyEmoji}**.`;
-        color = 'error';
-      }
+      const cur = (n) => `**${formatNumber(n)}** ${config.currencyEmoji}`;
+      const outcomes = {
+        jackpot: { title: '🎰 JACKPOT!', line: `**7️⃣ 7️⃣ 7️⃣** — ${result.multiplier}× payout`, color: 'economy' },
+        three_match: { title: '🎉 Three of a kind!', line: `${result.multiplier}× payout`, color: 'success' },
+        two_match: { title: '😅 Two of a kind', line: '0.5× consolation', color: 'warning' },
+        lose: { title: '🎰 No match', line: 'Better luck next spin', color: 'error' },
+      };
+      const o = outcomes[result.outcome] || outcomes.lose;
+      const net = result.netChange;
 
       const embed = createEmbed({
-        title: '🎰 Slot Machine',
-        description:
-          `\`\`\`\n${reelDisplay}\n\`\`\`\n` +
-          outcomeText +
-          `\n\n💰 Balance: **${result.newTotal.toLocaleString()} ${config.currencyName}**`,
-        color,
-        footer: { text: '🍒×2 | 🍋×2.5 | 🍇×3 | ⭐×5 | 💎×8 | 7️⃣×15 • 🧪 In beta (Testing)' },
+        title: o.title,
+        // Big emoji reels on one line read like a real machine.
+        description: `# ${result.reels.join(' │ ')}\n${o.line}`,
+        color: o.color,
+        fields: [
+          field('Bet', cur(bet), true),
+          field(net >= 0 ? 'Won' : 'Lost', `${net >= 0 ? '+' : '-'}${cur(Math.abs(net))}`, true),
+          field('Balance', cur(result.newTotal), true),
+        ],
+        footer: '🍒×2 · 🍋×2.5 · 🍇×3 · ⭐×5 · 💎×8 · 7️⃣×15',
       });
 
       await InteractionHelper.safeEditReply(interaction, { embeds: [embed] });
@@ -76,9 +70,9 @@ export default {
                   `💰 They won **+${Math.abs(result.netChange).toLocaleString()} ${config.currencyEmoji}** ` +
                   `from a **${bet.toLocaleString()} ${config.currencyEmoji}** bet!\n\n` +
                   `✨ **${result.multiplier}x payout!** Think you can do it too? Try \`/slots\`!`,
-                color: 'success',
+                color: 'economy',
                 thumbnail: interaction.user.displayAvatarURL({ size: 128 }),
-                footer: { text: '🎰 Jackpot Winner!' },
+                footer: 'Jackpot winner',
               })],
             });
           }

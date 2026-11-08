@@ -5,6 +5,7 @@ import { handleInteractionError, createError, ErrorTypes } from '../../utils/err
 import { getColor } from '../../config/bot.js';
 import { logEvent, EVENT_TYPES } from '../../services/loggingService.js';
 import { getReactionRoleMessage } from '../../services/reactionRoleService.js';
+import { createEmbed } from '../../utils/embeds.js';
 
 export async function handleReactionRolesSelectMenu(interaction, client) {
     try {
@@ -28,7 +29,7 @@ export async function handleReactionRolesSelectMenu(interaction, client) {
             logger.warn(`Reaction role data not found for message ${interaction.message.id} in guild ${interaction.guildId}`);
             return interaction.editReply({
                 embeds: [
-                    new EmbedBuilder()
+                    createEmbed({ timestamp: false })
                         .setDescription('❌ This reaction role message is no longer active.')
                         .setColor(getColor('error'))
                 ]
@@ -155,7 +156,7 @@ export async function handleReactionRolesSelectMenu(interaction, client) {
             description += `\n⚠️ **Skipped:** ${skippedRoles.length} role${skippedRoles.length !== 1 ? 's' : ''} (permission issues)`;
         }
 
-        const responseEmbed = new EmbedBuilder()
+        const responseEmbed = createEmbed({ timestamp: false })
             .setDescription(description)
             .setColor(getColor('success'))
             .setTimestamp();

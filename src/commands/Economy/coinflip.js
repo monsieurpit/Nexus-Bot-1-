@@ -1,5 +1,5 @@
 import { SlashCommandBuilder } from 'discord.js';
-import { createEmbed, errorEmbed } from '../../utils/embeds.js';
+import { createEmbed, errorEmbed, field, formatNumber } from '../../utils/embeds.js';
 import { handleInteractionError } from '../../utils/errorHandler.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { playCoinflip, getEconomyConfig } from '../../services/economy.js';
@@ -35,26 +35,23 @@ export default {
 
       const result = await playCoinflip(guildId, userId, amount, choice);
 
+      const cur = (n) => `**${formatNumber(n)}** ${config.currencyEmoji}`;
       if (!result.success) {
         return InteractionHelper.safeEditReply(interaction, {
-          embeds: [errorEmbed(`❌ You don't have enough ${config.currencyName} to bet **${amount.toLocaleString()}**.`)],
+          embeds: [errorEmbed('Not enough coins', `You can't bet ${cur(amount)} — check your wallet with \`/coins\`.`)],
         });
       }
 
-      const resultEmoji = result.result === 'heads' ? '🪙' : '🔵';
-      const choiceLabel = choice === 'heads' ? '🪙 Heads' : '🔵 Tails';
-      const resultLabel = result.result === 'heads' ? '🪙 Heads' : '🔵 Tails';
-
+      const face = (side) => (side === 'heads' ? '🪙 Heads' : '🔵 Tails');
       const embed = createEmbed({
-        title: result.won ? '🎉 You Won!' : '💸 You Lost!',
-        description:
-          `You picked **${choiceLabel}** — the coin landed on **${resultLabel}** ${resultEmoji}\n\n` +
-          (result.won
-            ? `✨ You won **+${amount.toLocaleString()} ${config.currencyEmoji}**!`
-            : `😬 You lost **-${amount.toLocaleString()} ${config.currencyEmoji}**.`) +
-          `\n\n💰 Balance: **${result.newTotal.toLocaleString()} ${config.currencyName}**`,
+        title: result.won ? '🎉 You called it!' : '💸 Not this time',
+        description: `The coin spins… and lands on **${face(result.result)}**.`,
         color: result.won ? 'success' : 'error',
-        footer: { text: '🧪 In beta (Testing)' },
+        fields: [
+          field('Your call', face(choice), true),
+          field(result.won ? 'Won' : 'Lost', result.won ? `+${cur(amount)}` : `-${cur(amount)}`, true),
+          field('Balance', cur(result.newTotal), true),
+        ],
       });
 
       await InteractionHelper.safeEditReply(interaction, { embeds: [embed] });

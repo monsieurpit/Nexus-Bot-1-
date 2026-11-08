@@ -18,7 +18,7 @@ import {
     TextDisplayBuilder,
 } from 'discord.js';
 import { InteractionHelper } from '../../../utils/interactionHelper.js';
-import { successEmbed, errorEmbed } from '../../../utils/embeds.js';
+import { createEmbed, successEmbed, errorEmbed } from '../../../utils/embeds.js';
 import { logger } from '../../../utils/logger.js';
 import { NexusBotError, ErrorTypes } from '../../../utils/errorHandler.js';
 import { getWelcomeConfig, saveWelcomeConfig } from '../../../utils/database.js';
@@ -35,7 +35,7 @@ function buildDashboardEmbed(cfg, guild) {
     const welcomePreview = `\`${rawWelcome.length > 55 ? rawWelcome.substring(0, 55) + '…' : rawWelcome}\``;
     const goodbyePreview = `\`${rawGoodbye.length > 55 ? rawGoodbye.substring(0, 55) + '…' : rawGoodbye}\``;
 
-    return new EmbedBuilder()
+    return createEmbed({ timestamp: false })
         .setTitle('👋 Greet System Dashboard')
         .setDescription(
             `Manage welcome & goodbye settings for **${guild.name}**.\nUse the toggles to enable/disable each side, then select an option to edit.`,
@@ -314,7 +314,7 @@ export default {
                     try {
                         await InteractionHelper.safeEditReply(interaction, {
                             embeds: [
-                                new EmbedBuilder()
+                                createEmbed({ timestamp: false })
                                     .setTitle('⏰ Dashboard Timed Out')
                                     .setDescription('This dashboard has been closed due to inactivity. Please run the command again to continue.')
                                     .setColor(getColor('error'))
@@ -356,7 +356,7 @@ async function handleWelcomeChannel(selectInteraction, rootInteraction, cfg, gui
 
     await selectInteraction.followUp({
         embeds: [
-            new EmbedBuilder()
+            createEmbed({ timestamp: false })
                 .setTitle('🟢 Welcome Channel')
                 .setDescription(
                     `**Current:** ${cfg.channelId ? `<#${cfg.channelId}>` : '`Not set`'}\n\nSelect the channel where welcome messages will be sent.`,
@@ -583,7 +583,7 @@ async function handleGoodbyeChannel(selectInteraction, rootInteraction, cfg, gui
 
     await selectInteraction.followUp({
         embeds: [
-            new EmbedBuilder()
+            createEmbed({ timestamp: false })
                 .setTitle('🔴 Goodbye Channel')
                 .setDescription(
                     `**Current:** ${cfg.goodbyeChannelId ? `<#${cfg.goodbyeChannelId}>` : '`Not set`'}\n\nSelect the channel where goodbye messages will be sent.`,

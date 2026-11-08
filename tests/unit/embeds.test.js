@@ -28,7 +28,7 @@ test('multi-line text is never used as a title', () => {
 
 test('successEmbed builds the right embed for both orders', () => {
   const a = successEmbed('Priority Updated', 'Ticket priority set to high.').toJSON();
-  assert.equal(a.title, 'Priority Updated');
+  assert.equal(a.title, '✅ Priority Updated');
   assert.equal(a.description, 'Ticket priority set to high.');
   const b = successEmbed('Done!').toJSON();
   assert.equal(b.title, '✅ Success');
@@ -40,11 +40,20 @@ test('errorEmbed with two strings keeps the explanation in production', () => {
   process.env.NODE_ENV = 'production';
   try {
     const e = errorEmbed('Permission Denied', 'You need Manage Server to do this.').toJSON();
-    assert.equal(e.title, 'Permission Denied');
+    assert.equal(e.title, '❌ Permission Denied');
     assert.equal(e.description, 'You need Manage Server to do this.');
     const withError = errorEmbed('Something failed.', new Error('secret stack detail')).toJSON();
     assert.equal(withError.description, 'Something failed.');
   } finally {
     process.env.NODE_ENV = previous;
   }
+});
+
+test('theme: status titles get one icon, bot embeds are branded, staff content can opt out', async () => {
+  const { withStatusIcon, createEmbed } = await import('../../src/utils/embeds.js');
+  assert.equal(withStatusIcon('Saved', 'success'), '✅ Saved');
+  assert.equal(withStatusIcon('🎉 Done', 'success'), '🎉 Done');
+  assert.equal(createEmbed({ title: 'x' }).toJSON().footer.text, 'Nexus');
+  assert.equal(createEmbed({ title: 'x', footer: 'Page 1/2' }).toJSON().footer.text, 'Nexus • Page 1/2');
+  assert.equal(createEmbed({ title: 'x', footer: false }).toJSON().footer, undefined);
 });

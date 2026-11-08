@@ -493,7 +493,7 @@ const pinTicketHandler = {
           embeds: [createEmbed({
             title: '📌 Ticket Unpinned',
             description: 'This ticket has been unpinned and moved back to normal position.',
-            color: 0x95A5A6
+            color: 'gray'
           })],
           flags: MessageFlags.Ephemeral
         });
@@ -516,7 +516,7 @@ const pinTicketHandler = {
           embeds: [createEmbed({
             title: '📌 Ticket Pinned',
             description: 'This ticket has been pinned to the top of the category.',
-            color: 0x3498db
+            color: 'info'
           })],
           flags: MessageFlags.Ephemeral
         });

@@ -244,7 +244,7 @@ export default {
         if (sub === 'leaderboard') {
             const board = await getLeaderboard(guild.id, 10);
 
-            const embed = new EmbedBuilder()
+            const embed = createEmbed({ timestamp: false })
                 .setColor(getColor('primary'))
                 .setTitle('🔮 FC Barcelona Prediction Leaderboard')
                 .setFooter({ text: 'Exact score = 3 pts • Correct result, wrong score = 1 pt' })
@@ -303,7 +303,7 @@ export default {
 
             const roleDisplay = role ? `<@&${role.id}>` : '*None (No ping)*';
 
-            const embed = new EmbedBuilder()
+            const embed = createEmbed({ timestamp: false })
                 .setColor(getColor('success'))
                 .setTitle('⚽ FC Barcelona Match Announcements Configured')
                 .setDescription(
@@ -347,7 +347,7 @@ export default {
 
             const roleDisplay = role ? `<@&${role.id}>` : '*None (No ping)*';
 
-            const embed = new EmbedBuilder()
+            const embed = createEmbed({ timestamp: false })
                 .setColor(getColor('success'))
                 .setTitle('🔮 FC Barcelona Match Predictions Configured')
                 .setDescription(
@@ -479,7 +479,7 @@ export default {
                 const isHome = selectedMatch.homeOrAway === 'home';
                 const scoreLine = isHome ? `${homeScore} - ${awayScore}` : `${awayScore} - ${homeScore}`;
 
-                const embed = new EmbedBuilder()
+                const embed = createEmbed({ timestamp: false })
                     .setColor(getColor('success'))
                     .setTitle(`🔮 Predictions Resolved — ${selectedMatch.title}`)
                     .setDescription(`Final score: **${scoreLine}**\n\n${results.length} prediction(s) scored.`)
@@ -523,7 +523,7 @@ export default {
                 const updatedMatches = await syncBarcelonaFixturesFromApi();
                 const apiStatus = getFootballApiStatus();
 
-                const embed = new EmbedBuilder()
+                const embed = createEmbed({ timestamp: false })
                     .setColor(getColor('success'))
                     .setTitle('⚽ FC Barcelona API Fixtures Synchronized')
                     .setDescription(
@@ -600,7 +600,7 @@ export default {
                     });
                 }
 
-                const embed = new EmbedBuilder()
+                const embed = createEmbed({ timestamp: false })
                     .setColor(getColor('success'))
                     .setTitle('⚽ FC Barcelona Live Auto-Updating Schedule Board Active')
                     .setDescription(
@@ -637,7 +637,7 @@ export default {
                 ? `**${nextUpcoming.title}** • ID: \`${nextUpcoming.id}\`\n📅 ${nextUpcoming.kickoffEn}\n📍 ${nextUpcoming.locationEn}\n⚡ Manual alert: \`/football alert-now match:${nextUpcoming.id}\``
                 : 'No upcoming matches found';
 
-            const embed = new EmbedBuilder()
+            const embed = createEmbed({ timestamp: false })
                 .setColor(getColor('primary'))
                 .setTitle('⚽ FC Barcelona Matchday Alert Status')
                 .addFields(
@@ -690,7 +690,7 @@ export default {
                     : 'No upcoming matches found in the current calendar. Run `/football sync-api` to refresh.';
             }
 
-            const embed = new EmbedBuilder()
+            const embed = createEmbed({ timestamp: false })
                 .setColor(getColor('primary'))
                 .setTitle(titleText)
                 .setDescription(headerDesc)

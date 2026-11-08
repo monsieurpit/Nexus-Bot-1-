@@ -1,6 +1,7 @@
 import { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder } from 'discord.js';
 import { logger } from '../../utils/logger.js';
 import { enableAutoSlowmode, disableAutoSlowmode, getAutoSlowmodeConfig } from '../../services/autoSlowmodeService.js';
+import { getColor } from '../../config/bot.js';
 
 export default {
   data: new SlashCommandBuilder()
@@ -30,7 +31,7 @@ export default {
         if (success) {
           return interaction.reply({
             embeds: [{
-              color: 0x57F287,
+              color: getColor('success'),
               title: '✅ Auto-Slowmode Enabled',
               description: 'The bot is now monitoring all text channels for message spikes.\n\n' +
                 '**Automatic Reaction Tiers:**\n' +
@@ -49,7 +50,7 @@ export default {
         if (success) {
           return interaction.reply({
             embeds: [{
-              color: 0xED4245,
+              color: getColor('error'),
               title: '🔇 Auto-Slowmode Disabled',
               description: 'The bot will no longer automatically adjust channel slowmode.',
               timestamp: new Date().toISOString()

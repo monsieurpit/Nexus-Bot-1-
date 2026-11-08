@@ -6,6 +6,7 @@ import {
 } from "discord.js";
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { createEmbed } from "../../utils/embeds.js";
+import { listHelpCategories } from "../../utils/helpCategories.js";
 import {
     createSelectMenu,
 } from "../../utils/components.js";
@@ -21,142 +22,61 @@ const ALL_COMMANDS_ID = "help-all-commands";
 const BUG_REPORT_BUTTON_ID = "help-bug-report";
 const HELP_MENU_TIMEOUT_MS = 5 * 60 * 1000;
 
-const CATEGORY_ICONS = {
-    Core: "ℹ️",
-    Moderation: "🛡️",
-    Fun: "🎮",
-    Leveling: "📊",
-    Utility: "🔧",
-    Ticket: "🎫",
-    Welcome: "👋",
-    Giveaway: "🎉",
-    Counter: "🔢",
-    Tools: "🛠️",
-    Search: "🔍",
-    Reaction_Roles: "🎭",
-    Community: "👥",
-    Config: "⚙️",
-};
+
 
 
 
 
 
 export async function createInitialHelpMenu(client) {
-    const commandsPath = path.join(__dirname, "../../commands");
-    const categoryDirs = (
-        await fs.readdir(commandsPath, { withFileTypes: true })
-    )
-        .filter((dirent) => dirent.isDirectory())
-        .map((dirent) => dirent.name)
-        .sort();
+    const categories = await listHelpCategories();
+    const totalCommands = categories.reduce((n, c) => n + c.count, 0);
 
     const options = [
         {
-            label: "📋 All Commands / Todos los Comandos",
-            description: "View all available commands / Ver todos los comandos disponibles",
+            label: "All commands / Todos los comandos",
+            description: `Every command on one page (${totalCommands})`,
             value: ALL_COMMANDS_ID,
+            emoji: "📋",
         },
-        ...categoryDirs.map((category) => {
-            const categoryName =
-                category.charAt(0).toUpperCase() +
-                category.slice(1).toLowerCase();
-            const icon = CATEGORY_ICONS[categoryName] || "🔍";
-            return {
-                label: `${icon} ${categoryName}`,
-                description: `View commands in the ${categoryName} category / Ver comandos en la categoria ${categoryName}`,
-                value: category,
-            };
-        }),
+        ...categories.map((c) => ({
+            label: `${c.name} / ${c.es}`.slice(0, 100),
+            description: `${c.count} command${c.count === 1 ? "" : "s"} · ${c.blurb}`.slice(0, 100),
+            value: c.folder,
+            emoji: c.icon,
+        })),
     ];
 
-    const botName = client?.user?.username || "Bot";
+    const botName = client?.user?.username || "Nexus";
+    const servers = client?.guilds?.cache?.size;
     const embed = createEmbed({
-        title: `🤖 ${botName} Help Center / Centro de Ayuda`,
-        description: "Your all-in-one Discord companion for moderation, fun, and server management. / Tu companero todo en uno de Discord para moderacion, diversion y gestion del servidor.",
-        color: 'primary'
+        author: { name: `${botName} Help Center`, iconURL: client?.user?.displayAvatarURL?.({ size: 64 }) },
+        title: "What can I help you with?",
+        description:
+            "Moderation, RaidShield protection, economy, leveling, tickets and more — all in one bot.\n" +
+            "*Moderación, protección RaidShield, economía, niveles, tickets y más.*\n\n" +
+            `**${totalCommands}** commands across **${categories.length}** categories` +
+            (servers ? ` · serving **${servers}** server${servers === 1 ? "" : "s"}` : "") +
+            "\n\nPick a category in the menu below 👇",
+        color: "primary",
+        thumbnail: client?.user?.displayAvatarURL?.({ size: 256 }),
+        fields: categories.map((c) => ({
+            name: `${c.icon} ${c.name}`,
+            value: `${c.blurb}\n\`${c.count} command${c.count === 1 ? "" : "s"}\``,
+            inline: true,
+        })),
+        footer: "Tip: type / in chat to browse commands with autocomplete",
     });
-
-    embed.addFields(
-        {
-            name: "🛡️ **Moderation / Moderacion**",
-            value: "Server moderation, user management, and enforcement tools / Moderacion del servidor, gestion de usuarios y herramientas de aplicacion",
-            inline: true
-        },
-        {
-            name: "🎮 **Fun / Diversion**",
-            value: "Games, entertainment, and interactive commands / Juegos, entretenimiento y comandos interactivos",
-            inline: true
-        },
-        {
-            name: "📊 **Leveling / Niveles**",
-            value: "User levels, XP system, and progression tracking / Niveles de usuario, sistema XP y seguimiento de progreso",
-            inline: true
-        },
-        {
-            name: "🎫 **Tickets**",
-            value: "Support ticket system for server management / Sistema de tickets de soporte para gestion del servidor",
-            inline: true
-        },
-        {
-            name: "🎉 **Giveaways / Sorteos**",
-            value: "Automated giveaway management and distribution / Gestion automatica de sorteos y distribucion",
-            inline: true
-        },
-        {
-            name: "👋 **Welcome / Bienvenida**",
-            value: "Member welcome messages and onboarding / Mensajes de bienvenida y orientacion de miembros",
-            inline: true
-        },
-        {
-            name: "👥 **Community / Comunidad**",
-            value: "Community tools, applications, and member engagement / Herramientas comunitarias, aplicaciones y participacion de miembros",
-            inline: true
-        },
-        {
-            name: "⚙️ **Config / Configuracion**",
-            value: "Server and bot configuration management commands / Comandos de gestion de configuracion del servidor y bot",
-            inline: true
-        },
-        {
-            name: "🔢 **Counter / Contador**",
-            value: "Live counter channel setup and counter controls / Configuracion de canal contador en vivo y controles",
-            inline: true
-        },
-        {
-            name: "🎙️ **Join to Create / Unirse para Crear**",
-            value: "Dynamic voice channel creation and management / Creacion y gestion dinamica de canales de voz",
-            inline: true
-        },
-        {
-            name: "🎭 **Reaction Roles / Roles de Reaccion**",
-            value: "Self-assignable roles using reaction-role systems / Roles autoasignables usando sistemas de reaccion",
-            inline: true
-        },
-        {
-            name: "✅ **Verification / Verificacion**",
-            value: "Member verification workflows and access gating / Flujos de verificacion de miembros y control de acceso",
-            inline: true
-        },
-        {
-            name: "🔧 **Utilities / Utilidades**",
-            value: "Useful tools and server utilities / Herramientas utiles y utilidades del servidor",
-            inline: true
-        }
-    );
-
-    embed.setFooter({
-        text: "Made with ❤️ / Hecho con ❤️"
-    });
-    embed.setTimestamp();
 
     const bugReportButton = new ButtonBuilder()
         .setCustomId(BUG_REPORT_BUTTON_ID)
-        .setLabel("Report Bug / Reportar Error")
+        .setLabel("Report a bug")
+        .setEmoji("🐞")
         .setStyle(ButtonStyle.Danger);
 
     const supportButton = new ButtonBuilder()
-        .setLabel("Support Server / Servidor de Soporte")
+        .setLabel("Support server")
+        .setEmoji("💬")
         .setURL("https://discord.gg/YCkwJk4HaC")
         .setStyle(ButtonStyle.Link);
 
@@ -198,9 +118,9 @@ export default {
         setTimeout(async () => {
             try {
                 const closedEmbed = createEmbed({
-                    title: "Help menu closed / Menu de ayuda cerrado",
-                    description: "Help menu has been closed, use /help again. / El menu de ayuda ha sido cerrado, usa /help de nuevo.",
-                    color: "secondary",
+                    title: "💤 Help menu closed",
+                    description: "This menu timed out — run `/help` again whenever you need it.\n*El menú se cerró; usa `/help` de nuevo.*",
+                    color: "gray",
                 });
 
                 await InteractionHelper.safeEditReply(interaction, {

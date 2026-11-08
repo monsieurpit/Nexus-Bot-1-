@@ -5,7 +5,7 @@ import {
     EmbedBuilder,
     MessageFlags
 } from 'discord.js';
-import { errorEmbed } from '../../utils/embeds.js';
+import { createEmbed, errorEmbed } from '../../utils/embeds.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { logger } from '../../utils/logger.js';
 import { getColor } from '../../config/bot.js';
@@ -190,7 +190,7 @@ export default {
 
             const roleDisplay = updated.pingRoleId ? `<@&${updated.pingRoleId}>` : '*None (No ping)*';
 
-            const embed = new EmbedBuilder()
+            const embed = createEmbed({ timestamp: false })
                 .setColor(getColor('success'))
                 .setTitle('🎧 VC Listening Event Configured')
                 .setDescription(
@@ -228,7 +228,7 @@ export default {
             const announceChannel = guild.channels.cache.get(config.announceChannelId);
             const voiceChannel = guild.channels.cache.get(config.voiceChannelId);
 
-            const embed = new EmbedBuilder()
+            const embed = createEmbed({ timestamp: false })
                 .setColor(getColor(config.enabled ? 'success' : 'warning'))
                 .setTitle('🎧 VC Listening Event Status')
                 .setDescription(
@@ -259,7 +259,7 @@ export default {
             await setVcEventConfig(client, guild.id, { enabled: false });
 
             return await InteractionHelper.safeEditReply(interaction, {
-                embeds: [new EmbedBuilder()
+                embeds: [createEmbed({ timestamp: false })
                     .setColor(getColor('warning'))
                     .setTitle('🔴 VC Event Disabled')
                     .setDescription('The recurring VC event has been disabled. Its configuration is kept, so `/vc-event setup` will pre-fill it again if you re-enable.')
@@ -279,7 +279,7 @@ export default {
             logger.info(`[VC Event] Playback manually stopped in guild ${guild.id} by ${interaction.user.id}`);
 
             return await InteractionHelper.safeEditReply(interaction, {
-                embeds: [new EmbedBuilder()
+                embeds: [createEmbed({ timestamp: false })
                     .setColor(getColor('success'))
                     .setTitle('⏹️ Playback Stopped')
                     .setDescription('The playlist has been stopped and the bot will leave the voice channel.')
@@ -312,7 +312,7 @@ export default {
             const voiceChannel = guild.channels.cache.get(config.voiceChannelId);
 
             return await InteractionHelper.safeEditReply(interaction, {
-                embeds: [new EmbedBuilder()
+                embeds: [createEmbed({ timestamp: false })
                     .setColor(getColor('success'))
                     .setTitle('🎧 VC Event Triggered')
                     .setDescription(`Starting now! Announcement posted and joining ${voiceChannel || 'the voice channel'}.`)

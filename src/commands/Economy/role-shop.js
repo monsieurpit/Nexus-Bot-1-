@@ -1,8 +1,9 @@
 import { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } from 'discord.js';
 import { getEconomyConfig, getUserBalance } from '../../services/economy.js';
-import { errorEmbed } from '../../utils/embeds.js';
+import { createEmbed, errorEmbed } from '../../utils/embeds.js';
 import { handleInteractionError } from '../../utils/errorHandler.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
+import { getColor } from '../../config/bot.js';
 
 function applySafeEmoji(optionBuilder, emojiInput) {
   if (!emojiInput || typeof emojiInput !== 'string') {
@@ -67,7 +68,7 @@ export default {
       const userCoins = balance.coins || 0;
 
       // Build shop embed with server's custom title / color / footer
-      const embed = new EmbedBuilder()
+      const embed = createEmbed({ timestamp: false })
         .setTitle(config.shopTitle || 'Server Shop')
         .setTimestamp();
 
@@ -76,13 +77,13 @@ export default {
       try {
         embed.setColor(rawColor);
       } catch {
-        embed.setColor('#5865F2');
+        embed.setColor(getColor('economy'));
       }
 
       if (config.shopFooter) {
-        embed.setFooter({ text: `${config.shopFooter} • 🧪 In beta (Testing)` });
+        embed.setFooter({ text: `${config.shopFooter}` });
       } else {
-        embed.setFooter({ text: `Your balance: ${userCoins.toLocaleString()} ${config.currencyEmoji} • 🧪 In beta (Testing)` });
+        embed.setFooter({ text: `Your balance: ${userCoins.toLocaleString()} ${config.currencyEmoji}` });
       }
 
       if (items.length === 0) {

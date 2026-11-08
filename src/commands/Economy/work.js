@@ -1,5 +1,5 @@
 import { SlashCommandBuilder } from 'discord.js';
-import { createEmbed, errorEmbed } from '../../utils/embeds.js';
+import { createEmbed, field, formatNumber } from '../../utils/embeds.js';
 import { handleInteractionError } from '../../utils/errorHandler.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { claimWork, getEconomyConfig } from '../../services/economy.js';
@@ -20,21 +20,26 @@ export default {
       const config = await getEconomyConfig(guildId);
       const result = await claimWork(guildId, userId);
 
+      const cur = (n) => `**${formatNumber(n)}** ${config.currencyEmoji}`;
       if (!result.success) {
-        const embed = errorEmbed(
-          `⏳ Still on shift!\nYou can work again <t:${Math.floor(result.nextWork / 1000)}:R>.`
-        );
+        const embed = createEmbed({
+          title: '⏳ Still on shift',
+          description: `You're tired — you can work again <t:${Math.floor(result.nextWork / 1000)}:R>.`,
+          color: 'warning',
+        });
         return InteractionHelper.safeEditReply(interaction, { embeds: [embed] });
       }
 
+      const nextShift = Math.floor((Date.now() + (config.workCooldown || 4 * 60 * 60 * 1000)) / 1000);
       const embed = createEmbed({
-        title: `${result.emoji} Work Complete!`,
-        description:
-          `You worked as a **${result.job}** and earned **${result.earned.toLocaleString()} ${config.currencyEmoji}**!\n\n` +
-          `💰 New balance: **${result.newTotal.toLocaleString()} ${config.currencyName}**\n` +
-          `⏰ Next shift: <t:${Math.floor((Date.now() + (config.workCooldown || 4 * 60 * 60 * 1000)) / 1000)}:R>`,
-        color: 'success',
-        footer: { text: '🧪 In beta (Testing)' },
+        title: `${result.emoji} Shift complete`,
+        description: `You worked as a **${result.job}** and got paid ${cur(result.earned)}.`,
+        color: 'economy',
+        fields: [
+          field('Earned', `+${cur(result.earned)}`, true),
+          field('Balance', cur(result.newTotal), true),
+          field('Next shift', `<t:${nextShift}:R>`, true),
+        ],
       });
 
       await InteractionHelper.safeEditReply(interaction, { embeds: [embed] });

@@ -3,6 +3,7 @@ import { getFromDb, setInDb } from '../utils/database.js';
 import { logger } from '../utils/logger.js';
 import { getColor } from '../config/bot.js';
 import { Mutex } from '../utils/mutex.js';
+import { createEmbed } from '../utils/embeds.js';
 
 const MILESTONE_INTERVAL = 100;
 
@@ -64,7 +65,7 @@ export async function checkAndAnnounceMilestone(client, guild, member, currentCo
         }
 
         // Send milestone announcement
-        const embed = new EmbedBuilder()
+        const embed = createEmbed({ timestamp: false })
             .setColor(getColor('success'))
             .setTitle('🎉 Milestone Reached! / 🎉 Hito Alcanzado!')
             .setDescription(

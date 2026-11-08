@@ -1,5 +1,5 @@
 import { SlashCommandBuilder, PermissionFlagsBits } from 'discord.js';
-import { successEmbed } from '../../utils/embeds.js';
+import { successEmbed, actionEmbed } from '../../utils/embeds.js';
 import { logModerationAction } from '../../utils/moderation.js';
 import { logger } from '../../utils/logger.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
@@ -67,10 +67,15 @@ export default {
 
             await InteractionHelper.universalReply(interaction, {
                 embeds: [
-                    successEmbed(
-                        `👢 **Kicked** ${targetUser.tag}`,
-                        `**Reason:** ${reason}\n**Case ID:** #${caseId}`,
-                    ),
+                    actionEmbed({
+                        title: `👢 ${targetUser.username} was kicked`,
+                        color: 'warning',
+                        target: `${targetUser} \`${targetUser.id}\``,
+                        moderator: `${interaction.user}`,
+                        caseId,
+                        reason,
+                        thumbnail: targetUser.displayAvatarURL?.({ size: 128 }),
+                    }),
                 ],
             });
         } catch (error) {

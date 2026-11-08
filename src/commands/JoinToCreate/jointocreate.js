@@ -1,6 +1,6 @@
 import { getColor } from '../../config/bot.js';
 import { SlashCommandBuilder, PermissionFlagsBits, MessageFlags, ChannelType, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, StringSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, EmbedBuilder, LabelBuilder } from 'discord.js';
-import { errorEmbed, successEmbed } from '../../utils/embeds.js';
+import { createEmbed, errorEmbed, successEmbed } from '../../utils/embeds.js';
 import { logger } from '../../utils/logger.js';
 import { NexusBotError, ErrorTypes } from '../../utils/errorHandler.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
@@ -244,7 +244,7 @@ async function handleConfigSubcommand(interaction, client) {
         const channelConfig = currentConfig.channelConfig || {};
 
         
-        const configEmbed = new EmbedBuilder()
+        const configEmbed = createEmbed({ timestamp: false })
             .setTitle('⚙️ Join to Create Configuration')
             .setDescription(`Configuration for ${triggerChannel}`)
             .setColor(getColor('info'))

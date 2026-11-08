@@ -87,54 +87,61 @@ export const botConfig = {
   // IMPORTANT: This is the SINGLE SOURCE OF TRUTH for all bot colors
   embeds: {
     colors: {
-      // Main brand colors.
-      primary: "#336699", 
-      secondary: "#2F3136", 
+      // Nexus "midnight violet" theme — one brand colour plus clear, distinct accents. Every
+      // embed built through src/utils/embeds.js picks these up; change them here only.
+      primary: "#7C5CFF",   // Nexus violet (brand)
+      secondary: "#2B2D31", // Discord dark surface
 
-      // Standard status colors for success/error/warning/info messages.
-      success: "#57F287", 
-      error: "#ED4245", 
-      warning: "#FEE75C", 
-      info: "#3498DB", 
+      // Status colours (success / error / warning / info).
+      success: "#3BD671",
+      error: "#FF4D6D",
+      warning: "#FFB020",
+      info: "#3DA9FC",
 
-      // Neutral utility colors.
+      // Neutral utility colours.
       light: "#FFFFFF",
-      dark: "#202225",
-      gray: "#99AAB5",
+      dark: "#1E1F22",
+      gray: "#8E9297",
 
-      // Discord-style palette shortcuts.
+      // Discord palette shortcuts (kept for existing callers).
       blurple: "#5865F2",
-      green: "#57F287",
-      yellow: "#FEE75C",
+      green: "#3BD671",
+      yellow: "#FFB020",
       fuchsia: "#EB459E",
-      red: "#ED4245",
+      red: "#FF4D6D",
       black: "#000000",
 
-      // Feature-specific colors.
+      // Feature accents.
+      economy: "#F5C542",    // gold
+      leveling: "#4FD1C5",   // teal
+      security: "#E8475F",   // RaidShield crimson
+      football: "#A50044",   // Barça
+      community: "#FF7AC6",  // welcome / giveaways / fun
+      utility: "#3DA9FC",
       giveaway: {
-        active: "#57F287",
-        ended: "#ED4245",
+        active: "#FF7AC6",
+        ended: "#5C5F66",
       },
       ticket: {
-        open: "#57F287",
-        claimed: "#FAA61A",
-        closed: "#ED4245",
-        pending: "#99AAB5",
+        open: "#3BD671",
+        claimed: "#FFB020",
+        closed: "#FF4D6D",
+        pending: "#8E9297",
       },
-      moderation: "#9B59B6",
+      moderation: "#B57BFF",
 
-      // Ticket priority color mapping.
+      // Ticket priority colour mapping.
       priority: {
-        none: "#95A5A6",
-        low: "#3498db",
-        medium: "#2ecc71",
-        high: "#f1c40f",
-        urgent: "#e74c3c",
+        none: "#8E9297",
+        low: "#3DA9FC",
+        medium: "#3BD671",
+        high: "#FFB020",
+        urgent: "#FF4D6D",
       },
     },
     footer: {
-      // Default footer text used in bot embeds.
-      text: "Nexus Bot",
+      // Default footer text used in bot embeds (shown next to the bot's avatar).
+      text: "Nexus",
       // Footer icon URL (null = no icon).
       icon: null,
     },

@@ -4,6 +4,7 @@ import { NexusBotError, ErrorTypes } from '../utils/errorHandler.js';
 import { getColor } from '../config/bot.js';
 import { getEndedGiveaways, markGiveawayEnded } from '../utils/database.js';
 import { logEvent, EVENT_TYPES } from './loggingService.js';
+import { createEmbed, brandFooter, formatProgressBar } from '../utils/embeds.js';
 
 // ─── Rate-limit cache ─────────────────────────────────────────────────────────
 
@@ -113,10 +114,10 @@ export function createGiveawayEmbed(giveaway, status, winners = []) {
         const statusLabel = isReroll ? 'REROLLED' : isEnded ? 'ENDED' : 'ACTIVE';
 
         const accentColor = isEnded
-            ? getColor('error')
-            : getColor('success');
+            ? getColor('giveaway.ended')
+            : getColor('giveaway.active');
 
-        const embed = new EmbedBuilder()
+        const embed = createEmbed({ timestamp: false })
             .setTitle(`${titleEmoji}  ${giveaway.prize}`)
             .setColor(accentColor);
 
@@ -180,19 +181,16 @@ export function createGiveawayEmbed(giveaway, status, winners = []) {
 
         // Entry progress bar (only while active, when a maxEntries cap is set)
         if (!isEnded && giveaway.maxEntries && giveaway.maxEntries > 0) {
-            const pct = Math.min(1, entryCount / giveaway.maxEntries);
-            const filled = Math.round(pct * 12);
-            const bar = '█'.repeat(filled) + '░'.repeat(12 - filled);
             embed.addFields({
-                name: `📊 Entry Cap  (${entryCount}/${giveaway.maxEntries})`,
-                value: `\`${bar}\` ${Math.round(pct * 100)}%`,
+                name: `📊 Entry cap (${entryCount}/${giveaway.maxEntries})`,
+                value: formatProgressBar(entryCount, giveaway.maxEntries, 14),
                 inline: false,
             });
         }
 
         embed
             .setTimestamp()
-            .setFooter({ text: `Status: ${statusLabel}  •  ID: ${giveaway.messageId ?? 'pending'}` });
+            .setFooter(brandFooter(`${statusLabel === 'ACTIVE' ? 'Press "Enter Giveaway" to join' : statusLabel === 'REROLLED' ? 'Rerolled' : 'Ended'} • ID ${giveaway.messageId ?? 'pending'}`));
 
         return embed;
     } catch (error) {

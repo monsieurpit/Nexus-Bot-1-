@@ -1,6 +1,7 @@
 import { EmbedBuilder, ChannelType } from 'discord.js';
 import { getGuildConfig } from './guildConfig.js';
 import { logger } from '../utils/logger.js';
+import { createEmbed } from '../utils/embeds.js';
 
 
 
@@ -280,7 +281,7 @@ function getLogChannelForEvent(config, eventType) {
 
 
 function createLogEmbed(guild, eventType, data) {
-  const embed = new EmbedBuilder();
+  const embed = createEmbed({ timestamp: false });
   const color = EVENT_COLORS[eventType] || 0x0099ff;
   const icon = EVENT_ICONS[eventType] || '📌';
   

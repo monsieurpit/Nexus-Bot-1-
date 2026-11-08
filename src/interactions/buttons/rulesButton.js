@@ -1,8 +1,10 @@
 import { EmbedBuilder, MessageFlags } from 'discord.js';
 import { logger } from '../../utils/logger.js';
+import { createEmbed } from '../../utils/embeds.js';
+import { getColor } from '../../config/bot.js';
 
-const RULES_EN = new EmbedBuilder()
-    .setColor('#336699')
+const RULES_EN = createEmbed({ timestamp: false, footer: false })
+    .setColor(getColor('primary'))
     .setTitle('📜 Official Server Rules')
     .setDescription(
         '**1. General Conduct & Respect**\n' +
@@ -30,8 +32,8 @@ const RULES_EN = new EmbedBuilder()
         '*By participating in this server, you agree to abide by these rules.*',
     );
 
-const RULES_ES = new EmbedBuilder()
-    .setColor('#336699')
+const RULES_ES = createEmbed({ timestamp: false, footer: false })
+    .setColor(getColor('primary'))
     .setTitle('📜 Normas oficiales del servidor')
     .setDescription(
         '**1. Conducta general y respeto**\n' +

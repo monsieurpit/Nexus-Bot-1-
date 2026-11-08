@@ -9,6 +9,8 @@ import { getGuildConfig, setGuildConfig } from '../services/guildConfig.js';
 import { NexusBotError, ErrorTypes } from '../utils/errorHandler.js';
 import { addXp } from './xpSystem.js';
 import { Mutex } from '../utils/mutex.js';
+import { createEmbed } from '../utils/embeds.js';
+import { getColor } from '../config/bot.js';
 
 
 const BASE_XP = 100;
@@ -152,9 +154,9 @@ export async function getLeaderboard(client, guildId, limit = 10) {
 
 
 export function createLeaderboardEmbed(leaderboard, guild) {
-  const embed = new EmbedBuilder()
+  const embed = createEmbed({ timestamp: false })
     .setTitle(`🏆 ${guild.name} Leaderboard`)
-    .setColor('#2ecc71')
+    .setColor(getColor('leveling'))
     .setTimestamp();
     
   if (!leaderboard || leaderboard.length === 0) {

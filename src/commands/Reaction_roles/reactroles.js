@@ -322,7 +322,7 @@ async function handleSetup(interaction) {
             )
     );
 
-    const panelEmbed = new EmbedBuilder()
+    const panelEmbed = createEmbed({ timestamp: false })
         .setTitle(title)
         .setDescription(description)
         .setColor(getColor('info'))
@@ -534,7 +534,7 @@ async function handleDashboard(interaction, selectedPanelId) {
     collector.on('end', async (_, reason) => {
         buttonCollector.stop();
         if (reason === 'time') {
-            const timeoutEmbed = new EmbedBuilder()
+            const timeoutEmbed = createEmbed({ timestamp: false })
                 .setTitle('⏱️ Dashboard Timeout')
                 .setDescription('This dashboard session has timed out due to inactivity (10 minutes).\n\nTo continue managing your reaction roles, please run `/reactroles dashboard` again.')
                 .setColor(getColor('warning'));
@@ -616,7 +616,7 @@ async function showPanelDashboard(interaction, panelData, discordMsg, guildId, g
             ? panelData.roles.map(id => `<@&${id}>`).join(', ')
             : '`None`';
 
-    const embed = new EmbedBuilder()
+    const embed = createEmbed({ timestamp: false })
         .setTitle('🎭 Reaction Roles Dashboard')
         .setDescription(
             `**Title:** ${title}\n\nSelect an option below to modify a setting.${discordMsg ? `\n[Click Here to View Panel](${discordMsg.url})` : ''}`,
@@ -769,7 +769,7 @@ async function handleAddRole(selectInteraction, rootInteraction, panelData, guil
 
     await selectInteraction.followUp({
         embeds: [
-            new EmbedBuilder()
+            createEmbed({ timestamp: false })
                 .setTitle('➕ Add Role')
                 .setDescription(
                     `**Current roles:** ${panelData.roles.length}/25\n\nSelect a role to add to this panel.`,
@@ -900,7 +900,7 @@ async function handleRemoveRole(selectInteraction, rootInteraction, panelData, p
 
     await selectInteraction.followUp({
         embeds: [
-            new EmbedBuilder()
+            createEmbed({ timestamp: false })
                 .setTitle('➖ Remove Role')
                 .setDescription('Select the role you want to remove from this panel.')
                 .setColor(getColor('info')),
@@ -951,7 +951,7 @@ async function handleRemoveRole(selectInteraction, rootInteraction, panelData, p
             if (panels.length === 0) {
                 await InteractionHelper.safeEditReply(rootInteraction, {
                     embeds: [
-                        new EmbedBuilder()
+                        createEmbed({ timestamp: false })
                             .setTitle('📋 Reaction Roles Dashboard')
                             .setDescription('No panels remain. Use `/reactroles setup` to create one.')
                             .setColor(getColor('info')),
@@ -962,7 +962,7 @@ async function handleRemoveRole(selectInteraction, rootInteraction, panelData, p
                 // Dashboard closed after last role removed
                 await InteractionHelper.safeEditReply(rootInteraction, {
                     embeds: [
-                        new EmbedBuilder()
+                        createEmbed({ timestamp: false })
                             .setTitle('📋 Reaction Roles Dashboard')
                             .setDescription('Panel deleted. Run `/reactroles dashboard` to manage another panel.')
                             .setColor(getColor('success')),
@@ -1100,7 +1100,7 @@ async function handleDeletePanel(btnInteraction, rootInteraction, panelData, pan
         buttonCollector.stop();
         await InteractionHelper.safeEditReply(rootInteraction, {
             embeds: [
-                new EmbedBuilder()
+                createEmbed({ timestamp: false })
                     .setTitle('📋 Reaction Roles Dashboard')
                     .setDescription('No panels remain. Use `/reactroles setup` to create one.')
                     .setColor(getColor('info')),
@@ -1113,7 +1113,7 @@ async function handleDeletePanel(btnInteraction, rootInteraction, panelData, pan
         buttonCollector.stop();
         await InteractionHelper.safeEditReply(rootInteraction, {
             embeds: [
-                new EmbedBuilder()
+                createEmbed({ timestamp: false })
                     .setTitle('📋 Reaction Roles Dashboard')
                     .setDescription('Panel deleted. Run `/reactroles dashboard` to manage another panel.')
                     .setColor(getColor('success')),

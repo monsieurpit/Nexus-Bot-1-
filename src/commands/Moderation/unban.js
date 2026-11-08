@@ -1,5 +1,5 @@
 import { SlashCommandBuilder, PermissionFlagsBits } from 'discord.js';
-import { successEmbed } from '../../utils/embeds.js';
+import { successEmbed, actionEmbed } from '../../utils/embeds.js';
 import { logger } from '../../utils/logger.js';
 import { ModerationService } from '../../services/moderationService.js';
 import { handleInteractionError } from '../../utils/errorHandler.js';
@@ -41,10 +41,15 @@ export default {
 
                 await InteractionHelper.safeEditReply(interaction, {
                     embeds: [
-                        successEmbed(
-                            "✅ User Unbanned",
-                            `Successfully unbanned **${targetUser.tag}** from the server.\n\n**Reason:** ${reason}\n**Case ID:** #${result.caseId}`
-                        )
+                        actionEmbed({
+                            title: `🕊️ ${targetUser.username} was unbanned`,
+                            color: 'success',
+                            target: `${targetUser} \`${targetUser.id}\``,
+                            moderator: `${interaction.user}`,
+                            caseId: result.caseId,
+                            reason,
+                            thumbnail: targetUser.displayAvatarURL?.({ size: 128 }),
+                        })
                     ]
                 });
         } catch (error) {

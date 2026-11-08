@@ -11,6 +11,8 @@ import { logger } from '../../utils/logger.js';
 import { handleInteractionError } from '../../utils/errorHandler.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { activeQuestions } from '../../services/questionService.js';
+import { createEmbed } from '../../utils/embeds.js';
+import { getColor } from '../../config/bot.js';
 
 const OPTION_LABELS = ['A', 'B', 'C'];
 
@@ -26,10 +28,10 @@ function shuffle(arr) {
 /** Build the live question embed. */
 function buildQuestionEmbed(question, options, timeSeconds) {
     const optionLines = options.map((opt, i) => `**${OPTION_LABELS[i]})** ${opt}`).join('\n');
-    return new EmbedBuilder()
+    return createEmbed({ timestamp: false })
         .setTitle('❓ Question / Pregunta')
         .setDescription(`**${question}**\n\n${optionLines}`)
-        .setColor('#3498db')
+        .setColor(getColor('community'))
         .setFooter({ text: `⏱ ${timeSeconds}s to answer • Tap A, B, or C below` })
         .setTimestamp();
 }
@@ -59,10 +61,10 @@ function buildResultEmbed(state) {
         resultText += '\n\n*Nobody answered in time. / Nadie respondió a tiempo.*';
     }
 
-    return new EmbedBuilder()
+    return createEmbed({ timestamp: false })
         .setTitle('❓ Question — Time\'s Up! / ¡Tiempo!')
         .setDescription(`**${state.question}**\n\n${resultText}`)
-        .setColor('#e74c3c')
+        .setColor(getColor('error'))
         .setTimestamp();
 }
 

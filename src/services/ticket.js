@@ -1284,7 +1284,7 @@ export async function deleteTicket(channel, deleter) {
                   ? Math.round((Date.now() - new Date(ticketData.createdAt).getTime()) / 60000)
                   : null;
 
-                const transcriptEmbed = new EmbedBuilder()
+                const transcriptEmbed = createEmbed({ timestamp: false })
                   .setTitle('📜 Ticket Transcript')
                   .setDescription(`**Ticket:** #${channel.name}\n**Status:** Deleted`)
                   .setColor(priorityInfo.color)

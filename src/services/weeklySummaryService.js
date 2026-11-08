@@ -3,6 +3,7 @@ import { getColor } from '../config/bot.js';
 import { getGuildConfig, setGuildConfig } from './guildConfig.js';
 import { logger } from '../utils/logger.js';
 import { Mutex } from '../utils/mutex.js';
+import { createEmbed } from '../utils/embeds.js';
 
 const STATS_KEY = (guildId) => `guild:${guildId}:weekly_stats`;
 const PREV_STATS_KEY = (guildId) => `guild:${guildId}:prev_weekly_stats`;
@@ -252,7 +253,7 @@ export async function buildWeeklySummaryEmbed(client, guild, statsOverride = nul
   const weekStartDate = new Date(stats.weekStart || Date.now());
   const now = new Date();
 
-  const embed = new EmbedBuilder()
+  const embed = createEmbed({ timestamp: false })
     .setColor(overallTrend.state === 'incline' ? 0x22c55e : overallTrend.state === 'decline' ? 0xef4444 : (getColor('primary') || 0x3b82f6))
     .setTitle(`📊 Weekly Server Digest – ${guild.name}`)
     .setDescription(`Here is your server activity summary for the past week (<t:${Math.floor(weekStartDate.getTime() / 1000)}:d> to <t:${Math.floor(now.getTime() / 1000)}:d>)!`)
