@@ -243,14 +243,14 @@ test('owner tool: complete-daily marks every daily quest done; Claim pays them +
   assert.equal(again.completed, 0, 'nothing left to complete');
 });
 
-test('owner tool: /quests complete-daily refuses everyone else', async () => {
+test('owner tool: /quests complete refuses everyone else', async () => {
   freshDb();
   const cmd = (await import('../../src/commands/Quests/quests.js')).default;
   const replies = [];
   const interaction = {
     id: 'i1', createdTimestamp: Date.now(), user: { id: '999' }, guildId: 'own', guild: { id: 'own' },
     deferred: false, replied: false, isRepliable: () => true,
-    options: { getSubcommandGroup: () => null, getSubcommand: () => 'complete-daily' },
+    options: { getSubcommandGroup: () => null, getSubcommand: () => 'complete', getString: () => 'both' },
     async deferReply() { this.deferred = true; },
     async editReply(p) { replies.push(p); }, async reply(p) { replies.push(p); }, async followUp(p) { replies.push(p); },
   };
@@ -258,4 +258,16 @@ test('owner tool: /quests complete-daily refuses everyone else', async () => {
   const embed = replies.at(-1).embeds[0].toJSON();
   assert.match(embed.description, /reserved for the bot owner/);
   assert.equal(await db.get('quests:own:user:999'), null, 'nothing was changed');
+});
+
+test('owner tool: weekly and both complete every quest and unlock both chests', async () => {
+  freshDb();
+  const G = 'own2';
+  await enable(G);
+  const { completed, boards } = await Q.forceCompleteQuests(client, G, 'o', ['daily', 'weekly']);
+  assert.equal(completed.daily, boards.daily.quests.length);
+  assert.equal(completed.weekly, boards.weekly.quests.length);
+  const summary = await Q.claimQuestRewards(client, G, 'o');
+  assert.equal(summary.quests.length, boards.daily.quests.length + boards.weekly.quests.length);
+  assert.deepEqual(summary.chests.map((c) => c.kind).sort(), ['daily', 'weekly']);
 });

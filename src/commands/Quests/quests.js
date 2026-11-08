@@ -8,14 +8,14 @@ import { SlashCommandBuilder, PermissionFlagsBits, ChannelType, MessageFlags } f
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { handleInteractionError, NexusBotError, ErrorTypes } from '../../utils/errorHandler.js';
 import { successEmbed, errorEmbed } from '../../utils/embeds.js';
-import { getQuestSettings, updateQuestSettings, forceCompleteDaily } from '../../services/quests/questService.js';
+import { getQuestSettings, updateQuestSettings, forceCompleteQuests } from '../../services/quests/questService.js';
 import { buildQuestSettingsEmbed } from '../../services/quests/questEmbeds.js';
 import { renderQuestBoard, renderSeason } from '../../services/quests/questViews.js';
 import { postDailyBoard } from '../../services/quests/questAnnouncer.js';
 import { MAX_TIER } from '../../services/quests/catalog.js';
 import { logger } from '../../utils/logger.js';
 
-// The only account allowed to use /quests complete-daily.
+// The only account allowed to use /quests complete.
 const QUEST_OWNER_ID = '1554657430393196594';
 
 const channelOption = (o, required) => o.setName('channel').setDescription('Where the daily quests, completions and season results are posted')
@@ -42,7 +42,13 @@ export default {
     .addSubcommand((s) => s.setName('progress').setDescription('Your quest progress — or another member\'s')
       .addUserOption((o) => o.setName('member').setDescription('See this member\'s progress instead').setRequired(false)))
     .addSubcommand((s) => s.setName('season').setDescription('This month\'s season: your tier, next rewards and the leaderboard'))
-    .addSubcommand((s) => s.setName('complete-daily').setDescription('(Bot owner only) Complete all of today\'s daily quests'))
+    .addSubcommand((s) => s.setName('complete').setDescription('(Bot owner only) Complete all of your daily and/or weekly quests')
+      .addStringOption((o) => o.setName('quests').setDescription('Which quests to complete').setRequired(true)
+        .addChoices(
+          { name: "Today's daily quests", value: 'daily' },
+          { name: "This week's weekly quests", value: 'weekly' },
+          { name: 'Both', value: 'both' },
+        )))
     .addSubcommand((s) => s.setName('setup').setDescription('(Manage Server) Turn Seasons & Quests on and pick the quest channel')
       .addChannelOption((o) => channelOption(o, true)))
     .addSubcommandGroup((g) => g.setName('admin').setDescription('(Manage Server) Quest settings')
@@ -62,7 +68,7 @@ export default {
   async execute(interaction, _config, client) {
     const group = interaction.options.getSubcommandGroup(false);
     const sub = interaction.options.getSubcommand();
-    const adminCall = group === 'admin' || sub === 'setup' || sub === 'complete-daily';
+    const adminCall = group === 'admin' || sub === 'setup' || sub === 'complete';
     const ok = await InteractionHelper.safeDefer(interaction, adminCall ? { flags: MessageFlags.Ephemeral } : {});
     if (!ok) return;
 
@@ -83,7 +89,7 @@ export default {
         return InteractionHelper.safeEditReply(interaction, await renderSeason(client, guild, member));
       }
 
-      if (sub === 'complete-daily') {
+      if (sub === 'complete') {
         // Owner tool: checked by user ID, not by server permissions.
         if (interaction.user.id !== QUEST_OWNER_ID) {
           throw new NexusBotError('Not the quest owner', ErrorTypes.PERMISSION, 'This command is reserved for the bot owner.');
@@ -91,13 +97,19 @@ export default {
         if (!(await getQuestSettings(guild.id)).enabled) {
           throw new NexusBotError('Quests off', ErrorTypes.CONFIGURATION, 'Seasons & Quests aren\'t active on this server — run `/quests setup` first.');
         }
-        const { completed, board } = await forceCompleteDaily(client, guild.id, interaction.user.id);
-        logger.info(`[Quests] Owner completed ${completed} daily quest(s) in guild ${guild.id}`);
+        const which = interaction.options.getString('quests');
+        const kinds = which === 'both' ? ['daily', 'weekly'] : [which];
+        const { completed, boards } = await forceCompleteQuests(client, guild.id, interaction.user.id, kinds);
+        logger.info(`[Quests] Owner completed quests in guild ${guild.id}: ${JSON.stringify(completed)}`);
+
+        const label = { daily: "today's daily", weekly: "this week's weekly" };
+        const lines = kinds.map((k) => `${k === 'daily' ? '☀️' : '📜'} All **${boards[k].quests.length}** of ${label[k]} quests are done` +
+          (completed[k] ? ` (${completed[k]} newly completed)` : ' (they already were)'));
+        const total = Object.values(completed).reduce((a, b) => a + b, 0);
         const member = interaction.member || await guild.members.fetch(interaction.user.id);
         const view = await renderQuestBoard(client, guild, member, interaction.user);
-        const note = completed
-          ? successEmbed('Daily quests completed', `All **${board.quests.length}** of today's daily quests are done (${completed} newly completed). Press **Claim** below to collect the rewards and the daily chest.`)
-          : successEmbed('Already done', 'All of today\'s daily quests were already complete. Press **Claim** below if anything is left to collect.');
+        const note = successEmbed(total ? 'Quests completed' : 'Already done',
+          `${lines.join('\n')}\n\nPress **Claim** below to collect the rewards${kinds.length > 1 ? ' and both chests' : ' and the chest'}.`);
         return InteractionHelper.safeEditReply(interaction, { embeds: [note, ...view.embeds], components: view.components });
       }
 

@@ -497,28 +497,39 @@ export async function claimQuestRewards(client, guildId, userId, now = new Date(
 }
 
 /**
- * Marks every quest on today's DAILY board as complete for one member (owner tool, see
- * /quests complete-daily). Rewards are then collected with the normal Claim button, so coins,
- * stars, tiers and the leaderboard all go through the usual path. Returns { completed, board }.
+ * Marks every quest on the current daily and/or weekly board as complete for one member (owner
+ * tool, see /quests complete). Rewards are then collected with the normal Claim button, so coins,
+ * stars, tiers, chests and the leaderboard all go through the usual path.
+ * @param {Array<'daily'|'weekly'>} kinds
+ * @returns {Promise<{ completed: { daily?: number, weekly?: number }, boards: object }>}
  */
-export async function forceCompleteDaily(client, guildId, userId, now = new Date()) {
+export async function forceCompleteQuests(client, guildId, userId, kinds = ['daily'], now = new Date()) {
   await flushQuestProgress({ only: `${guildId}:${userId}` });
   const keys = periodKeys(now);
-  const [settings, features, daily] = await Promise.all([
-    getQuestSettings(guildId), getFeatures(client, guildId), getBoard(client, guildId, 'daily', now),
-  ]);
+  const [settings, features] = await Promise.all([getQuestSettings(guildId), getFeatures(client, guildId)]);
+  const boards = {};
+  for (const kind of kinds) boards[kind] = await getBoard(client, guildId, kind, now);
   return Mutex.runExclusive(userKey(guildId, userId), async () => {
     const state = await loadState(guildId, userId, keys);
     const auto = await rollState(client, guildId, userId, state, keys, settings, features);
-    let completed = 0;
-    for (const q of daily.quests) {
-      if (isComplete(state.daily, q)) continue;
-      state.daily.completedAt[q.id] = now.getTime();
-      completed++;
+    const completed = {};
+    for (const kind of kinds) {
+      completed[kind] = 0;
+      for (const q of boards[kind].quests) {
+        if (isComplete(state[kind], q)) continue;
+        state[kind].completedAt[q.id] = now.getTime();
+        completed[kind]++;
+      }
     }
-    if (completed || auto) await saveStateOrRefund(guildId, userId, state, auto);
-    return { completed, board: daily };
+    if (Object.values(completed).some(Boolean) || auto) await saveStateOrRefund(guildId, userId, state, auto);
+    return { completed, boards };
   });
+}
+
+/** Kept for existing callers: today's daily board only. */
+export async function forceCompleteDaily(client, guildId, userId, now = new Date()) {
+  const { completed, boards } = await forceCompleteQuests(client, guildId, userId, ['daily'], now);
+  return { completed: completed.daily, board: boards.daily };
 }
 
 // ─── Flush: write buffered progress and detect newly completed quests ──────────
