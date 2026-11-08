@@ -1,6 +1,7 @@
 import { Events } from "discord.js";
 import { logger, startupLog } from "../utils/logger.js";
 import { reconcileReactionRoleMessages } from "../services/reactionRoleService.js";
+import { sweepOrphanedTemporaryChannels } from "../services/joinToCreateService.js";
 import { nexusClient, NEXUS_AI_CHAT_DISABLED } from "../services/nexusAiService.js";
 
 const PRESENCE_INTERVAL_MS = 10 * 60 * 1000;
@@ -84,6 +85,14 @@ export default {
       startupLog(
         `Reaction role reconciliation: scanned ${reconciliationSummary.scannedMessages}, removed ${reconciliationSummary.removedMessages}, errors ${reconciliationSummary.errors}`
       );
+
+      // Temp voice channels that emptied while the bot was offline are never cleaned up by a
+      // voice event — sweep them once per start.
+      const jtc = await sweepOrphanedTemporaryChannels(client).catch((err) => {
+        logger.warn("Join-to-create orphan sweep failed:", err?.message || err);
+        return null;
+      });
+      if (jtc) startupLog(`Join-to-create sweep: deleted ${jtc.deleted} empty, forgot ${jtc.forgotten} missing, errors ${jtc.errors}`);
     } catch (error) {
       logger.error("Error in ready event:", error);
     }

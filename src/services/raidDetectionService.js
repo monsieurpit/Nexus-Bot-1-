@@ -255,6 +255,24 @@ function releaseLocksLater(guildId, { namePattern = false } = {}) {
   timer.unref?.();
 }
 
+// Cross-channel spam groups everyone whose message was ~85% similar within 3 seconds. A common
+// short phrase ("good morning everyone", "gg wp") from unrelated, long-standing members could put
+// all of them in a 28-day quarantine. A member is only a suspect when they themselves posted in
+// 2+ channels in the window, or when they're new (joined in the last 7 days, or the account is
+// younger than 30 days) — the profile of coordinated raid accounts.
+const ESTABLISHED_MEMBER_DAYS = 7;
+const ESTABLISHED_ACCOUNT_DAYS = 30;
+export function isCrossChannelSuspect(member, entries, now = Date.now()) {
+  const ownChannels = new Set(entries.filter(e => e.userId === member.id).map(e => e.channelId));
+  if (ownChannels.size >= 2) return true;
+  const joinedAt = member.joinedTimestamp ?? null;
+  const createdAt = member.user?.createdTimestamp ?? null;
+  const day = 24 * 60 * 60 * 1000;
+  const recentJoin = joinedAt === null || now - joinedAt < ESTABLISHED_MEMBER_DAYS * day;
+  const youngAccount = createdAt === null || now - createdAt < ESTABLISHED_ACCOUNT_DAYS * day;
+  return recentJoin || youngAccount;
+}
+
 function isModerator(member, guild) {
   if (!member) return false;
   if (member.id === guild.ownerId) return true;
@@ -710,7 +728,8 @@ export class RaidDetectionService {
         const suspects = uniqueUserIds
           .map(id => message.guild.members.cache.get(id))
           .filter(Boolean)
-          .filter(m => !isModerator(m, message.guild));
+          .filter(m => !isModerator(m, message.guild))
+          .filter(m => isCrossChannelSuspect(m, entries));
 
         if (suspects.length > 0) {
           setQuarantineLock(guildId, true);
@@ -1068,10 +1087,13 @@ export class RaidDetectionService {
    */
   static async saveRaidConfig(client, guildId, updates) {
     try {
-      const { getGuildConfig, setGuildConfig } = await import('../utils/database.js');
-      const config = await getGuildConfig(client, guildId);
+      const { getGuildConfigStrict, setGuildConfig } = await import('../utils/database.js');
+      // Strict read + patch only the raidShield section: re-saving the whole config object read
+      // a moment earlier could overwrite unrelated settings with defaults after a failed read.
+      const config = await getGuildConfigStrict(client, guildId);
       const raidShield = { ...config?.raidShield, ...updates };
-      await setGuildConfig(client, guildId, { ...config, raidShield });
+      const saved = await setGuildConfig(client, guildId, { raidShield });
+      if (saved === false) throw new Error('setGuildConfig reported a failed save');
       return true;
     } catch (error) {
       logger.error('Error saving raid config:', error);

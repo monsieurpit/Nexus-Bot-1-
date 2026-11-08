@@ -1,10 +1,23 @@
+import { NexusBotError, ErrorTypes } from '../../utils/errorHandler.js';
 import { SlashCommandBuilder, PermissionFlagsBits, ChannelType, MessageFlags } from 'discord.js';
 import { errorEmbed, successEmbed, infoEmbed } from '../../utils/embeds.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { logger } from '../../utils/logger.js';
 import { RaidDetectionService } from '../../services/raidDetectionService.js';
 import { QuarantineService } from '../../services/quarantineService.js';
-import { AiModerationService } from '../../services/aiModerationService.js';
+import { AiModerationService, getRaidShieldEngineStatus } from '../../services/aiModerationService.js';
+
+// The save helpers return false on failure; every subcommand used to ignore that and announce
+// success anyway, so a moderator could believe RaidShield was on while nothing was saved.
+async function requireSaved(promise) {
+  const ok = await promise;
+  if (ok === false) {
+    throw new NexusBotError('RaidShield configuration save failed', ErrorTypes.DATABASE,
+      'Your change could not be saved (database unavailable). Nothing was changed — please try again. / No se pudo guardar el cambio. Inténtalo de nuevo.');
+  }
+  return ok;
+}
+
 
 export default {
   data: new SlashCommandBuilder()
@@ -204,8 +217,19 @@ export default {
           ? aiConfig.trustedRoles.map(id => `<@&${id}>`).join(', ')
           : 'None / Ninguno';
 
+        // Truthful engine state from the bot's real scan calls — "enabled" alone used to look
+        // fully protected even while the Nexus AI engine was offline and nothing was scanned.
+        const engine = getRaidShieldEngineStatus();
+        const engineLine = !engine.configured
+          ? '⚪ Not configured (NEXUS_API_URL) — AI scans cannot run / No configurado'
+          : engine.state === 'operational'
+            ? '🟢 Operational / Operativo'
+            : engine.state === 'unavailable'
+              ? `🔴 Unreachable — messages are NOT being AI-scanned / Inaccesible${engine.lastError ? `\n> \`${engine.lastError.slice(0, 120)}\`` : ''}`
+              : '⚪ No scan attempted since the last restart / Sin escaneos desde el reinicio';
+
         const embed = infoEmbed(
-          `**Status:** ${status}\n\n**Notification Channel:** ${notificationChannel}\n**Verified Role:** ${verifiedRole}\n**Quarantine Role:** ${quarantineRole}\n**Alert Role:** ${alertRole}\n\n**--- AI Moderation / Moderación IA ---**\n**AI Status:** ${aiStatus}\n**Image Scanning:** ${aiImageScan}\n**Confidence Threshold:** ${aiConfidence}\n**AI Alert Channel:** ${aiAlertCh}\n**Context Analysis:** ${aiContext}\n**Trusted Roles:** ${trustedRolesList}\n**AI Actions:** ${aiActions}`,
+          `**Status:** ${status}\n\n**Notification Channel:** ${notificationChannel}\n**Verified Role:** ${verifiedRole}\n**Quarantine Role:** ${quarantineRole}\n**Alert Role:** ${alertRole}\n\n**--- AI Moderation / Moderación IA ---**\n**AI Status:** ${aiStatus}\n**AI Engine:** ${engineLine}\n**Image Scanning:** ${aiImageScan}\n**Confidence Threshold:** ${aiConfidence}\n**AI Alert Channel:** ${aiAlertCh}\n**Context Analysis:** ${aiContext}\n**Trusted Roles:** ${trustedRolesList}\n**AI Actions:** ${aiActions}`,
           '🔒 Raid Shield Configuration / Configuración del Escudo Anti-Raid'
         );
 
@@ -222,9 +246,9 @@ export default {
           return;
         }
 
-        await RaidDetectionService.saveRaidConfig(client, guildId, {
+        await requireSaved(RaidDetectionService.saveRaidConfig(client, guildId, {
           notificationChannelId: channel.id
-        });
+        }));
 
         await InteractionHelper.universalReply(interaction, {
           embeds: [successEmbed(
@@ -256,7 +280,7 @@ export default {
           return;
         }
 
-        await RaidDetectionService.saveRaidConfig(client, guildId, updates);
+        await requireSaved(RaidDetectionService.saveRaidConfig(client, guildId, updates));
 
         const fields = [];
         if (verifiedRole) fields.push(`Verified: ${verifiedRole}`);
@@ -275,7 +299,7 @@ export default {
 
       if (subcommand === 'toggle') {
         const enabled = interaction.options.getBoolean('enabled');
-        await RaidDetectionService.saveRaidConfig(client, guildId, { enabled });
+        await requireSaved(RaidDetectionService.saveRaidConfig(client, guildId, { enabled }));
 
         const statusText = enabled
           ? 'The Raid Shield is now active and will monitor for raid patterns.\n\nEl Escudo Anti-Raid está activo y monitoreará patrones de raid.'
@@ -299,7 +323,7 @@ export default {
         if (confidence !== null) updates.confidenceThreshold = confidence;
         if (alertChannel) updates.alertChannelId = alertChannel.id;
 
-        await AiModerationService.saveAiConfig(client, guildId, updates);
+        await requireSaved(AiModerationService.saveAiConfig(client, guildId, updates));
 
         const details = [`**AI Moderation:** ${enabled ? '✅ Enabled' : '❌ Disabled'}`];
         if (scanImages !== null) details.push(`**Image Scanning:** ${scanImages ? 'On' : 'Off'}`);
@@ -321,9 +345,9 @@ export default {
         const threatType = interaction.options.getString('threat-type');
         const action = interaction.options.getString('action');
 
-        await AiModerationService.saveAiConfig(client, guildId, {
+        await requireSaved(AiModerationService.saveAiConfig(client, guildId, {
           actions: { [threatType]: action }
-        });
+        }));
 
         const actionLabels = {
           quarantine: 'Quarantine / Cuarentena',
@@ -349,7 +373,7 @@ export default {
         const clear = interaction.options.getBoolean('clear');
 
         if (clear) {
-          await AiModerationService.saveAiConfig(client, guildId, { trustedRoles: [] });
+          await requireSaved(AiModerationService.saveAiConfig(client, guildId, { trustedRoles: [] }));
           await InteractionHelper.universalReply(interaction, {
             embeds: [successEmbed(
               'All trusted roles have been cleared. AI moderation will scan all users.\n\nTodos los roles de confianza han sido eliminados. La IA escaneará a todos los usuarios.',
@@ -396,7 +420,7 @@ export default {
             });
             return;
           }
-          await AiModerationService.saveAiConfig(client, guildId, { trustedRoles: newTrusted });
+          await requireSaved(AiModerationService.saveAiConfig(client, guildId, { trustedRoles: newTrusted }));
           await InteractionHelper.universalReply(interaction, {
             embeds: [successEmbed(
               `${role} removed from AI moderation trusted roles.\n\n${role} eliminado de los roles de confianza de moderación IA.`,
@@ -415,7 +439,7 @@ export default {
             return;
           }
           const newTrusted = [...currentTrusted, role.id];
-          await AiModerationService.saveAiConfig(client, guildId, { trustedRoles: newTrusted });
+          await requireSaved(AiModerationService.saveAiConfig(client, guildId, { trustedRoles: newTrusted }));
           await InteractionHelper.universalReply(interaction, {
             embeds: [successEmbed(
               `${role} added to AI moderation trusted roles. Users with this role will bypass AI scanning.\n\n${role} agregado a los roles de confianza de moderación IA. Usuarios con este rol evitarán el escaneo de IA.`,
@@ -429,7 +453,7 @@ export default {
 
       if (subcommand === 'ai-context') {
         const enabled = interaction.options.getBoolean('enabled');
-        await AiModerationService.saveAiConfig(client, guildId, { enableContext: enabled });
+        await requireSaved(AiModerationService.saveAiConfig(client, guildId, { enableContext: enabled }));
 
         const statusText = enabled
           ? 'Context-aware analysis enabled. AI will analyze recent messages for raid patterns.\n\nAnálisis con contexto activado. La IA analizará mensajes recientes para detectar patrones de raid.'
@@ -484,8 +508,11 @@ export default {
       }
     } catch (error) {
       logger.error('Raid shield command error:', error);
+      const detail = error instanceof NexusBotError && error.userMessage
+        ? error.userMessage
+        : 'An error occurred while processing the command.\n\nOcurrió un error al procesar el comando.';
       await InteractionHelper.universalReply(interaction, {
-        embeds: [errorEmbed('❌ Error', 'An error occurred while processing the command.\n\nOcurrió un error al procesar el comando.')]
+        embeds: [errorEmbed('❌ Error', detail)]
       });
     }
   }

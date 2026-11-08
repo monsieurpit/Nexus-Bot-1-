@@ -54,7 +54,7 @@ async function trackParticipant(guildId, userId) {
     // Guild-wide list, written by many users at once — serialized, or two users' first
     // transactions racing each other dropped one of them from the leaderboard.
     await withLock(`participants:${guildId}`, async () => {
-      const data = await db.get(participantsKey(guildId));
+      const data = await db.getStrict(participantsKey(guildId));
       const ids = data?.ids || [];
       if (!ids.includes(userId)) {
         ids.push(userId);
@@ -136,9 +136,18 @@ export async function getEconomyConfig(guildId) {
   }
 }
 
+// Strict variant for read-modify-write: getEconomyConfig() falls back to the defaults when the
+// database can't be read, and saving a patch on top of those defaults used to erase the server's
+// whole shop, packs and payout settings.
+async function getEconomyConfigStrict(guildId) {
+  const stored = await db.getStrict(economyConfigKey(guildId));
+  if (!stored) return { ...DEFAULT_CONFIG, packs: DEFAULT_CONFIG.packs.map(p => ({ ...p })) };
+  return { ...DEFAULT_CONFIG, ...stored, packs: stored.packs?.length ? stored.packs : DEFAULT_CONFIG.packs };
+}
+
 export async function saveEconomyConfig(guildId, patch) {
   try {
-    const current = await getEconomyConfig(guildId);
+    const current = await getEconomyConfigStrict(guildId);
     const updated = { ...current, ...patch };
     await db.set(economyConfigKey(guildId), updated);
     return updated;
@@ -149,15 +158,34 @@ export async function saveEconomyConfig(guildId, patch) {
 }
 
 // ─── Raw balance (no lock — callers must hold lock) ───────────────────────────
+// Strict read: every caller below writes the result back. A failed read must abort the
+// operation — it used to be treated as "no balance yet" and the following write replaced the
+// member's real balance with the reward/bet result (e.g. 10,000 coins -> 100 after /daily).
 async function _readBalance(guildId, userId) {
-  const data = await db.get(userBalanceKey(guildId, userId));
+  const data = await db.getStrict(userBalanceKey(guildId, userId));
   return data || { coins: 0, bankCoins: 0, lastDaily: null, dailyStreak: 0, lastWork: null, lastRob: null };
+}
+
+async function _readInventory(guildId, userId) {
+  const data = await db.getStrict(userInventoryKey(guildId, userId));
+  return data || { packs: [], opened: [] };
 }
 
 async function _writeBalance(guildId, userId, data) {
   await db.set(userBalanceKey(guildId, userId), data);
   await trackParticipant(guildId, userId);
   return data;
+}
+
+// Restores a balance snapshot after the second half of a two-step operation failed. Callers hold
+// the member's lock, so the snapshot is still the latest state.
+async function _refund(guildId, userId, snapshot, operation) {
+  try {
+    await db.set(userBalanceKey(guildId, userId), snapshot);
+    logger.warn(`[Economy] ${operation}: second write failed, restored ${userId}'s balance in ${guildId}`);
+  } catch (err) {
+    logger.error(`[Economy] ${operation}: could NOT restore ${userId}'s balance in ${guildId} — manual check needed`, err);
+  }
 }
 
 // ─── Public read (safe without lock for display only) ────────────────────────
@@ -273,7 +301,8 @@ export async function transferCoins(guildId, fromId, toId, amount) {
   // coins: NaN on both sides). Not reachable through the known slash-command paths today (Discord's
   // own getInteger() already validates before it gets here), but the service layer itself should
   // never trust its input, since any future/other caller (dashboard, API route) could pass one.
-  if (!Number.isFinite(amount) || amount < 1) return { success: false, reason: 'amount' };
+  // Whole coins only (fractional transfers left balances like 0.30000000000000004).
+  if (!isValidAmount(amount)) return { success: false, reason: 'amount' };
 
   return withTwoLocks(lockKey(guildId, fromId), lockKey(guildId, toId), async () => {
     const from = await _readBalance(guildId, fromId);
@@ -286,7 +315,13 @@ export async function transferCoins(guildId, fromId, toId, amount) {
     const toCoins = (to.coins || 0) + amount;
 
     await _writeBalance(guildId, fromId, { ...from, coins: fromCoins });
-    await _writeBalance(guildId, toId,   { ...to,   coins: toCoins });
+    try {
+      await _writeBalance(guildId, toId, { ...to, coins: toCoins });
+    } catch (err) {
+      // The sender was already debited: put the coins back so a failed write can't destroy them.
+      await _refund(guildId, fromId, from, 'transfer');
+      throw err;
+    }
 
     return { success: true, amount, fromTotal: fromCoins };
   });
@@ -322,15 +357,21 @@ export async function robUser(guildId, robberId, targetId) {
         return { success: false, reason: 'poor_target' };
       }
 
-      await _writeBalance(guildId, robberId, {
-        ...robber,
-        coins: (robber.coins || 0) + stolen,
-        lastRob: now,
-      });
+      // Debit the victim first: if that write fails nothing was created out of thin air.
       await _writeBalance(guildId, targetId, {
         ...target,
         coins: target.coins - stolen,
       });
+      try {
+        await _writeBalance(guildId, robberId, {
+          ...robber,
+          coins: (robber.coins || 0) + stolen,
+          lastRob: now,
+        });
+      } catch (err) {
+        await _refund(guildId, targetId, target, 'rob');
+        throw err;
+      }
       return { success: true, outcome: 'success', stolen };
     } else {
       const fine = Math.max(1, Math.floor((robber.coins || 0) * 0.20));
@@ -434,7 +475,7 @@ export async function getUserInventory(guildId, userId) {
 
 export async function addPackToInventory(guildId, userId, packId) {
   try {
-    const inv = await getUserInventory(guildId, userId);
+    const inv = await _readInventory(guildId, userId);
     const packs = [...(inv.packs || []), { packId, obtainedAt: Date.now() }];
     await db.set(userInventoryKey(guildId, userId), { ...inv, packs });
     return packs;
@@ -447,7 +488,7 @@ export async function addPackToInventory(guildId, userId, packId) {
 export async function openPack(guildId, userId, packId) {
   return withLock(lockKey(guildId, userId), async () => {
     const config = await getEconomyConfig(guildId);
-    const inv = await getUserInventory(guildId, userId);
+    const inv = await _readInventory(guildId, userId);
 
     const packIndex = (inv.packs || []).findIndex(p => p.packId === packId);
     if (packIndex === -1) return null;
@@ -466,14 +507,23 @@ export async function openPack(guildId, userId, packId) {
     const updatedPacks = [...inv.packs];
     updatedPacks.splice(packIndex, 1);
     const opened = [...(inv.opened || []), { packId, reward, openedAt: Date.now() }];
-    await db.set(userInventoryKey(guildId, userId), { packs: updatedPacks, opened });
+    // Keep the 50 most recent openings: this list used to grow forever inside one document,
+    // which on Firestore eventually hits the 1 MiB document limit and breaks every write.
+    await db.set(userInventoryKey(guildId, userId), { ...inv, packs: updatedPacks, opened: opened.slice(-50) });
 
     if (reward.type === 'coins') {
-      const current = await _readBalance(guildId, userId);
-      await _writeBalance(guildId, userId, {
-        ...current,
-        coins: (current.coins || 0) + reward.amount,
-      });
+      try {
+        const current = await _readBalance(guildId, userId);
+        await _writeBalance(guildId, userId, {
+          ...current,
+          coins: (current.coins || 0) + reward.amount,
+        });
+      } catch (err) {
+        // Give the pack back instead of consuming it without paying out.
+        await db.set(userInventoryKey(guildId, userId), inv).catch((restoreErr) =>
+          logger.error(`[Economy] Could not restore pack ${packId} for ${userId} after a failed payout:`, restoreErr));
+        throw err;
+      }
     }
 
     return reward;
@@ -520,6 +570,18 @@ export async function purchaseShopItem(guildId, userId, itemId) {
   });
 }
 
+/**
+ * Gives back the price of a shop item whose delivery failed (role deleted, bot can't manage it…).
+ * Members used to pay and get nothing whenever automatic delivery failed.
+ */
+export async function refundShopPurchase(guildId, userId, amount) {
+  if (!isValidAmount(amount)) return null;
+  return withLock(lockKey(guildId, userId), async () => {
+    const current = await _readBalance(guildId, userId);
+    return _writeBalance(guildId, userId, { ...current, coins: (current.coins || 0) + amount });
+  });
+}
+
 // ─── addCoins / removeCoins — kept for dashboard/admin use ───────────────────
 // These three had no numeric validation at all (unlike transferCoins/depositCoins/withdrawCoins
 // above, which at least had an `amount < 1` check, itself fixed alongside this to also reject
@@ -528,7 +590,7 @@ export async function purchaseShopItem(guildId, userId, itemId) {
 // already validates before it gets here), but this is the dashboard/admin-use entry point per its
 // own comment below, so it's exactly the kind of function a future non-Discord caller would use.
 export async function addCoins(guildId, userId, amount) {
-  if (!Number.isFinite(amount)) return null;
+  if (!Number.isSafeInteger(amount)) return null;
   return withLock(lockKey(guildId, userId), async () => {
     const current = await _readBalance(guildId, userId);
     return _writeBalance(guildId, userId, { ...current, coins: (current.coins || 0) + amount });
@@ -536,7 +598,7 @@ export async function addCoins(guildId, userId, amount) {
 }
 
 export async function removeCoins(guildId, userId, amount) {
-  if (!Number.isFinite(amount) || amount < 0) return null;
+  if (!Number.isSafeInteger(amount) || amount < 0) return null;
   return withLock(lockKey(guildId, userId), async () => {
     const current = await _readBalance(guildId, userId);
     if ((current.coins || 0) < amount) return null;
@@ -572,10 +634,16 @@ export async function buyPack(guildId, userId, packId) {
     const newBalance = { ...balance, coins: balance.coins - pack.price };
     await _writeBalance(guildId, userId, newBalance);
 
-    // Add pack to inventory (inside same lock — no race window)
-    const inv = await getUserInventory(guildId, userId);
-    const packs = [...(inv.packs || []), { packId, obtainedAt: Date.now() }];
-    await db.set(userInventoryKey(guildId, userId), { ...inv, packs });
+    // Add pack to inventory (inside same lock — no race window). If that fails, refund: the
+    // coins used to be gone with no pack to show for them.
+    try {
+      const inv = await _readInventory(guildId, userId);
+      const packs = [...(inv.packs || []), { packId, obtainedAt: Date.now() }];
+      await db.set(userInventoryKey(guildId, userId), { ...inv, packs });
+    } catch (err) {
+      await _refund(guildId, userId, balance, 'buyPack');
+      throw err;
+    }
 
     return { success: true, pack, remaining: newBalance.coins };
   });
@@ -625,7 +693,7 @@ export async function playUltraGamble(guildId, userId, bet) {
 // Bank coins cannot be stolen by /rob — only wallet coins (coins) are at risk.
 export async function depositCoins(guildId, userId, amount) {
   // See transferCoins's comment above — Number.isFinite rejects NaN, `amount < 1` alone doesn't.
-  if (!Number.isFinite(amount) || amount < 1) return { success: false, reason: 'amount' };
+  if (!isValidAmount(amount)) return { success: false, reason: 'amount' };
   return withLock(lockKey(guildId, userId), async () => {
     const current = await _readBalance(guildId, userId);
     if ((current.coins || 0) < amount) {
@@ -643,7 +711,7 @@ export async function depositCoins(guildId, userId, amount) {
 
 export async function withdrawCoins(guildId, userId, amount) {
   // See transferCoins's comment above — Number.isFinite rejects NaN, `amount < 1` alone doesn't.
-  if (!Number.isFinite(amount) || amount < 1) return { success: false, reason: 'amount' };
+  if (!isValidAmount(amount)) return { success: false, reason: 'amount' };
   return withLock(lockKey(guildId, userId), async () => {
     const current = await _readBalance(guildId, userId);
     if ((current.bankCoins || 0) < amount) {

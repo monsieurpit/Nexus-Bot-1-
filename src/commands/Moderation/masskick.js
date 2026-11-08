@@ -10,7 +10,8 @@ import {
     createMassActionResults,
     checkMassActionHierarchy,
     formatMassActionResults,
-    getMassActionEmbed
+    getMassActionEmbed,
+    confirmMassAction
 } from '../../utils/massActionHelper.js';
 
 export default {
@@ -71,9 +72,13 @@ export default {
                 });
             }
 
+            // Preview + explicit confirmation before anything irreversible happens.
+            const uniqueIds = [...new Set(userIds)];
+            if (!await confirmMassAction(interaction, { verb: 'Kick', userIds: uniqueIds, reason, extra: '' })) return;
+
             const results = createMassActionResults();
 
-            for (const userId of userIds) {
+            for (const userId of uniqueIds) {
                 try {
                     const member = await interaction.guild.members.fetch(userId).catch(() => null);
 

@@ -38,7 +38,7 @@ export default {
         const config = guildConfig || await getGuildConfig(client, interaction.guild.id);
 
         try {
-            await setGuildConfig(client, interaction.guild.id, { ...config, adminRole: role.id });
+            await setGuildConfig(client, interaction.guild.id, { adminRole: role.id });
 
             logger.info(`Admin role set to ${role.id} (${role.name}) in guild ${interaction.guild.id} by ${interaction.user.id}`);
 

@@ -45,5 +45,15 @@ Set these in Railway → your service → **Variables**:
 
 ---
 
+## 💾 Database Backups
+
+Firebase Firestore is the primary database. Back it up with `npm run backup:firestore` (writes
+`backups/firestore-<timestamp>.json` with a SHA-256 checksum). Restore with
+`npm run restore:firestore -- --file <backup>` — a dry run by default; add `--apply` to write
+(a safety backup of the current data is taken first). `backup:db` / `restore:db` / `backup:drill`
+only cover the PostgreSQL fallback. Audit details: `docs/BOT_AUDIT_2026-11.md`.
+
+---
+
 ## 📌 Maintenance Notes (For Forks)
 This repository is configured as a standalone custom fork. **Do not pull upstream changes or sync the fork** directly through GitHub, as doing so may conflict with the customized PostgreSQL schema and custom command handlers.

@@ -18,6 +18,7 @@ import { checkLaligaStandingsUpdates } from './services/laligaStandingsService.j
 import { loadCommands, registerCommands as registerSlashCommands } from './handlers/commandLoader.js';
 import { logCrash } from './services/aiTelemetryService.js';
 import { registerBotClient } from './utils/botRegistry.js';
+import { getRaidShieldEngineStatus } from './services/aiModerationService.js';
 
 class NexusBot extends Client {
   constructor() {
@@ -234,16 +235,26 @@ class NexusBot extends Client {
       next();
     });
 
+    // Liveness stays HTTP 200 (a degraded database must not make the host restart-loop the bot),
+    // but the body now says what is actually degraded instead of always "healthy".
     app.get('/health', (req, res) => {
-      const dbStatus = this.db?.getStatus?.() || { isDegraded: 'unknown' };
-      const status = {
-        status: 'healthy',
+      const dbStatus = this.db?.getStatus?.() || { isDegraded: true, connectionType: 'none', persistent: false };
+      const discordReady = this.isReady();
+      const degraded = !discordReady || !dbStatus.persistent;
+      res.status(200).json({
+        status: degraded ? 'degraded' : 'healthy',
+        discord: { ready: discordReady, pingMs: discordReady ? Math.round(this.ws.ping) : null },
         database: {
+          backend: dbStatus.connectionType,
           connected: dbStatus.connectionType !== 'none',
-          degraded: dbStatus.isDegraded
-        }
-      };
-      res.status(200).json(status);
+          persistent: Boolean(dbStatus.persistent),
+          degraded: dbStatus.isDegraded,
+          readFailures: dbStatus.readFailures ?? 0,
+          writeFailures: dbStatus.writeFailures ?? 0,
+        },
+        raidShieldEngine: getRaidShieldEngineStatus().state,
+        uptimeSeconds: Math.round(process.uptime()),
+      });
     });
 
     app.get('/ready', (req, res) => {
@@ -523,6 +534,16 @@ class NexusBot extends Client {
   }
 
   async shutdown(reason = 'UNKNOWN') {
+    // SIGTERM followed by SIGINT (or two SIGTERMs from the host) used to run the whole sequence
+    // twice in parallel.
+    if (this.shuttingDown) return;
+    this.shuttingDown = true;
+    // Railway sends SIGKILL ~10s after SIGTERM; never hang past that on a stuck close.
+    const forceExit = setTimeout(() => {
+      logger.warn('Shutdown took too long — forcing exit');
+      process.exit(1);
+    }, 8000);
+    forceExit.unref?.();
     shutdownLog(`Bot is shutting down (${reason})...`);
     logger.info(`\n${'='.repeat(60)}`);
     logger.info(`🛑 Graceful Shutdown Initiated (${reason})`);
@@ -533,6 +554,18 @@ class NexusBot extends Client {
       logger.info('Stopping cron jobs...');
       cron.getTasks().forEach(task => task.stop());
       logger.info('✅ Cron jobs stopped');
+
+      // Stop receiving Discord events FIRST, so nothing new is written while the database
+      // closes (this used to happen last).
+      logger.info('Destroying Discord client...');
+      try {
+        if (this.isReady()) {
+          await this.destroy();
+          logger.info('✅ Discord client destroyed');
+        }
+      } catch (error) {
+        logger.warn('Discord client destroy warning (non-critical):', error.message);
+      }
 
       // Persist buffered weekly-summary counters before the database closes.
       await flushWeeklyStats().catch(err => logger.warn('Could not flush weekly stats on shutdown:', err.message));
@@ -547,19 +580,6 @@ class NexusBot extends Client {
           }
         } catch (error) {
           logger.warn('Error closing database pool:', error.message);
-        }
-      }
-
-      
-      logger.info('Destroying Discord client...');
-      if (this.isReady()) {
-        try {
-          this.destroy();
-          logger.info('✅ Discord client destroyed');
-        } catch (error) {
-          
-          
-          logger.warn('Discord client destroy warning (non-critical):', error.message);
         }
       }
 

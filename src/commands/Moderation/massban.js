@@ -10,7 +10,8 @@ import {
     createMassActionResults,
     checkMassActionHierarchy,
     formatMassActionResults,
-    getMassActionEmbed
+    getMassActionEmbed,
+    confirmMassAction
 } from '../../utils/massActionHelper.js';
 
 export default {
@@ -80,9 +81,13 @@ export default {
                 });
             }
 
+            // Preview + explicit confirmation before anything irreversible happens.
+            const uniqueIds = [...new Set(userIds)];
+            if (!await confirmMassAction(interaction, { verb: 'Ban', userIds: uniqueIds, reason, extra: `**Messages deleted:** last ${deleteDays} day(s)` })) return;
+
             const results = createMassActionResults();
 
-            for (const userId of userIds) {
+            for (const userId of uniqueIds) {
                 try {
                     const user = await client.users.fetch(userId).catch(() => null);
 
@@ -92,6 +97,14 @@ export default {
                     }
 
                     const member = await interaction.guild.members.fetch(userId).catch(() => null);
+
+                    if (!member && interaction.guild.ownerId !== interaction.user.id
+                        && !interaction.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
+                        // Same rule as /ban: without role data for a non-member, pre-emptive bans
+                        // need Manage Server.
+                        results.skipped.push({ user: user.tag, userId, reason: 'Not in the server — banning non-members needs Manage Server' });
+                        continue;
+                    }
 
                     if (member) {
                         const hierarchy = checkMassActionHierarchy(member, interaction);

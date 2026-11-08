@@ -15,7 +15,9 @@
     "migrate:status": "node scripts/migrate.js status",
     "backup:db": "node scripts/backup.js",
     "restore:db": "node scripts/restore.js",
-    "backup:drill": "node scripts/restore-drill.js"
+    "backup:drill": "node scripts/restore-drill.js",
+    "backup:firestore": "node scripts/firestore-backup.js",
+    "restore:firestore": "node scripts/firestore-restore.js"
   },
   "dependencies": {
     "@discordjs/rest": "^2.6.3",

@@ -166,6 +166,7 @@ async function handleLeveling(message, client) {
     if (!member) {
       member = await message.guild.members.fetch(message.author.id).catch(() => null);
     }
+    if (!member) return; // left the server / not fetchable — addXp needs a member
 
     if (levelingConfig.ignoredRoles?.length > 0 && member) {
       if (member.roles.cache.some(role => levelingConfig.ignoredRoles.includes(role.id))) {
@@ -197,7 +198,9 @@ async function handleLeveling(message, client) {
     }
 
     // Pass the confirmed member object
-    const result = await addXp(client, message.guild, member, finalXP);
+    // The cooldown is re-checked inside addXp's per-member lock, so two messages handled at the
+    // same moment can't both earn XP.
+    const result = await addXp(client, message.guild, member, finalXP, { cooldownMs: cooldownTime * 1000 });
     
     if (result?.success && result?.leveledUp) {
       logger.info(

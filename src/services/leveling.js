@@ -236,14 +236,18 @@ export async function getUserLevelData(client, guildId, userId) {
     }
 
     const key = `guild:${guildId}:leveling:users:${userId}`;
-    let data = await client.db.get(key);
+    // Strict read: a backend failure must surface as an error, never as "this member has 0 XP" —
+    // addXp() writes the result straight back, which used to wipe a member's level on a single
+    // transient database error.
+    const read = (k) => (typeof client.db.getStrict === 'function' ? client.db.getStrict(k) : client.db.get(k));
+    let data = await read(key);
 
     if (!data) {
       // Fall back to the pre-fix key format (missing the "guild:" prefix, which
       // meant it never actually routed to the dedicated leveling table) so
       // existing XP/levels saved under it aren't lost - migrate it forward.
       const legacyKey = `${guildId}:leveling:users:${userId}`;
-      const legacyData = await client.db.get(legacyKey);
+      const legacyData = await read(legacyKey);
       if (legacyData) {
         data = legacyData;
         await client.db.set(key, legacyData).catch(() => {});

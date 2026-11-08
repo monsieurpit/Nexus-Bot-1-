@@ -1,4 +1,4 @@
-import { getGuildConfig as getGuildConfigDb, setGuildConfig as setGuildConfigDb } from '../utils/database.js';
+import { getGuildConfig as getGuildConfigDb, getGuildConfigStrict, setGuildConfig as setGuildConfigDb } from '../utils/database.js';
 import { BotConfig } from '../config/bot.js';
 import { normalizeGuildConfig, validateGuildConfigOrThrow } from '../utils/schemas.js';
 import { wrapServiceBoundary } from '../utils/serviceErrorBoundary.js';
@@ -52,7 +52,8 @@ export const getGuildConfig = wrapServiceBoundary(async function getGuildConfig(
 
 
 export const setGuildConfig = wrapServiceBoundary(async function setGuildConfig(client, guildId, config, context = {}) {
-    const currentConfig = await getGuildConfigDb(client, guildId, context);
+    // Strict: a failed read must abort the save, not merge the patch into defaults.
+    const currentConfig = await getGuildConfigStrict(client, guildId);
     const merged = { ...currentConfig, ...config };
     const normalized = normalizeGuildConfig(merged, GUILD_CONFIG_DEFAULTS);
     const validated = validateGuildConfigOrThrow(normalized, { guildId, ...context });
@@ -72,7 +73,8 @@ export const setGuildConfig = wrapServiceBoundary(async function setGuildConfig(
 
 
 export const updateGuildConfig = wrapServiceBoundary(async function updateGuildConfig(client, guildId, updates, context = {}) {
-    const currentConfig = await getGuildConfigDb(client, guildId, context);
+    // Strict: a failed read must abort the save, not merge the patch into defaults.
+    const currentConfig = await getGuildConfigStrict(client, guildId);
     const newConfig = { ...currentConfig, ...updates };
     const normalized = normalizeGuildConfig(newConfig, GUILD_CONFIG_DEFAULTS);
     const validated = validateGuildConfigOrThrow(normalized, { guildId, ...context });

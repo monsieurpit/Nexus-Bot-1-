@@ -5,6 +5,7 @@ import { errorEmbed } from '../../utils/embeds.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { handleInteractionError } from '../../utils/errorHandler.js';
 import { guardDefer, guardPermission } from '../../utils/commandGuards.js';
+import { confirmMassAction } from '../../utils/massActionHelper.js';
 
 // How many members to process per batch before pausing
 const BATCH_SIZE = 5;
@@ -51,6 +52,33 @@ export default {
                         'Role Too High / Rol Demasiado Alto',
                         "I can't assign a role that is at or above my highest role.\n" +
                         'No puedo asignar un rol que esté igual o por encima de mi rol más alto.'
+                    )],
+                });
+            }
+
+            // Safety: the bot bypasses Discord's own rule that you can't hand out a role at or above
+            // your highest role — enforce it here (the server owner is exempt).
+            const isOwner = guild.ownerId === interaction.user.id;
+            if (!isOwner && role.position >= interaction.member.roles.highest.position) {
+                return await InteractionHelper.safeEditReply(interaction, {
+                    embeds: [errorEmbed(
+                        'Role Above Yours / Rol Superior al Tuyo',
+                        'You can only mass-assign roles below your own highest role.\n' +
+                        'Solo puedes asignar en masa roles por debajo de tu rol más alto.'
+                    )],
+                });
+            }
+
+            // Safety: giving EVERY member a role with staff powers is a one-command server takeover
+            // risk (or a typo away from one). Only the owner may do it.
+            const DANGEROUS = ['Administrator', 'ManageGuild', 'ManageRoles', 'ManageChannels', 'BanMembers', 'KickMembers', 'ManageWebhooks', 'MentionEveryone', 'ModerateMembers'];
+            const dangerous = DANGEROUS.filter((perm) => role.permissions.has(PermissionFlagsBits[perm]));
+            if (dangerous.length && !isOwner) {
+                return await InteractionHelper.safeEditReply(interaction, {
+                    embeds: [errorEmbed(
+                        'Dangerous Role / Rol Peligroso',
+                        `${role} grants staff permissions (${dangerous.join(', ')}). Only the server owner can give it to every member.\n` +
+                        `${role} otorga permisos de staff. Solo el propietario puede asignarlo a todos.`
                     )],
                 });
             }
@@ -111,6 +139,17 @@ export default {
                     ],
                 });
             }
+
+            const confirmed = await confirmMassAction(interaction, {
+                verb: 'Assign role',
+                count: total,
+                reason: `/roleall by ${interaction.user.tag}`,
+                summary: `You are about to give ${role} to **${total}** ${skipBots ? 'non-bot ' : ''}member(s).` +
+                    (dangerous.length ? `\n⚠️ This role grants: **${dangerous.join(', ')}**` : '') +
+                    `\nEstimated time: ~${Math.ceil(total / BATCH_SIZE * BATCH_DELAY_MS / 60000)} min.`,
+            });
+            if (!confirmed) return;
+            const startedAt = Date.now();
 
             logger.info(`[Roleall] Starting role assignment: role=${role.name} (${role.id}), targets=${total}, guild=${guild.name} (${guild.id}), executor=${interaction.user.tag}`);
 
@@ -177,7 +216,14 @@ export default {
                 );
             }
 
-            await InteractionHelper.safeEditReply(interaction, { embeds: [embed] });
+            // Interaction tokens expire after 15 minutes; on large servers the run outlives it and the
+            // final summary used to vanish. Post it in the channel instead when that's the case.
+            if (Date.now() - startedAt > 14 * 60 * 1000) {
+                await interaction.channel?.send({ content: `${interaction.user}`, embeds: [embed], allowedMentions: { users: [interaction.user.id] } })
+                    .catch((err) => logger.warn('[Roleall] Could not post the final summary:', err.message));
+            } else {
+                await InteractionHelper.safeEditReply(interaction, { embeds: [embed] });
+            }
 
         } catch (error) {
             logger.error('[Roleall] Error in roleall command:', error);

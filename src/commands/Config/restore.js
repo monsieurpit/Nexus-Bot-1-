@@ -7,7 +7,8 @@ import {
 import { createEmbed } from '../../utils/embeds.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { logger } from '../../utils/logger.js';
-import { getServerSave, restoreServerFromSnapshot } from '../../services/serverBackupService.js';
+import { getServerSave, restoreServerFromSnapshot, validateSnapshot } from '../../services/serverBackupService.js';
+import { confirmMassAction } from '../../utils/massActionHelper.js';
 import { getColor } from '../../config/bot.js';
 
 export default {
@@ -56,6 +57,33 @@ export default {
                     flags: MessageFlags.Ephemeral
                 });
             }
+
+            // Validate the whole snapshot before touching the server.
+            const check = validateSnapshot(snapshot);
+            if (!check.ok) {
+                return await InteractionHelper.safeEditReply(interaction, {
+                    embeds: [createEmbed({
+                        title: 'Backup Cannot Be Restored / Copia No Restaurable',
+                        description: `Save \`${saveId}\` is incomplete or corrupted, so nothing was changed:\n• ${check.errors.join('\n• ')}\n\n` +
+                            `La copia \`${saveId}\` está incompleta o dañada; no se cambió nada.`,
+                        color: 'error'
+                    })]
+                });
+            }
+
+            // Preview + confirmation: a restore edits role permissions and channel overwrites
+            // server-wide, and used to start the moment the command was sent.
+            const confirmed = await confirmMassAction(interaction, {
+                verb: 'Restore',
+                count: check.summary.roles + check.summary.categories + check.summary.channels,
+                reason: `/restore ${saveId} by ${interaction.user.tag}`,
+                summary: `Restore save \`${saveId}\` from <t:${Math.floor((snapshot.createdAt || Date.now()) / 1000)}:f>?\n` +
+                    `• **${check.summary.roles}** role(s) — existing roles with the same name get the saved permissions back\n` +
+                    `• **${check.summary.categories}** categor(ies) and **${check.summary.channels}** channel(s) — missing ones are recreated, permissions reset to the save\n` +
+                    (check.summary.hasSettings ? '• Server settings (AFK/system channels, verification level…)\n' : '') +
+                    'Nothing is deleted. / No se elimina nada.',
+            });
+            if (!confirmed) return;
 
             // Start restoration
             const startEmbed = createEmbed({

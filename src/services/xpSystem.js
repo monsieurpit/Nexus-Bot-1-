@@ -15,7 +15,13 @@ import { Mutex } from '../utils/mutex.js';
 
 
 
-export async function addXp(client, guild, member, xpToAdd) {
+/**
+ * @param {object} [options]
+ * @param {number} [options.cooldownMs] - When set, the per-member message cooldown is checked
+ *   INSIDE the lock (two messages processed concurrently used to both pass the cooldown check
+ *   made outside it and award XP twice).
+ */
+export async function addXp(client, guild, member, xpToAdd, options = {}) {
   const lockKey = `leveling:${guild.id}:${member.user.id}`;
   return await Mutex.runExclusive(lockKey, async () => {
     try {
@@ -31,6 +37,10 @@ export async function addXp(client, guild, member, xpToAdd) {
       }
       
       const levelData = await getUserLevelData(client, guild.id, member.user.id);
+
+      if (options.cooldownMs > 0 && Date.now() - (levelData.lastMessage || 0) < options.cooldownMs) {
+        return { success: false, reason: 'cooldown' };
+      }
       
       levelData.xp += xpToAdd;
       levelData.totalXp += xpToAdd;
@@ -40,6 +50,7 @@ export async function addXp(client, guild, member, xpToAdd) {
       let xpNeededForNextLevel = getXpForLevel(levelData.level);
       let didLevelUp = false;
       const initialLevel = levelData.level;
+      const pendingRewards = [];
 
       while (levelData.xp >= xpNeededForNextLevel && levelData.level < 1000) {
         levelData.xp -= xpNeededForNextLevel;
@@ -49,10 +60,18 @@ export async function addXp(client, guild, member, xpToAdd) {
 
         logger.info(`🎉 ${member.user.tag} leveled up to level ${levelData.level} in ${guild.name}`);
 
-        // Award role rewards for each level if applicable
+        // Role rewards are collected here and only granted AFTER the new level is saved —
+        // granting first meant a failed save handed out the role/announcement again next time.
         if (config.roleRewards && config.roleRewards[levelData.level]) {
-          await awardRoleReward(guild, member, config.roleRewards[levelData.level], levelData.level);
+          pendingRewards.push({ roleId: config.roleRewards[levelData.level], level: levelData.level });
         }
+      }
+
+      // Persist first: if this throws, nothing has been announced or granted yet.
+      await saveUserLevelData(client, guild.id, member.user.id, levelData);
+
+      for (const reward of pendingRewards) {
+        await awardRoleReward(guild, member, reward.roleId, reward.level);
       }
 
       if (didLevelUp) {
@@ -99,14 +118,12 @@ export async function addXp(client, guild, member, xpToAdd) {
         }
       }
       
-      await saveUserLevelData(client, guild.id, member.user.id, levelData);
-      
       return {
         success: true,
         level: levelData.level,
         xp: levelData.xp,
         totalXp: levelData.totalXp,
-        xpNeeded: getXpForLevel(levelData.level + 1),
+        xpNeeded: getXpForLevel(levelData.level), // threshold used by the level-up loop above
         leveledUp: didLevelUp
       };
       
@@ -177,7 +194,7 @@ async function sendLevelUpAnnouncement(guild, member, levelData, config) {
       .replace(/{user}/g, member.toString())
       .replace(/{level}/g, levelData.level)
       .replace(/{xp}/g, levelData.xp)
-      .replace(/{xpNeeded}/g, getXpForLevel(levelData.level + 1));
+      .replace(/{xpNeeded}/g, getXpForLevel(levelData.level));
     
     await levelUpChannel.send(message).catch(error => {
       logger.error(`Failed to send level up message in channel ${levelUpChannel.id}:`, error);

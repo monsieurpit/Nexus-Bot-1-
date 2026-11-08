@@ -5,7 +5,7 @@ import { logger } from '../../utils/logger.js';
 import { WarningService } from '../../services/warningService.js';
 import { handleInteractionError } from '../../utils/errorHandler.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
-import { guardDefer, guardPermission, guardMemberExists } from '../../utils/commandGuards.js';
+import { guardDefer, guardPermission, guardMemberExists, guardSelfTarget, guardRoleHierarchy } from '../../utils/commandGuards.js';
 
 export default {
     data: new SlashCommandBuilder()
@@ -39,6 +39,10 @@ export default {
                 const guildId = interaction.guildId;
 
                 guardMemberExists(member);
+                // Same rules as /kick and /timeout: no warning yourself, the bot, or anyone at or
+                // above your own top role (warnings are permanent records on that member).
+                guardSelfTarget(target.id, interaction, client, 'warn');
+                guardRoleHierarchy(interaction, member, 'warn');
 
                 const result = await WarningService.addWarning({
                     guildId,

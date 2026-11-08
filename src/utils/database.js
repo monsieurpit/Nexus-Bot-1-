@@ -29,6 +29,25 @@ function cloneValue(value) {
     }
 }
 
+export class DatabaseReadError extends Error {
+    constructor(key, cause) {
+        super(`Database read failed for "${key}": ${cause?.message || cause}`);
+        this.name = 'DatabaseReadError';
+        this.code = 'DB_READ_FAILED';
+        this.key = key;
+        this.cause = cause;
+    }
+}
+
+export class DatabaseWriteError extends Error {
+    constructor(key) {
+        super(`Database write failed for "${key}" (the backend rejected or could not store it)`);
+        this.name = 'DatabaseWriteError';
+        this.code = 'DB_WRITE_FAILED';
+        this.key = key;
+    }
+}
+
 class DatabaseWrapper {
     constructor() {
         this.cache = new Map();
@@ -39,6 +58,8 @@ class DatabaseWrapper {
         this.connectionType = 'none';
         this.degradedModeWarningShown = false;
         this.degradedReason = null;
+        // Operational counters surfaced through getStatus() (health endpoint, /status).
+        this.stats = { readFailures: 0, writeFailures: 0 };
     }
 
     async initialize() {
@@ -120,10 +141,37 @@ class DatabaseWrapper {
         // Invalidate again: a read that started before the write finished may have re-cached
         // the old value in between.
         this.invalidateCache(key);
+        // The Firestore/PostgreSQL backends report a failed write by RETURNING false instead of
+        // throwing. Nearly every caller ignored that, so a lost write (quota, permission, network)
+        // was reported to members as a success. Fail loudly instead.
+        if (result === false) {
+            this.stats.writeFailures++;
+            throw new DatabaseWriteError(key);
+        }
         return result;
     }
 
     async get(key, defaultValue = null) {
+        try {
+            return await this.getStrict(key, defaultValue);
+        } catch {
+            // A failed read is reported to the caller as "not found" (as before) but is NOT
+            // cached — otherwise a network blip would pin a missing value for the whole TTL.
+            // Code that reads a value in order to WRITE it back (balances, XP, configs) must use
+            // getStrict() instead: treating a failed read as "missing" there overwrites real data
+            // with defaults.
+            this.stats.readFailures++;
+            return defaultValue;
+        }
+    }
+
+    /**
+     * Same as get(), but a backend failure THROWS (DatabaseReadError) instead of being reported
+     * as "key not found". Use it for every read-modify-write: a transient Firestore error used to
+     * read a member's balance/XP/guild config as empty and the following write replaced the real
+     * data with defaults.
+     */
+    async getStrict(key, defaultValue = null) {
         if (DB_CACHE_TTL_MS > 0 && !this.ttlKeys.has(key)) {
             const cached = this.cache.get(key);
             if (cached && cached.expiresAt > Date.now()) {
@@ -134,10 +182,8 @@ class DatabaseWrapper {
         let value;
         try {
             value = await this.db.get(key, MISSING, { throwOnError: true });
-        } catch {
-            // A failed read is reported to the caller as "not found" (as before) but is NOT
-            // cached — otherwise a network blip would pin a missing value for the whole TTL.
-            return defaultValue;
+        } catch (error) {
+            throw new DatabaseReadError(key, error);
         }
         const found = value !== MISSING && value !== undefined;
 
@@ -209,6 +255,10 @@ class DatabaseWrapper {
         if (this.db.increment) {
             const result = await this.db.increment(key, amount);
             this.invalidateCache(key);
+            if (result === false) {
+                this.stats.writeFailures++;
+                throw new DatabaseWriteError(key);
+            }
             return result;
         }
         const current = await this.db.get(key, 0);
@@ -261,7 +311,11 @@ class DatabaseWrapper {
             connectionType: this.connectionType,
             isDegraded: this.useFallback,
             isAvailable: this.isAvailable(),
-            degradedReason: this.degradedReason
+            degradedReason: this.degradedReason,
+            // Persistent = data survives a restart. False only for the in-memory fallback.
+            persistent: this.initialized && !this.useFallback,
+            readFailures: this.stats.readFailures,
+            writeFailures: this.stats.writeFailures
         };
     }
 
@@ -274,7 +328,7 @@ export const db = new DatabaseWrapper();
 
 export async function initializeDatabase() {
     try {
-        logger.info("Initializing Database (PostgreSQL > Memory fallback)...");
+        logger.info("Initializing Database (Firestore primary > PostgreSQL fallback > in-memory last resort)...");
         await db.initialize();
         logger.info("✅ Database initialized");
         return { db };
@@ -402,6 +456,21 @@ export async function getGuildConfig(client, guildId, context = {}) {
 }
 
 /**
+ * Like getGuildConfig(), but a database failure THROWS instead of returning an empty/default
+ * config. Use it whenever the result is going to be written back.
+ */
+export async function getGuildConfigStrict(client, guildId) {
+    if (!client.db || typeof client.db.get !== "function") {
+        throw new Error('Database client is not available');
+    }
+    const key = getGuildConfigKey(guildId);
+    const raw = typeof client.db.getStrict === 'function'
+        ? await client.db.getStrict(key, {})
+        : await client.db.get(key, {});
+    return normalizeGuildConfig(unwrapReplitData(raw), DEFAULT_GUILD_CONFIG);
+}
+
+/**
  * Save guild configuration
  * @param {Object} client - Discord client with database
  * @param {string} guildId - Guild ID
@@ -416,7 +485,10 @@ export async function setGuildConfig(client, guildId, config, context = {}) {
         }
 
         const key = getGuildConfigKey(guildId);
-        const currentConfig = await getGuildConfig(client, guildId, context);
+        // Strict read: if the current config can't be read, ABORT. getGuildConfig() reports a
+        // failed read as an empty config, and merging the patch into that and saving it used to
+        // replace the server's whole configuration with defaults on a single transient error.
+        const currentConfig = await getGuildConfigStrict(client, guildId);
         const merged = { ...currentConfig, ...config };
         const validated = validateGuildConfigOrThrow(merged, { guildId, ...context });
         await client.db.set(key, validated);
@@ -2057,7 +2129,7 @@ export function getJoinToCreateChannelsKey(guildId) {
 
 
 
-export async function getJoinToCreateConfig(client, guildId) {
+export async function getJoinToCreateConfig(client, guildId, { strict = false } = {}) {
     if (!client.db) {
         logger.warn('Database not available for getJoinToCreateConfig');
         return {
@@ -2073,7 +2145,11 @@ export async function getJoinToCreateConfig(client, guildId) {
     
     const key = getJoinToCreateConfigKey(guildId);
     try {
-        const config = await client.db.get(key, {});
+        // strict: read-modify-write callers must not mistake a failed read for an empty config
+        // (saving that back erased every trigger channel and temp-channel record).
+        const config = strict && typeof client.db.getStrict === 'function'
+            ? await client.db.getStrict(key, {})
+            : await client.db.get(key, {});
         const unwrapped = unwrapReplitData(config);
         
         return {
@@ -2088,6 +2164,7 @@ export async function getJoinToCreateConfig(client, guildId) {
         };
     } catch (error) {
         logger.error(`Error getting Join to Create config for guild ${guildId}:`, error);
+        if (strict) throw error;
         return {
             enabled: false,
             triggerChannels: [],
@@ -2110,7 +2187,7 @@ export async function getJoinToCreateConfig(client, guildId) {
 export async function saveJoinToCreateConfig(client, guildId, config) {
     const key = getJoinToCreateConfigKey(guildId);
     try {
-        const existingConfig = await getJoinToCreateConfig(client, guildId);
+        const existingConfig = await getJoinToCreateConfig(client, guildId, { strict: true });
         const mergedConfig = { ...existingConfig, ...config };
         
         await client.db.set(key, mergedConfig);
@@ -2130,7 +2207,7 @@ export async function saveJoinToCreateConfig(client, guildId, config) {
 
 export async function updateJoinToCreateConfig(client, guildId, updates) {
     try {
-        const currentConfig = await getJoinToCreateConfig(client, guildId);
+        const currentConfig = await getJoinToCreateConfig(client, guildId, { strict: true });
         const updatedConfig = { ...currentConfig, ...updates };
         
         await saveJoinToCreateConfig(client, guildId, updatedConfig);
@@ -2151,7 +2228,7 @@ export async function updateJoinToCreateConfig(client, guildId, updates) {
 
 export async function addJoinToCreateTrigger(client, guildId, channelId, options = {}) {
     try {
-        const config = await getJoinToCreateConfig(client, guildId);
+        const config = await getJoinToCreateConfig(client, guildId, { strict: true });
         
         if (config.triggerChannels.includes(channelId)) {
             return false;
@@ -2187,7 +2264,7 @@ export async function addJoinToCreateTrigger(client, guildId, channelId, options
 
 export async function removeJoinToCreateTrigger(client, guildId, channelId) {
     try {
-        const config = await getJoinToCreateConfig(client, guildId);
+        const config = await getJoinToCreateConfig(client, guildId, { strict: true });
         
         const index = config.triggerChannels.indexOf(channelId);
         if (index === -1) {
@@ -2219,7 +2296,7 @@ export async function removeJoinToCreateTrigger(client, guildId, channelId) {
 
 export async function registerTemporaryChannel(client, guildId, channelId, ownerId, triggerChannelId) {
     try {
-        const config = await getJoinToCreateConfig(client, guildId);
+        const config = await getJoinToCreateConfig(client, guildId, { strict: true });
         
         config.temporaryChannels[channelId] = {
             ownerId,
@@ -2243,7 +2320,7 @@ export async function registerTemporaryChannel(client, guildId, channelId, owner
 
 export async function unregisterTemporaryChannel(client, guildId, channelId) {
     try {
-        const config = await getJoinToCreateConfig(client, guildId);
+        const config = await getJoinToCreateConfig(client, guildId, { strict: true });
         
         if (config.temporaryChannels[channelId]) {
             delete config.temporaryChannels[channelId];
@@ -2266,7 +2343,7 @@ export async function unregisterTemporaryChannel(client, guildId, channelId) {
 
 export async function getTemporaryChannelInfo(client, guildId, channelId) {
     try {
-        const config = await getJoinToCreateConfig(client, guildId);
+        const config = await getJoinToCreateConfig(client, guildId, { strict: true });
         return config.temporaryChannels[channelId] || null;
     } catch (error) {
         logger.error(`Error getting temporary channel info for guild ${guildId}:`, error);

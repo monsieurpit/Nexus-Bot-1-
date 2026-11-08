@@ -54,7 +54,7 @@ export default {
           leaderboard.map(async (user, index) => {
             const member = await interaction.guild.members.fetch(user.userId).catch(() => null);
             const mention = member?.user.toString() || `<@${user.userId}>`;
-            const xpNext = getXpForLevel(user.level + 1);
+            const xpNext = getXpForLevel(user.level); // threshold xpSystem actually uses to level up
             let prefix = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `**${index + 1}.**`;
             return `${prefix} ${mention} — Level ${user.level} (${user.xp}/${xpNext} XP)`;
           })

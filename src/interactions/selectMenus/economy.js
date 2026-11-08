@@ -1,5 +1,5 @@
 import { EmbedBuilder } from 'discord.js';
-import { getEconomyConfig, purchaseShopItem } from '../../services/economy.js';
+import { getEconomyConfig, purchaseShopItem, refundShopPurchase } from '../../services/economy.js';
 import { errorEmbed, successEmbed } from '../../utils/embeds.js';
 import { logger } from '../../utils/logger.js';
 
@@ -10,6 +10,14 @@ async function handleShopBuy(interaction, guildId) {
     const itemId = interaction.values[0];
     const userId = interaction.user.id;
     const config = await getEconomyConfig(guildId);
+
+    // Don't charge for a role the member already has (they used to pay again for nothing).
+    const preItem = (config.shopItems || []).find(i => i.id === itemId);
+    if (preItem?.type === 'role' && preItem.roleId && interaction.member?.roles?.cache?.has(preItem.roleId)) {
+      return interaction.editReply({
+        embeds: [errorEmbed('ℹ️ Already Owned', `You already have <@&${preItem.roleId}> — you were not charged.`)],
+      });
+    }
 
     const result = await purchaseShopItem(guildId, userId, itemId);
 
@@ -72,25 +80,37 @@ async function handleShopBuy(interaction, guildId) {
         });
       }
 
-      // Bot couldn't give the role — notify admin
-      await notifyAdmin(interaction, config, item, userId, roleError);
+      // The bot couldn't give the role: refund automatically (members used to be charged and told
+      // "an admin has been notified" even when no admin role was configured) and tell staff why.
+      const refunded = await refundShopPurchase(guildId, userId, item.price)
+        .then(() => true)
+        .catch((err) => { logger.error(`[Shop] Refund failed for ${userId} (${item.price}):`, err); return false; });
+      await notifyAdmin(interaction, config, item, userId, roleError, refunded);
+      const why = {
+        role_not_found: 'the role no longer exists',
+        member_not_found: 'your member profile could not be loaded',
+        missing_permissions: 'I am not allowed to give that role (it is above my highest role, or I lack Manage Roles)',
+      }[roleError] || 'an unexpected Discord error';
       return interaction.editReply({
-        embeds: [successEmbed(
-          `${itemEmoji} Purchase Successful!`,
-          `You bought **${item.name}** for **${item.price.toLocaleString()} ${config.currencyEmoji}**.\n` +
-          `An admin has been notified to deliver your item manually.\n\n` +
-          `**Remaining balance:** ${remaining.toLocaleString()} ${config.currencyEmoji}`
+        embeds: [errorEmbed(
+          `${itemEmoji} Delivery Failed`,
+          `I couldn't give you **${item.name}** because ${why}.\n` +
+          (refunded
+            ? `Your **${item.price.toLocaleString()} ${config.currencyEmoji}** were refunded.`
+            : `⚠️ The automatic refund also failed — please contact staff (item \`${item.id}\`).`)
         )],
       });
     }
 
     // ── Custom item: always ping admin ────────────────────────────────────────
-    await notifyAdmin(interaction, config, item, userId, null);
+    const notified = await notifyAdmin(interaction, config, item, userId, null);
     return interaction.editReply({
       embeds: [successEmbed(
         `${itemEmoji} Purchase Successful!`,
         `You bought **${item.name}** for **${item.price.toLocaleString()} ${config.currencyEmoji}**.\n` +
-        `An admin has been notified to deliver your item.\n\n` +
+        (notified
+          ? `An admin has been notified to deliver your item.\n\n`
+          : `Please let a staff member know so they can deliver it (no admin notification role is configured).\n\n`) +
         (item.deliveryNote ? `**What to expect:** ${item.deliveryNote}\n\n` : '') +
         `**Remaining balance:** ${remaining.toLocaleString()} ${config.currencyEmoji}`
       )],
@@ -103,14 +123,17 @@ async function handleShopBuy(interaction, guildId) {
   }
 }
 
-async function notifyAdmin(interaction, config, item, userId, errorReason) {
+// Returns true only when a notification was actually posted.
+async function notifyAdmin(interaction, config, item, userId, errorReason, refunded = false) {
   const adminRoleId = config.adminNotifyRoleId;
-  if (!adminRoleId) return;
+  if (!adminRoleId) return false;
 
   try {
     const itemEmoji = item.emoji || (item.type === 'role' ? '🏷️' : '✨');
     const reasonNote = errorReason
-      ? `\n⚠️ Automatic delivery failed (\`${errorReason}\`) — please deliver manually.`
+      ? (refunded
+        ? `\n⚠️ Automatic delivery failed (\`${errorReason}\`) — the member was refunded; fix the item's role setup.`
+        : `\n⚠️ Automatic delivery failed (\`${errorReason}\`) and the refund failed — please deliver or refund manually.`)
       : '';
     const deliveryNote = item.deliveryNote ? `\n📋 **Delivery note:** ${item.deliveryNote}` : '';
     const typeInfo = item.type === 'role' && item.roleId
@@ -134,8 +157,10 @@ async function notifyAdmin(interaction, config, item, userId, errorReason) {
       embeds: [embed],
       allowedMentions: { roles: [adminRoleId] },
     });
+    return true;
   } catch (err) {
     logger.warn('[Shop] Failed to send admin notification:', err.message);
+    return false;
   }
 }
 

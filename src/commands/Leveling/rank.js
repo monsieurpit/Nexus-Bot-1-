@@ -66,7 +66,10 @@ export default {
         totalXp: userData?.totalXp ?? 0
       };
 
-      const xpNeeded = getXpForLevel(safeUserData.level + 1);
+      // XP is stored as progress WITHIN the current level, and xpSystem levels up once it reaches
+      // getXpForLevel(level) — the bar used level + 1 and showed members needing ~50% more XP than
+      // they actually did (and threw outright at the max level).
+      const xpNeeded = getXpForLevel(safeUserData.level);
       const progress = xpNeeded > 0 ? Math.floor((safeUserData.xp / xpNeeded) * 100) : 0;
       const progressBar = createProgressBar(progress, 20);
 

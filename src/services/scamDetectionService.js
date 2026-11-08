@@ -17,7 +17,6 @@ const SCAM_KEYWORDS = [
 
   // Specific scam bot signatures (extremely high confidence)
   'honestly6239',
-  'honestly',
   'mrbeast',
   'mr beast',
   'beast giveaway',
@@ -121,7 +120,6 @@ const SCAM_KEYWORDS = [
 const SCAM_IMAGE_INDICATORS = [
   // Gambling site names (very high confidence)
   'stake.com',
-  'stake ',
   'rollbit',
   'roobet',
   'csgoempire',
@@ -133,7 +131,6 @@ const SCAM_IMAGE_INDICATORS = [
 
   // Specific scam bot signatures
   'honestly6239',
-  'honestly',
   'mrbeast',
   'mr beast',
 
@@ -233,6 +230,8 @@ export async function disableBotAlerts(client, guildId) {
   }
 }
 
+const UNIQUE_SCAM_KEYWORDS = [...new Set(SCAM_KEYWORDS.map((k) => k.toLowerCase()))];
+
 function isScamText(content) {
   if (!content || typeof content !== 'string') return false;
   const lower = content.toLowerCase();
@@ -241,10 +240,13 @@ function isScamText(content) {
   const specificPattern = /made\s+\d+\s+sol.*rug\s+pull.*giving\s+out.*sol/i;
   if (specificPattern.test(lower)) return true;
 
-  // Check keyword matches - require at least 3 matches for confidence
+  // Check keyword matches - require at least 3 DISTINCT matches for confidence. The list used to
+  // contain duplicates ('bonus code', 'rug pull', 'withdrawal success'…), so one phrase counted
+  // twice, and everyday words ('honestly', 'stake ') counted as scam signals — "honestly, use my
+  // promo code" alone reached the threshold and pinged the alert role.
   let matches = 0;
-  for (const keyword of SCAM_KEYWORDS) {
-    if (lower.includes(keyword.toLowerCase())) {
+  for (const keyword of UNIQUE_SCAM_KEYWORDS) {
+    if (lower.includes(keyword)) {
       matches++;
     }
   }

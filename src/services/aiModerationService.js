@@ -114,6 +114,7 @@ async function analyzeContent(text, imageUrls = [], recentMessages = [], current
     try {
       const report = await nexusClient.analyzeThreat({ messageText: text, imageUrl, context });
       if (report && report.classification) {
+        recordEngineSuccess();
         const classified = {
           classification: report.actionRecommended === 'ALLOW' ? 'safe' : report.legacyClassification || 'scam',
           confidence: typeof report.confidence === 'number' ? report.confidence : 0.9,
@@ -157,9 +158,12 @@ async function analyzeContent(text, imageUrls = [], recentMessages = [], current
     contextMessages: recentMessages.length
   });
 
-  // Query the real, central Nexus AI RaidShield engine via the SDK. If it's unreachable,
-  // fail open to "safe" rather than duplicating its 21-rule classifier locally - a stale
-  // local copy would drift from the real engine's fixes and rules over time.
+  // Query the real, central Nexus AI RaidShield engine via the SDK. If it's unreachable the
+  // result is UNAVAILABLE — never "safe". It used to come back as
+  // { classification: 'safe', confidence: 0.95, reason: 'Adheres to safe server guidelines' },
+  // indistinguishable from a real clean verdict. Members are still not punished during an outage
+  // (no action is taken on an unscanned message), but nothing claims they were checked, and the
+  // non-AI layers (scamDetectionService, raidDetectionService) keep running regardless.
   try {
     // authorId is deliberately NOT sent: the engine only echoes it back, but its presence opts
     // the request into the engine's per-Discord-user rate limit (5 requests / 15s, shared with
@@ -172,31 +176,110 @@ async function analyzeContent(text, imageUrls = [], recentMessages = [], current
       imageUrl
     });
     if (result && result.classification) {
+      recordEngineSuccess();
       const classified = {
         classification: result.classification,
         confidence: typeof result.confidence === 'number' ? result.confidence : 0.95,
-        reason: result.reason || 'Verified via central Nexus AI RaidShield engine'
+        reason: result.reason || 'Verified via central Nexus AI RaidShield engine',
+        // The engine itself recommends FLAG_FOR_REVIEW for lower-confidence hits (server.ts,
+        // /api/v1/raidshield). Honour it: staff review instead of an automatic punishment.
+        reviewOnly: result.actionRecommended === 'FLAG_FOR_REVIEW',
       };
       if (imageUrl) setCachedImage(imageUrl, classified);
       return classified;
     }
+    recordEngineFailure(new Error('RaidShield engine returned no classification'));
   } catch (err) {
+    recordEngineFailure(err);
     // Fail-open is deliberate (members aren't blocked while the engine is down), but it used to be
     // logged at debug level only — AI moderation could be off for hours with nobody noticing.
     // Warn, at most once every 5 minutes.
     if (Date.now() - lastEngineDownWarningAt > 5 * 60 * 1000) {
       lastEngineDownWarningAt = Date.now();
-      logger.warn(`[AI Moderation] RaidShield engine unreachable — messages are NOT being scanned (failing open as safe): ${err.message}`);
+      logger.warn(`[AI Moderation] RaidShield engine unreachable — messages are NOT being AI-scanned (no action taken on unscanned messages; local scam/raid detection still active): ${err.message}`);
     } else {
-      logger.debug(`[AI Moderation] Central RaidShield call failed, defaulting to safe: ${err.message}`);
+      logger.debug(`[AI Moderation] Central RaidShield call failed, message not scanned: ${err.message}`);
     }
   }
 
   return {
-    classification: 'safe',
-    confidence: 0.95,
-    reason: 'Adheres to safe server guidelines'
+    classification: UNAVAILABLE,
+    confidence: 0,
+    reason: 'RaidShield AI engine unavailable — this message was NOT scanned',
   };
+}
+
+// ─── Engine availability (shown in /raidshield dashboard and /status) ─────────
+export const UNAVAILABLE = 'unavailable';
+const engineState = { lastSuccessAt: null, lastFailureAt: null, lastError: null, consecutiveFailures: 0 };
+
+function recordEngineSuccess() {
+  engineState.lastSuccessAt = Date.now();
+  engineState.consecutiveFailures = 0;
+}
+
+function recordEngineFailure(err) {
+  engineState.lastFailureAt = Date.now();
+  engineState.lastError = String(err?.message || err).slice(0, 200);
+  engineState.consecutiveFailures++;
+}
+
+/**
+ * Health of the AI scanning path, from the bot's real calls (no extra traffic to the engine).
+ * state: 'operational' | 'unavailable' | 'unknown' (no scan attempted since start).
+ */
+export function getRaidShieldEngineStatus() {
+  let state = 'unknown';
+  if (engineState.lastFailureAt && (!engineState.lastSuccessAt || engineState.lastFailureAt > engineState.lastSuccessAt)) {
+    state = 'unavailable';
+  } else if (engineState.lastSuccessAt) {
+    state = 'operational';
+  }
+  return {
+    state,
+    configured: Boolean(process.env.NEXUS_API_URL),
+    specialistKeyConfigured: Boolean(nexusClient.raidshieldKey),
+    ...engineState,
+  };
+}
+
+// Test hook.
+export function _resetEngineStatusForTests() {
+  Object.assign(engineState, { lastSuccessAt: null, lastFailureAt: null, lastError: null, consecutiveFailures: 0 });
+}
+
+// Staff are told (at most once every 6 hours per server) that AI scanning is down, in the AI
+// alert channel. Otherwise an outage only showed up in the host's logs.
+const UNAVAILABLE_NOTICE_INTERVAL_MS = 6 * 60 * 60 * 1000;
+const lastUnavailableNoticeAt = new Map();
+
+async function maybeNotifyEngineUnavailable(message, client, aiConfig) {
+  const guildId = message.guild.id;
+  const last = lastUnavailableNoticeAt.get(guildId) || 0;
+  if (Date.now() - last < UNAVAILABLE_NOTICE_INTERVAL_MS) return;
+  lastUnavailableNoticeAt.set(guildId, Date.now());
+  try {
+    const { RaidDetectionService } = await import('./raidDetectionService.js');
+    const config = await RaidDetectionService.getRaidConfig(client, guildId);
+    const channelId = aiConfig.alertChannelId || config.notificationChannelId;
+    const channel = channelId ? message.guild.channels.cache.get(channelId) : null;
+    if (!channel?.isTextBased?.()) return;
+    await channel.send({
+      embeds: [createEmbed({
+        title: '⚠️ RaidShield AI scanning unavailable / Escaneo IA no disponible',
+        description:
+          'The Nexus AI RaidShield engine cannot be reached, so messages are currently **not** being AI-scanned. ' +
+          'No automatic action is taken on unscanned messages. Raid detection, scam-link detection and quarantine keep working.\n\n' +
+          'El motor RaidShield de Nexus AI no responde: los mensajes **no** se están analizando con IA. ' +
+          'La detección de raids, de enlaces de estafa y la cuarentena siguen funcionando.\n\n' +
+          'This notice repeats at most every 6 hours. / Este aviso se repite como máximo cada 6 horas.',
+        color: 'warning',
+      })],
+      allowedMentions: { parse: [] },
+    }).catch(() => null);
+  } catch (err) {
+    logger.debug('Could not send RaidShield unavailable notice:', err.message);
+  }
 }
 
 function getActionForClassification(aiConfig, classification) {
@@ -487,15 +570,18 @@ export class AiModerationService {
 
   static async saveAiConfig(client, guildId, updates) {
     try {
-      const { getGuildConfig, setGuildConfig } = await import('../utils/database.js');
-      const config = await getGuildConfig(client, guildId);
+      const { getGuildConfigStrict, setGuildConfig } = await import('../utils/database.js');
+      // Strict read + patch only the raidShield section: re-saving the whole config object read
+      // a moment earlier could overwrite unrelated settings with defaults after a failed read.
+      const config = await getGuildConfigStrict(client, guildId);
       const current = config?.raidShield?.aiModeration || {};
       const aiModeration = { ...current, ...updates };
       if (updates.actions) {
         aiModeration.actions = { ...(current.actions || {}), ...updates.actions };
       }
       const raidShield = { ...config?.raidShield, aiModeration };
-      await setGuildConfig(client, guildId, { ...config, raidShield });
+      const saved = await setGuildConfig(client, guildId, { raidShield });
+      if (saved === false) throw new Error('setGuildConfig reported a failed save');
       return true;
     } catch (error) {
       logger.error('Error saving AI moderation config:', error);
@@ -618,6 +704,12 @@ export class AiModerationService {
 
       if (!result) {
         logger.debug('No analysis result returned');
+        return;
+      }
+
+      if (result.classification === UNAVAILABLE) {
+        // Not scanned ≠ safe, and not a reason to punish anyone either.
+        await maybeNotifyEngineUnavailable(message, client, aiConfig);
         return;
       }
 

@@ -514,6 +514,40 @@ export async function restoreRolesFromSnapshot(guild, rolesData) {
 }
 
 /**
+ * Structural check run BEFORE a restore touches anything. A snapshot missing its category list
+ * (old format, partially written save, manual edit) used to crash halfway — after roles had
+ * already been edited — leaving the server half-restored. Returns { ok, errors, summary }.
+ */
+export function validateSnapshot(snapshot) {
+    const errors = [];
+    if (!snapshot || typeof snapshot !== 'object') {
+        return { ok: false, errors: ['The save is empty or unreadable.'], summary: null };
+    }
+    if (!Array.isArray(snapshot.categories)) errors.push('The save has no category/channel list.');
+    if (snapshot.roles !== undefined && !Array.isArray(snapshot.roles)) errors.push('The role list is malformed.');
+    let channels = 0;
+    for (const cat of Array.isArray(snapshot.categories) ? snapshot.categories : []) {
+        if (!cat || !Array.isArray(cat.channels)) { errors.push(`Category "${cat?.name ?? '?'}" has a malformed channel list.`); continue; }
+        if (cat.id !== null && typeof cat.name !== 'string') errors.push('A category has no name.');
+        for (const ch of cat.channels) {
+            if (!ch || typeof ch.name !== 'string' || !ch.name) { errors.push(`A channel in "${cat.name ?? 'no category'}" has no name.`); break; }
+            channels++;
+        }
+    }
+    for (const role of Array.isArray(snapshot.roles) ? snapshot.roles : []) {
+        if (!role || typeof role.name !== 'string') { errors.push('A role has no name.'); break; }
+        try { BigInt(role.permissions ?? 0); } catch { errors.push(`Role "${role.name}" has invalid permissions.`); break; }
+    }
+    const summary = {
+        roles: Array.isArray(snapshot.roles) ? snapshot.roles.filter((r) => r && !r.managed).length : 0,
+        categories: Array.isArray(snapshot.categories) ? snapshot.categories.filter((c) => c && c.id !== null).length : 0,
+        channels,
+        hasSettings: Boolean(snapshot.settings),
+    };
+    return { ok: errors.length === 0, errors: errors.slice(0, 10), summary };
+}
+
+/**
  * Full server restore from snapshot.
  * Order: roles → categories + channels → guild settings.
  */

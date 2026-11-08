@@ -44,7 +44,7 @@ export default {
         const role = interaction.options.getRole('role');
 
         try {
-            await setGuildConfig(client, interaction.guild.id, { ...config, modRole: role.id });
+            await setGuildConfig(client, interaction.guild.id, { modRole: role.id });
 
             logger.info(`Mod role set to ${role.id} (${role.name}) in guild ${interaction.guild.id} by ${interaction.user.id}`);
 

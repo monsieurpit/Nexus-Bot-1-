@@ -9,6 +9,7 @@ import {
     saveJoinToCreateConfig,
     updateJoinToCreateConfig,
     getTemporaryChannelInfo,
+    unregisterTemporaryChannel,
     formatChannelName as formatChannelNameUtil
 } from '../utils/database.js';
 import { logger } from '../utils/logger.js';
@@ -663,3 +664,37 @@ export default {
     logConfigurationChange,
     createTemporaryChannel
 };
+
+/**
+ * Startup sweep for temporary voice channels. They are only deleted when a "member left" voice
+ * event arrives, so a channel that emptied while the bot was offline or restarting (every Railway
+ * redeploy) stayed forever, and its registry entry kept growing. Runs once on ready: deletes
+ * registered temp channels that are empty, and forgets entries whose channel no longer exists.
+ * Never touches a channel that isn't in the bot's own temp-channel registry.
+ */
+export async function sweepOrphanedTemporaryChannels(client) {
+    const summary = { deleted: 0, forgotten: 0, errors: 0 };
+    for (const guild of client.guilds.cache.values()) {
+        try {
+            const config = await getJoinToCreateConfig(client, guild.id);
+            for (const channelId of Object.keys(config?.temporaryChannels || {})) {
+                const channel = guild.channels.cache.get(channelId)
+                    || await guild.channels.fetch(channelId).catch(() => null);
+                if (!channel) {
+                    await unregisterTemporaryChannel(client, guild.id, channelId);
+                    summary.forgotten++;
+                    continue;
+                }
+                if (channel.type === ChannelType.GuildVoice && channel.members.size === 0 && channel.deletable) {
+                    await unregisterTemporaryChannel(client, guild.id, channelId);
+                    await channel.delete('Temporary voice channel - empty after restart');
+                    summary.deleted++;
+                }
+            }
+        } catch (error) {
+            summary.errors++;
+            logger.warn(`JTC orphan sweep failed for guild ${guild.id}: ${error.message}`);
+        }
+    }
+    return summary;
+}
