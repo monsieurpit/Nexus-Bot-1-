@@ -19,6 +19,7 @@ import { recordChannelMessage } from '../services/channelHistoryService.js';
 import { recordWeeklyStat } from '../services/weeklySummaryService.js';
 import { handleDirectMessage } from '../services/dmService.js';
 import { capturePrediction } from '../services/predictionService.js';
+import { trackMessageForQuests } from '../services/quests/questTracker.js';
 
 const MESSAGE_XP_RATE_LIMIT_ATTEMPTS = 12;
 const MESSAGE_XP_RATE_LIMIT_WINDOW_MS = 10000;
@@ -37,6 +38,7 @@ export default {
       }
 
       recordWeeklyStat(client, message.guild.id, 'messagesSent').catch(() => null);
+      trackMessageForQuests(message); // quest progress (in memory, never throws)
 
       // Nexus's "brain" — every real message goes into its channel's rolling history (ambient
       // awareness of the channel, not just its own Q&A turns). Recorded first, synchronously, so

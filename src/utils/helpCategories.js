@@ -12,6 +12,7 @@ export const HELP_CATEGORIES = {
   Moderation:     { icon: '🛡️', name: 'Moderation',     es: 'Moderación',     color: 'moderation', blurb: 'Bans, timeouts, warnings, cases, RaidShield' },
   Economy:        { icon: '🪙', name: 'Economy',        es: 'Economía',       color: 'economy',    blurb: 'Coins, bank, shop, packs and games' },
   Leveling:       { icon: '📈', name: 'Leveling',       es: 'Niveles',        color: 'leveling',   blurb: 'XP, ranks, leaderboards and rewards' },
+  Quests:         { icon: '📜', name: 'Seasons & Quests', es: 'Misiones',     color: 'primary',    blurb: 'Daily & weekly quests, monthly seasons' },
   Ticket:         { icon: '🎫', name: 'Tickets',        es: 'Tickets',        color: 'info',       blurb: 'Private support tickets' },
   Giveaway:       { icon: '🎉', name: 'Giveaways',      es: 'Sorteos',        color: 'community',  blurb: 'Run and manage giveaways' },
   Welcome:        { icon: '👋', name: 'Welcome',        es: 'Bienvenida',     color: 'community',  blurb: 'Welcome/goodbye messages, auto-roles' },
@@ -28,7 +29,7 @@ export const HELP_CATEGORIES = {
 };
 
 // Display order on the home page (most-used first). Unknown folders are appended.
-const ORDER = ['Core', 'Moderation', 'Economy', 'Leveling', 'Ticket', 'Giveaway', 'Welcome', 'Verification', 'Reaction_roles',
+const ORDER = ['Core', 'Quests', 'Moderation', 'Economy', 'Leveling', 'Ticket', 'Giveaway', 'Welcome', 'Verification', 'Reaction_roles',
   'Community', 'JoinToCreate', 'ServerStats', 'Logging', 'Fun', 'Tools', 'Utility', 'Config'];
 
 export function categoryMeta(folder) {

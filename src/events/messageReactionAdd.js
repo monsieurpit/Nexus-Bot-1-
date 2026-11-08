@@ -2,6 +2,7 @@ import { Events } from 'discord.js';
 import { logger } from '../utils/logger.js';
 import { getTrackedAiReply, nexusClient, NEXUS_AI_CHAT_DISABLED } from '../services/nexusAiService.js';
 import { logNegativeFeedback } from '../services/aiTelemetryService.js';
+import { trackReactionForQuests } from '../services/quests/questTracker.js';
 
 // Reactions on Nexus's own replies are the clearest feedback members give:
 //  - 👎 is still forwarded to the guild's #negative-feedback telemetry channel (question + answer,
@@ -21,6 +22,7 @@ export default {
   async execute(reaction, user) {
     try {
       if (user.bot) return;
+      trackReactionForQuests(reaction, user); // quest progress (in memory, never throws)
       const emoji = reaction.emoji?.name;
       if (!emoji || !LEARNING_REACTIONS.has(emoji)) return;
 

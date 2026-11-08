@@ -1,6 +1,7 @@
 import { db } from '../utils/database.js';
 import { logger } from '../utils/logger.js';
 import { checkRateLimit } from '../utils/rateLimiter.js';
+import { trackQuestEvent, trackQuestUnique } from './quests/questService.js';
 
 // ─── Per-user async mutex ────────────────────────────────────────────────────
 // Prevents concurrent Discord interactions from causing lost-update / cooldown-
@@ -242,6 +243,8 @@ export async function claimDaily(guildId, userId) {
     const newCoins = (current.coins || 0) + earned;
 
     await _writeBalance(guildId, userId, { ...current, coins: newCoins, lastDaily: now, dailyStreak: streak });
+    trackQuestEvent(guildId, userId, 'dailyClaims');
+    trackQuestEvent(guildId, userId, 'coinsEarned', earned);
     return { success: true, earned, streakBonus, streak, newTotal: newCoins };
   });
 }
@@ -288,6 +291,8 @@ export async function claimWork(guildId, userId) {
     const newCoins = (current.coins || 0) + earned;
 
     await _writeBalance(guildId, userId, { ...current, coins: newCoins, lastWork: now });
+    trackQuestEvent(guildId, userId, 'workShifts');
+    trackQuestEvent(guildId, userId, 'coinsEarned', earned);
     return { success: true, earned, job: jobEntry.job, emoji: jobEntry.emoji, newTotal: newCoins };
   });
 }
@@ -323,6 +328,11 @@ export async function transferCoins(guildId, fromId, toId, amount) {
       throw err;
     }
 
+    // Gifts of 50+ count for the sender's "generous" quests; receiving never counts (alt farming).
+    if (amount >= 50) {
+      trackQuestEvent(guildId, fromId, 'paySent', amount);
+      trackQuestUnique(guildId, fromId, 'payRecipients', toId);
+    }
     return { success: true, amount, fromTotal: fromCoins };
   });
 }
@@ -401,6 +411,13 @@ export async function playCoinflip(guildId, userId, amount, choice) {
       : Math.max(0, (current.coins || 0) - amount);
 
     await _writeBalance(guildId, userId, { ...current, coins: newCoins });
+    trackQuestEvent(guildId, userId, 'coinflipPlays');
+    if (won) {
+      trackQuestEvent(guildId, userId, 'coinflipWins');
+      trackQuestEvent(guildId, userId, 'gamesWon');
+      trackQuestEvent(guildId, userId, 'gameWinnings', amount);
+      trackQuestEvent(guildId, userId, 'coinsEarned', amount);
+    }
     return { success: true, won, result, amount, newTotal: newCoins };
   });
 }
@@ -457,6 +474,13 @@ export async function playSlots(guildId, userId, bet) {
     const netChange = Math.floor(bet * multiplier) - bet;
     const newCoins = Math.max(0, (current.coins || 0) + netChange);
     await _writeBalance(guildId, userId, { ...current, coins: newCoins });
+    trackQuestEvent(guildId, userId, 'slotsSpins');
+    if (netChange > 0) {
+      trackQuestEvent(guildId, userId, 'slotsWins');
+      trackQuestEvent(guildId, userId, 'gamesWon');
+      trackQuestEvent(guildId, userId, 'gameWinnings', netChange);
+      trackQuestEvent(guildId, userId, 'coinsEarned', netChange);
+    }
 
     return { success: true, reels, outcome, multiplier, bet, netChange, newTotal: newCoins };
   });
@@ -518,6 +542,7 @@ export async function openPack(guildId, userId, packId) {
           ...current,
           coins: (current.coins || 0) + reward.amount,
         });
+        trackQuestEvent(guildId, userId, 'coinsEarned', reward.amount);
       } catch (err) {
         // Give the pack back instead of consuming it without paying out.
         await db.set(userInventoryKey(guildId, userId), inv).catch((restoreErr) =>
@@ -526,6 +551,7 @@ export async function openPack(guildId, userId, packId) {
       }
     }
 
+    trackQuestEvent(guildId, userId, 'packsOpened');
     return reward;
   });
 }
@@ -545,6 +571,7 @@ export async function awardMessageCoins(guildId, userId) {
     return withLock(lockKey(guildId, userId), async () => {
       const current = await _readBalance(guildId, userId);
       await _writeBalance(guildId, userId, { ...current, coins: (current.coins || 0) + coins });
+      trackQuestEvent(guildId, userId, 'coinsEarned', coins);
       return { awarded: true, coins };
     });
   } catch (err) {
@@ -566,6 +593,7 @@ export async function purchaseShopItem(guildId, userId, itemId) {
     }
 
     await _writeBalance(guildId, userId, { ...balance, coins: balance.coins - item.price });
+    trackQuestEvent(guildId, userId, 'coinsSpent', item.price);
     return { success: true, item, remaining: balance.coins - item.price };
   });
 }
@@ -645,6 +673,8 @@ export async function buyPack(guildId, userId, packId) {
       throw err;
     }
 
+    trackQuestEvent(guildId, userId, 'coinsSpent', pack.price);
+    trackQuestEvent(guildId, userId, 'packsBought');
     return { success: true, pack, remaining: newBalance.coins };
   });
 }
@@ -684,6 +714,11 @@ export async function playUltraGamble(guildId, userId, bet) {
     const netChange = winnings - bet;
     const newCoins = Math.max(0, wallet + netChange);
     await _writeBalance(guildId, userId, { ...bal, coins: newCoins });
+    if (netChange > 0) {
+      trackQuestEvent(guildId, userId, 'gamesWon');
+      trackQuestEvent(guildId, userId, 'gameWinnings', netChange);
+      trackQuestEvent(guildId, userId, 'coinsEarned', netChange);
+    }
 
     return { success: true, outcome, bet, winnings, netChange, newCoins };
   });
@@ -705,6 +740,7 @@ export async function depositCoins(guildId, userId, amount) {
       bankCoins: (current.bankCoins || 0) + amount,
     };
     await _writeBalance(guildId, userId, updated);
+    trackQuestEvent(guildId, userId, 'deposited', amount);
     return { success: true, deposited: amount, wallet: updated.coins, bank: updated.bankCoins };
   });
 }
@@ -723,6 +759,8 @@ export async function withdrawCoins(guildId, userId, amount) {
       bankCoins: current.bankCoins - amount,
     };
     await _writeBalance(guildId, userId, updated);
+    // Net deposits: depositing/withdrawing in a loop can't farm "deposit X coins" quests.
+    trackQuestEvent(guildId, userId, 'deposited', -amount);
     return { success: true, withdrawn: amount, wallet: updated.coins, bank: updated.bankCoins };
   });
 }

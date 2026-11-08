@@ -1,5 +1,6 @@
 import { getFromDb, setInDb, db, getFromDbStrict } from '../utils/database.js';
 import { logger } from '../utils/logger.js';
+import { trackQuestEvent } from './quests/questService.js';
 
 /**
  * In-memory store for active questions.
@@ -29,6 +30,7 @@ export async function incrementQScore(guildId, userId) {
         const current = await getFromDbStrict(key, 0);
         const next = (typeof current === 'number' ? current : 0) + 1;
         await setInDb(key, next);
+        trackQuestEvent(guildId, userId, 'triviaCorrect');
         return next;
     } catch (error) {
         logger.error(`Error incrementing qscore for ${userId} in ${guildId}:`, error);

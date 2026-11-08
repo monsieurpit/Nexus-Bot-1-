@@ -17,6 +17,7 @@ import {
     checkEntryEligibility,
 } from '../services/giveawayService.js';
 import { logEvent, EVENT_TYPES } from '../services/loggingService.js';
+import { trackQuestEvent } from '../services/quests/questService.js';
 
 
 export const giveawayJoinHandler = {
@@ -84,6 +85,7 @@ export const giveawayJoinHandler = {
                 giveaway.participants = participants;
 
                 await saveGiveaway(client, interaction.guildId, giveaway);
+                trackQuestEvent(interaction.guildId, interaction.user.id, 'giveawaysEntered');
 
                 logger.debug(`${interaction.user.tag} entered giveaway ${interaction.message.id} (${ticketCount} ticket(s))`);
 

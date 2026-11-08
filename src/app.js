@@ -19,6 +19,8 @@ import { loadCommands, registerCommands as registerSlashCommands } from './handl
 import { logCrash } from './services/aiTelemetryService.js';
 import { registerBotClient } from './utils/botRegistry.js';
 import { getRaidShieldEngineStatus } from './services/aiModerationService.js';
+import { flushQuestProgress } from './services/quests/questService.js';
+import { announceQuestCompletions, runSeasonRollover, runDailyPosts } from './services/quests/questAnnouncer.js';
 
 class NexusBot extends Client {
   constructor() {
@@ -427,6 +429,18 @@ class NexusBot extends Client {
     cron.schedule('0 6 * * *', safeJob('football-fixtures-sync', () => syncBarcelonaFixturesFromApi()));
     // Refresh every configured LaLiga standings board once an hour, on the hour
     cron.schedule('0 * * * *', safeJob('laliga-standings', () => checkLaligaStandingsUpdates(this)));
+    // Seasons & Quests: write buffered progress (and announce completions) every 5 minutes —
+    // one write per active member per 5 min keeps Firestore usage low; /quests progress saves
+    // the viewer's own pending progress instantly, so what members see is always exact.
+    cron.schedule('*/5 * * * *', safeJob('quest-progress', async () => {
+      const completions = await flushQuestProgress({ client: this });
+      await announceQuestCompletions(this, completions);
+    }));
+    // Season results first (just after midnight UTC on the 1st), then the day's quest board.
+    cron.schedule('5 * * * *', safeJob('season-and-daily-quests', async () => {
+      await runSeasonRollover(this);
+      await runDailyPosts(this);
+    }));
 
     // Run initial startup check 15 seconds after launch once bot caches are populated
     setTimeout(() => {
@@ -569,6 +583,8 @@ class NexusBot extends Client {
 
       // Persist buffered weekly-summary counters before the database closes.
       await flushWeeklyStats().catch(err => logger.warn('Could not flush weekly stats on shutdown:', err.message));
+      // Persist buffered quest progress too.
+      await flushQuestProgress({ client: this }).catch(err => logger.warn('Could not flush quest progress on shutdown:', err.message));
 
       // Close database connection
       if (this.db && this.db.db) {

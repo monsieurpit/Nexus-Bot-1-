@@ -6,6 +6,7 @@ import { logger } from '../utils/logger.js';
 import { getLevelingConfig, getXpForLevel, getUserLevelData, saveUserLevelData } from './leveling.js';
 import { logEvent, EVENT_TYPES } from './loggingService.js';
 import { Mutex } from '../utils/mutex.js';
+import { trackQuestEvent } from './quests/questService.js';
 
 
 
@@ -69,6 +70,8 @@ export async function addXp(client, guild, member, xpToAdd, options = {}) {
 
       // Persist first: if this throws, nothing has been announced or granted yet.
       await saveUserLevelData(client, guild.id, member.user.id, levelData);
+      trackQuestEvent(guild.id, member.user.id, 'xpGained', xpToAdd);
+      if (levelData.level > initialLevel) trackQuestEvent(guild.id, member.user.id, 'levelUps', levelData.level - initialLevel);
 
       for (const reward of pendingRewards) {
         await awardRoleReward(guild, member, reward.roleId, reward.level);
