@@ -54,7 +54,7 @@ function arrayToGiveawayMap(giveaways) {
 
 
 
-export async function getGuildGiveaways(client, guildId) {
+export async function getGuildGiveaways(client, guildId, { strict = false } = {}) {
     try {
         if (!client.db) {
             logger.warn('Database not available for getGuildGiveaways');
@@ -62,7 +62,10 @@ export async function getGuildGiveaways(client, guildId) {
         }
 
         const key = giveawayKey(guildId);
-        const giveaways = await client.db.get(key, {});
+        // strict: used by the save/delete helpers below so a failed read can't erase every giveaway.
+        const giveaways = strict && typeof client.db.getStrict === 'function'
+            ? await client.db.getStrict(key, {})
+            : await client.db.get(key, {});
         const unwrappedGiveaways = unwrapReplitData(giveaways);
         
         
@@ -72,6 +75,7 @@ export async function getGuildGiveaways(client, guildId) {
         return Array.isArray(unwrappedGiveaways) ? unwrappedGiveaways : [];
     } catch (error) {
         logger.error(`Error getting giveaways for guild ${guildId}:`, error);
+        if (strict) throw error;
         return [];
     }
 }
@@ -104,7 +108,7 @@ export async function saveGiveaway(client, guildId, giveawayData) {
         // two people joining two different giveaways at the same moment used to overwrite each
         // other's entries (each save wrote back the whole map it had read).
         await Mutex.runExclusive(`giveaways:${guildId}`, async () => {
-            const giveaways = await getGuildGiveaways(client, guildId);
+            const giveaways = await getGuildGiveaways(client, guildId, { strict: true });
             const giveawayMap = arrayToGiveawayMap(giveaways);
             giveawayMap[giveawayData.messageId] = giveawayData;
             await client.db.set(key, giveawayMap);
@@ -146,7 +150,7 @@ export async function deleteGiveaway(client, guildId, messageId) {
 
         const key = giveawayKey(guildId);
         const removed = await Mutex.runExclusive(`giveaways:${guildId}`, async () => {
-            const giveaways = await getGuildGiveaways(client, guildId);
+            const giveaways = await getGuildGiveaways(client, guildId, { strict: true });
             const giveawayMap = arrayToGiveawayMap(giveaways);
             if (!giveawayMap[messageId]) return false;
             delete giveawayMap[messageId];

@@ -1,7 +1,7 @@
 import { EmbedBuilder } from 'discord.js';
 import { getGuildConfig } from '../services/guildConfig.js';
 import { logger } from './logger.js';
-import { getFromDb, setInDb } from './database.js';
+import { getFromDb, setInDb, getFromDbStrict } from './database.js';
 import { getColor } from '../config/bot.js';
 import { recordWeeklyStat } from '../services/weeklySummaryService.js';
 
@@ -135,7 +135,7 @@ export async function logEvent({ client, guild, guildId, event }) {
 export async function generateCaseId(client, guildId) {
   try {
     const caseKey = `moderation_cases_${guildId}`;
-    const currentCase = await getFromDb(caseKey, 0);
+    const currentCase = await getFromDbStrict(caseKey, 0);
     const nextCase = currentCase + 1;
     await setInDb(caseKey, nextCase);
     return nextCase;
@@ -165,7 +165,7 @@ export async function storeModerationCase({ guildId, caseId, caseData }) {
     await setInDb(caseKey, caseDataWithTimestamp);
     
     const caseListKey = `moderation_cases_list_${guildId}`;
-    const caseList = await getFromDb(caseListKey, []);
+    const caseList = await getFromDbStrict(caseListKey, []);
     caseList.push(caseDataWithTimestamp);
     
     if (caseList.length > 1000) {

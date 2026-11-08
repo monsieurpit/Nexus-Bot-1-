@@ -107,3 +107,24 @@ test('refundShopPurchase credits the price back', async () => {
   await economy.refundShopPurchase(G, 'r', 90);
   assert.equal((await economy.getUserBalance(G, 'r')).coins, 100);
 });
+
+test('warnings: a failed read refuses to add instead of wiping the history', async () => {
+  const { WarningService } = await import('../../src/services/warningService.js');
+  const { flags } = installStore();
+  await WarningService.addWarning({ guildId: G, userId: 'w', moderatorId: 'm', reason: 'one' });
+  flags.failReads = true;
+  const res = await WarningService.addWarning({ guildId: G, userId: 'w', moderatorId: 'm', reason: 'two' });
+  flags.failReads = false;
+  assert.equal(res.success, false);
+  const stored = await db.get(`moderation:warnings:${G}:w`);
+  assert.equal(stored.length, 1);
+});
+
+test('welcome config: update throws when the save fails instead of reporting success', async () => {
+  const { updateWelcomeConfig, saveWelcomeConfig } = await import('../../src/utils/database.js');
+  const { flags } = installStore();
+  const client = { db };
+  await saveWelcomeConfig(client, G, { welcomeMessage: 'hi' });
+  flags.failWritesFor = 'welcome';
+  await assert.rejects(() => updateWelcomeConfig(client, G, { welcomeMessage: 'changed' }));
+});

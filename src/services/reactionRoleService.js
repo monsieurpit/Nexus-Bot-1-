@@ -139,7 +139,9 @@ export async function getReactionRoleMessage(client, guildId, messageId) {
         validateMessageId(messageId);
         
         const key = `reaction_roles:${guildId}:${messageId}`;
-        const data = await client.db.get(key);
+        // Strict: add/remove/setChannel save this object back; a failed read must not look like
+        // "no reaction roles yet" (that wiped every role on the panel).
+        const data = typeof client.db.getStrict === 'function' ? await client.db.getStrict(key) : await client.db.get(key);
         return data || null;
     } catch (error) {
         if (error.name === 'NexusBotError') {

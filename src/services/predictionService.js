@@ -90,7 +90,7 @@ export async function capturePrediction(message, client) {
   const awayScore = isHome ? score.b : score.a;
 
   await withLock(predictionsKey(message.guild.id, match.id), async () => {
-    const stored = (await db.get(predictionsKey(message.guild.id, match.id))) || { entries: {} };
+    const stored = (await db.getStrict(predictionsKey(message.guild.id, match.id))) || { entries: {} };
     const isEdit = Boolean(stored.entries[message.author.id]);
     stored.entries[message.author.id] = {
       userId: message.author.id,
@@ -140,7 +140,7 @@ export async function resolvePredictions(client, guildId, matchId, finalHomeScor
   });
 
   await withLock(leaderboardKey(guildId), async () => {
-    const board = (await db.get(leaderboardKey(guildId))) || { users: {} };
+    const board = (await db.getStrict(leaderboardKey(guildId))) || { users: {} };
     for (const r of results) {
       const entry = board.users[r.userId] || {
         userId: r.userId,

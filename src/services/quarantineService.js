@@ -2,7 +2,7 @@ import {
   EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags, PermissionFlagsBits
 } from 'discord.js';
 import { logger } from '../utils/logger.js';
-import { getFromDb, setInDb, deleteFromDb } from '../utils/database.js';
+import { getFromDb, setInDb, deleteFromDb, getFromDbStrict } from '../utils/database.js';
 import { getColor } from '../config/bot.js';
 import { sanitizeMarkdown } from '../utils/sanitization.js';
 import { Mutex } from '../utils/mutex.js';
@@ -166,7 +166,7 @@ export class QuarantineService {
         // Serializes this user's own quarantine processing against any OTHER triggerQuarantine
         // call for them that's in flight at the same time (see activeQuarantineKey's comment).
         await Mutex.runExclusive(`quarantine-user:${guild.id}:${suspect.id}`, async () => {
-          const existingQuarantineId = await getFromDb(activeQuarantineKey(guild.id, suspect.id), null);
+          const existingQuarantineId = await getFromDbStrict(activeQuarantineKey(guild.id, suspect.id), null);
           if (existingQuarantineId) {
             logger.info(`Skipping duplicate quarantine for ${suspect.id} — already open under ${existingQuarantineId}`);
             return;
@@ -396,7 +396,7 @@ export class QuarantineService {
     // already-written status and correctly throws 'Quarantine already resolved' instead of racing it.
     return await Mutex.runExclusive(dbKey, async () => {
       try {
-        const quarantineData = await getFromDb(dbKey, null);
+        const quarantineData = await getFromDbStrict(dbKey, null);
         if (!quarantineData) {
           throw new Error('Quarantine record not found');
         }
@@ -453,7 +453,7 @@ export class QuarantineService {
     // Same Mutex, same key, same reasoning as banAll above — see its comment.
     return await Mutex.runExclusive(dbKey, async () => {
     try {
-      const quarantineData = await getFromDb(dbKey, null);
+      const quarantineData = await getFromDbStrict(dbKey, null);
       if (!quarantineData) {
         throw new Error('Quarantine record not found');
       }
@@ -557,7 +557,7 @@ export class QuarantineService {
   static async appendToQuarantineList(client, guildId, quarantineId) {
     try {
       const listKey = `${QUARANTINE_DB_PREFIX}:list:${guildId}`;
-      const list = await getFromDb(listKey, []);
+      const list = await getFromDbStrict(listKey, []);
       list.push(quarantineId);
       if (list.length > 100) {
         list.splice(0, list.length - 100);

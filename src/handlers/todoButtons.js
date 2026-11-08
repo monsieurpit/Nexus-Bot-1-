@@ -1,6 +1,6 @@
 import { ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags } from 'discord.js';
 import { errorEmbed, successEmbed } from '../utils/embeds.js';
-import { getFromDb, setInDb } from '../utils/database.js';
+import { getFromDb, setInDb, getFromDbStrict } from '../utils/database.js';
 import { checkRateLimit } from '../utils/rateLimiter.js';
 import { logger } from '../utils/logger.js';
 
@@ -240,7 +240,7 @@ const sharedTodoAddModalHandler = {
       }
 
       const listKey = `shared_todo_${listId}`;
-      let listData = await getFromDb(listKey, null);
+      let listData = await getFromDbStrict(listKey, null);
       
       if (!listData) {
         return interaction.reply({
@@ -319,7 +319,7 @@ const sharedTodoCompleteModalHandler = {
       }
 
       const listKey = `shared_todo_${listId}`;
-      let listData = await getFromDb(listKey, null);
+      let listData = await getFromDbStrict(listKey, null);
       
       if (!listData) {
         return interaction.reply({
@@ -408,7 +408,7 @@ const sharedTodoRemoveModalHandler = {
       }
 
       const listKey = `shared_todo_${listId}`;
-      const listData = await getFromDb(listKey, null);
+      const listData = await getFromDbStrict(listKey, null);
 
       if (!listData) {
         return interaction.reply({

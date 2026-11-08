@@ -1,4 +1,4 @@
-import { getFromDb, setInDb } from '../utils/database.js';
+import { getFromDb, setInDb, getFromDbStrict } from '../utils/database.js';
 import { logger } from '../utils/logger.js';
 import { Mutex } from '../utils/mutex.js';
 
@@ -32,7 +32,7 @@ export class WarningService {
       // guildId:userId key, so a second concurrent call now waits for the first to finish instead of
       // racing it.
       return await Mutex.runExclusive(key, async () => {
-        const warnings = await getFromDb(key, []);
+        const warnings = await getFromDbStrict(key, []);
 
         if (!Array.isArray(warnings)) {
           logger.warn(`Warnings for ${userId} in ${guildId} corrupted, resetting`);
@@ -52,7 +52,7 @@ export class WarningService {
 
         warnings.push(warning);
 
-        await setInDb(key, warnings);
+        if (!(await setInDb(key, warnings))) return { success: false, error: 'Database write failed' };
 
         logger.info(`Warning added: ${userId} in ${guildId} by ${moderatorId}`);
 
@@ -110,7 +110,7 @@ export class WarningService {
   static async removeWarning(guildId, userId, warningId) {
     try {
       const key = `moderation:warnings:${guildId}:${userId}`;
-      const warnings = await getFromDb(key, []);
+      const warnings = await getFromDbStrict(key, []);
       
       const index = warnings.findIndex(w => w.id === warningId);
       if (index === -1) {
@@ -137,7 +137,7 @@ export class WarningService {
   static async clearWarnings(guildId, userId) {
     try {
       const key = `moderation:warnings:${guildId}:${userId}`;
-      const warnings = await getFromDb(key, []);
+      const warnings = await getFromDbStrict(key, []);
       const count = warnings.length;
 
       await setInDb(key, []);

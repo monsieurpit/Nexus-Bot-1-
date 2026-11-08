@@ -1,4 +1,4 @@
-import { getFromDb, setInDb, db } from '../utils/database.js';
+import { getFromDb, setInDb, db, getFromDbStrict } from '../utils/database.js';
 import { logger } from '../utils/logger.js';
 
 /**
@@ -26,7 +26,7 @@ function qScoreKey(guildId, userId) {
 export async function incrementQScore(guildId, userId) {
     try {
         const key = qScoreKey(guildId, userId);
-        const current = await getFromDb(key, 0);
+        const current = await getFromDbStrict(key, 0);
         const next = (typeof current === 'number' ? current : 0) + 1;
         await setInDb(key, next);
         return next;

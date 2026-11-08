@@ -7,7 +7,7 @@ import {
 import { createEmbed } from '../../utils/embeds.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { logger } from '../../utils/logger.js';
-import { getFromDb, setInDb } from '../../utils/database.js';
+import { getFromDb, setInDb, getFromDbStrict } from '../../utils/database.js';
 
 export default {
     data: new SlashCommandBuilder()
@@ -45,7 +45,7 @@ export default {
 
         // Save the milestone channel to the database
         const configKey = `milestones:${guildId}:config`;
-        const milestoneConfig = await getFromDb(configKey, { enabled: true, channelId: null });
+        const milestoneConfig = await getFromDbStrict(configKey, { enabled: true, channelId: null });
         milestoneConfig.channelId = channel.id;
         milestoneConfig.enabled = true;
         milestoneConfig.lastMilestone = milestoneConfig.lastMilestone || 0;

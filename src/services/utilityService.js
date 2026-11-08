@@ -19,7 +19,7 @@
 
 
 import { logger } from '../utils/logger.js';
-import { getFromDb, setInDb, deleteFromDb } from '../utils/database.js';
+import { getFromDb, setInDb, deleteFromDb, getFromDbStrict } from '../utils/database.js';
 import { createError, ErrorTypes } from '../utils/errorHandler.js';
 
 const REPORT_DUPLICATE_WINDOW = 60 * 60 * 1000; 
@@ -198,7 +198,7 @@ class UtilityService {
 
         
         const reportsKey = `reports:${guildId}:${reportedUserId}`;
-        const recentReports = await getFromDb(reportsKey, []);
+        const recentReports = await getFromDbStrict(reportsKey, []);
         recentReports.push({
             reportingUserId,
             timestamp: Date.now(),
@@ -448,7 +448,7 @@ class UtilityService {
 
         
         const todoKey = `todo:${userId}`;
-        const todoList = await getFromDb(todoKey, { tasks: [], nextId: 1 });
+        const todoList = await getFromDbStrict(todoKey, { tasks: [], nextId: 1 });
 
         
         if (todoList.tasks?.length >= TODO_MAX_TASKS) {
@@ -498,7 +498,7 @@ class UtilityService {
         logger.debug(`[UTILITY_SERVICE] Completing todo task`, { userId, taskId });
 
         const todoKey = `todo:${userId}`;
-        const todoList = await getFromDb(todoKey, { tasks: [] });
+        const todoList = await getFromDbStrict(todoKey, { tasks: [] });
 
         const task = todoList.tasks?.find(t => t.id === taskId);
         if (!task) {
@@ -534,7 +534,7 @@ class UtilityService {
         logger.debug(`[UTILITY_SERVICE] Removing todo task`, { userId, taskId });
 
         const todoKey = `todo:${userId}`;
-        const todoList = await getFromDb(todoKey, { tasks: [] });
+        const todoList = await getFromDbStrict(todoKey, { tasks: [] });
 
         const initialLength = todoList.tasks?.length || 0;
         todoList.tasks = todoList.tasks?.filter(t => t.id !== taskId) || [];
@@ -621,7 +621,7 @@ class UtilityService {
 
         
         const userListsKey = `user_shared_lists:${userId}`;
-        const userLists = await getFromDb(userListsKey, []);
+        const userLists = await getFromDbStrict(userListsKey, []);
         if (!userLists.includes(listId)) {
             userLists.push(listId);
             await setInDb(userListsKey, userLists);
@@ -651,7 +651,7 @@ class UtilityService {
         });
 
         const listKey = `shared_todo:${listId}`;
-        const list = await getFromDb(listKey, null);
+        const list = await getFromDbStrict(listKey, null);
 
         if (!list) {
             throw createError(
@@ -692,7 +692,7 @@ class UtilityService {
 
         
         const memberListsKey = `user_shared_lists:${memberId}`;
-        const memberLists = await getFromDb(memberListsKey, []);
+        const memberLists = await getFromDbStrict(memberListsKey, []);
         if (!memberLists.includes(listId)) {
             memberLists.push(listId);
             await setInDb(memberListsKey, memberLists);

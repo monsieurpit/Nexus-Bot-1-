@@ -326,6 +326,16 @@ class DatabaseWrapper {
 
 export const db = new DatabaseWrapper();
 
+// Read used by read-modify-write helpers: a backend failure throws (DatabaseReadError) instead of
+// looking like "nothing stored yet", which would make the following save erase real data.
+async function readKey(client, key, defaultValue, strict) {
+    if (strict && typeof client?.db?.getStrict === 'function') {
+        return client.db.getStrict(key, defaultValue);
+    }
+    return client.db.get(key, defaultValue);
+}
+
+
 export async function initializeDatabase() {
     try {
         logger.info("Initializing Database (Firestore primary > PostgreSQL fallback > in-memory last resort)...");
@@ -351,6 +361,15 @@ export async function getFromDb(key, defaultValue = null) {
         logger.error(`Error getting value for key ${key}:`, error);
         return defaultValue;
     }
+}
+
+/**
+ * getFromDb() for read-modify-write code: a failed read THROWS instead of returning the default,
+ * so the caller's save can't overwrite stored data with an empty list/counter.
+ */
+export async function getFromDbStrict(key, defaultValue = null) {
+    const value = await db.getStrict(key);
+    return value === null || value === undefined ? defaultValue : value;
 }
 
 export async function setInDb(key, value, ttl = null) {
@@ -386,7 +405,7 @@ export async function insertVerificationAudit(record) {
         }
 
         const key = `verification:audit:${record.guildId}`;
-        const existing = await getFromDb(key, []);
+        const existing = await readKey({ db }, key, [], true);
         const auditEntries = Array.isArray(existing) ? existing : [];
         const maxInMemoryAuditEntries = BotConfig?.verification?.maxInMemoryAuditEntries ?? 1000;
 
@@ -539,7 +558,7 @@ export const getColor = (path, fallback = "#000000") => {
  * @param {string} guildId - Guild ID
  * @returns {Promise<Object>} Object mapping message IDs to giveaway data
  */
-export async function getGuildGiveaways(client, guildId) {
+export async function getGuildGiveaways(client, guildId, { strict = false } = {}) {
     const key = giveawayKey(guildId);
     try {
         if (!client.db || typeof client.db.get !== "function") {
@@ -547,9 +566,10 @@ export async function getGuildGiveaways(client, guildId) {
             return {};
         }
 
-        const giveaways = await client.db.get(key, {});
+        const giveaways = await readKey(client, key, {}, strict);
         return unwrapReplitData(giveaways) || {};
     } catch (error) {
+        if (strict) throw error;
         logger.error(`Error getting giveaways for guild ${guildId}:`, error);
         return {};
     }
@@ -570,7 +590,7 @@ export async function saveGiveaway(client, guildId, giveawayData) {
         }
 
         const key = giveawayKey(guildId);
-        const giveaways = await getGuildGiveaways(client, guildId);
+        const giveaways = await getGuildGiveaways(client, guildId, { strict: true });
         
         giveaways[giveawayData.messageId] = giveawayData;
         
@@ -592,7 +612,7 @@ export async function saveGiveaway(client, guildId, giveawayData) {
 export async function deleteGiveaway(client, guildId, messageId) {
     try {
         const key = giveawayKey(guildId);
-        const giveaways = await getGuildGiveaways(client, guildId);
+        const giveaways = await getGuildGiveaways(client, guildId, { strict: true });
         
         if (giveaways[messageId]) {
             delete giveaways[messageId];
@@ -947,7 +967,7 @@ function normalizeWelcomeConfig(raw = {}) {
 
 
 
-export async function getWelcomeConfig(client, guildId) {
+export async function getWelcomeConfig(client, guildId, { strict = false } = {}) {
     if (!client.db) {
         logger.warn('Database not available for getWelcomeConfig');
         return normalizeWelcomeConfig();
@@ -955,10 +975,11 @@ export async function getWelcomeConfig(client, guildId) {
     
     const key = getWelcomeConfigKey(guildId);
     try {
-        const config = await client.db.get(key, {});
+        const config = await readKey(client, key, {}, strict);
         const unwrapped = unwrapReplitData(config);
         return normalizeWelcomeConfig(unwrapped);
     } catch (error) {
+        if (strict) throw error;
         logger.error(`Error getting welcome config for guild ${guildId}:`, error);
         return normalizeWelcomeConfig();
     }
@@ -974,7 +995,7 @@ export async function getWelcomeConfig(client, guildId) {
 export async function saveWelcomeConfig(client, guildId, config) {
     const key = getWelcomeConfigKey(guildId);
     try {
-        const existingConfig = await getWelcomeConfig(client, guildId);
+        const existingConfig = await getWelcomeConfig(client, guildId, { strict: true });
         const mergedConfig = { ...existingConfig, ...config };
         
         await client.db.set(key, mergedConfig);
@@ -994,10 +1015,14 @@ export async function saveWelcomeConfig(client, guildId, config) {
 
 export async function updateWelcomeConfig(client, guildId, updates) {
     try {
-        const currentConfig = await getWelcomeConfig(client, guildId);
+        const currentConfig = await getWelcomeConfig(client, guildId, { strict: true });
         const updatedConfig = { ...currentConfig, ...updates };
         
-        await saveWelcomeConfig(client, guildId, updatedConfig);
+        // saveWelcomeConfig reports failure with `false`; this used to return the "updated"
+        // config regardless, so callers announced a change that was never saved.
+        if (!(await saveWelcomeConfig(client, guildId, updatedConfig))) {
+            throw new DatabaseWriteError(getWelcomeConfigKey(guildId));
+        }
         return updatedConfig;
     } catch (error) {
         logger.error(`Error updating welcome config for guild ${guildId}:`, error);
@@ -1320,7 +1345,7 @@ export function getApplicationKey(guildId, applicationId) {
 
 
 
-export async function getApplicationSettings(client, guildId) {
+export async function getApplicationSettings(client, guildId, { strict = false } = {}) {
     if (!client.db) {
         logger.warn('Database not available for getApplicationSettings');
         return {
@@ -1337,7 +1362,7 @@ export async function getApplicationSettings(client, guildId) {
     
     const key = getApplicationSettingsKey(guildId);
     try {
-        const settings = await client.db.get(key, {});
+        const settings = await readKey(client, key, {}, strict);
         const unwrapped = unwrapReplitData(settings);
         
         const defaultSettings = {
@@ -1369,6 +1394,7 @@ cooldown: 7,
         
         return { ...defaultSettings, ...unwrapped };
     } catch (error) {
+        if (strict) throw error;
         logger.error(`Error getting application settings for guild ${guildId}:`, error);
         return {
             enabled: false,
@@ -1446,7 +1472,7 @@ export async function deleteApplication(client, guildId, applicationId, userIdHi
 
         if (userId) {
             const userKey = getUserApplicationsKey(guildId, userId);
-            const userApplications = await client.db.get(userKey, []);
+            const userApplications = await readKey(client, userKey, [], true);
             const unwrapped = unwrapReplitData(userApplications);
             const ids = Array.isArray(unwrapped) ? unwrapped : [];
             const filtered = ids.filter(id => id !== applicationId);
@@ -1516,7 +1542,7 @@ export async function cleanupExpiredApplications(client, guildId) {
 export async function saveApplicationSettings(client, guildId, settings) {
     const key = getApplicationSettingsKey(guildId);
     try {
-        const existingSettings = await getApplicationSettings(client, guildId);
+        const existingSettings = await getApplicationSettings(client, guildId, { strict: true });
         const mergedSettings = { ...existingSettings, ...settings };
         
         await client.db.set(key, mergedSettings);
@@ -1533,16 +1559,17 @@ function getApplicationRoleSettingsKey(guildId, roleId) {
     return `guild:${guildId}:applications:role:${roleId}:settings`;
 }
 
-export async function getApplicationRoleSettings(client, guildId, roleId) {
+export async function getApplicationRoleSettings(client, guildId, roleId, { strict = false } = {}) {
     try {
         if (!client.db || typeof client.db.get !== "function") {
             return { questions: null, logChannelId: null };
         }
 
         const key = getApplicationRoleSettingsKey(guildId, roleId);
-        const settings = await client.db.get(key, {});
+        const settings = await readKey(client, key, {}, strict);
         return unwrapReplitData(settings) || { questions: null, logChannelId: null };
     } catch (error) {
+        if (strict) throw error;
         logger.error(`Error getting application role settings for ${guildId}:${roleId}:`, error);
         return { questions: null, logChannelId: null };
     }
@@ -1611,7 +1638,7 @@ status: 'pending',
         await client.db.set(key, newApplication);
         
         const userKey = getUserApplicationsKey(guildId, userId);
-        const userApplications = await client.db.get(userKey, []);
+        const userApplications = await readKey(client, userKey, [], true);
         const unwrappedApplications = unwrapReplitData(userApplications);
         
         const applicationsArray = Array.isArray(unwrappedApplications) ? unwrappedApplications : [];
@@ -1636,13 +1663,14 @@ status: 'pending',
 
 
 
-export async function getApplication(client, guildId, applicationId) {
+export async function getApplication(client, guildId, applicationId, { strict = false } = {}) {
     const key = getApplicationKey(guildId, applicationId);
     try {
         await cleanupExpiredApplications(client, guildId);
-        const application = await client.db.get(key, null);
+        const application = await readKey(client, key, null, strict);
         return unwrapReplitData(application);
     } catch (error) {
+        if (strict) throw error;
         logger.error(`Error getting application ${applicationId} in guild ${guildId}:`, error);
         return null;
     }
@@ -1659,7 +1687,7 @@ export async function getApplication(client, guildId, applicationId) {
 export async function updateApplication(client, guildId, applicationId, updates) {
     const key = getApplicationKey(guildId, applicationId);
     try {
-        const existingApplication = await getApplication(client, guildId, applicationId);
+        const existingApplication = await getApplication(client, guildId, applicationId, { strict: true });
         if (!existingApplication) {
             throw new Error(`Application ${applicationId} not found`);
         }
@@ -1812,10 +1840,10 @@ export function getUserModlogKey(guildId, userId) {
 
 
 
-export async function getModlogSettings(client, guildId) {
+export async function getModlogSettings(client, guildId, { strict = false } = {}) {
     const key = getModlogSettingsKey(guildId);
     try {
-        const settings = await client.db.get(key, {});
+        const settings = await readKey(client, key, {}, strict);
         const unwrapped = unwrapReplitData(settings);
         
         const defaultSettings = {
@@ -1890,6 +1918,7 @@ export async function getModlogSettings(client, guildId) {
         
         return { ...defaultSettings, ...unwrapped };
     } catch (error) {
+        if (strict) throw error;
         logger.error(`Error getting modlog settings for guild ${guildId}:`, error);
         return {
             enabled: false,
@@ -1935,7 +1964,7 @@ export async function getModlogSettings(client, guildId) {
 export async function saveModlogSettings(client, guildId, settings) {
     const key = getModlogSettingsKey(guildId);
     try {
-        const existingSettings = await getModlogSettings(client, guildId);
+        const existingSettings = await getModlogSettings(client, guildId, { strict: true });
         const mergedSettings = { ...existingSettings, ...settings };
         
         await client.db.set(key, mergedSettings);
@@ -1968,7 +1997,7 @@ export async function createModlogEntry(client, entry) {
         await client.db.set(key, newEntry);
         
         const userKey = getUserModlogKey(guildId, userId);
-        const userEntries = await client.db.get(userKey, []);
+        const userEntries = await readKey(client, userKey, [], true);
         
         if (!userEntries.includes(caseId)) {
             userEntries.push(caseId);
@@ -1989,12 +2018,13 @@ export async function createModlogEntry(client, entry) {
 
 
 
-export async function getModlogEntry(client, guildId, caseId) {
+export async function getModlogEntry(client, guildId, caseId, { strict = false } = {}) {
     const key = getModlogEntryKey(guildId, caseId);
     try {
-        const entry = await client.db.get(key, null);
+        const entry = await readKey(client, key, null, strict);
         return unwrapReplitData(entry);
     } catch (error) {
+        if (strict) throw error;
         logger.error(`Error getting modlog entry ${caseId} in guild ${guildId}:`, error);
         return null;
     }
@@ -2011,7 +2041,7 @@ export async function getModlogEntry(client, guildId, caseId) {
 export async function updateModlogEntry(client, guildId, caseId, updates) {
     const key = getModlogEntryKey(guildId, caseId);
     try {
-        const existingEntry = await getModlogEntry(client, guildId, caseId);
+        const existingEntry = await getModlogEntry(client, guildId, caseId, { strict: true });
         if (!existingEntry) {
             throw new Error(`Modlog entry ${caseId} not found`);
         }

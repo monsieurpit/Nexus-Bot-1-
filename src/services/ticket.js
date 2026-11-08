@@ -2183,7 +2183,7 @@ export async function autoCloseInactiveTickets(client, guild, thresholdHours = 7
       if (key.includes(':counter')) continue;
 
       try {
-        const ticketData = await db.get(key);
+        const ticketData = await db.getStrict(key);
         if (!ticketData || ticketData.status !== 'open') continue;
 
         const lastActivity = ticketData.lastActivityAt
