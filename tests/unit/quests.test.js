@@ -229,3 +229,33 @@ test('descriptions are grammatical for a target of 1', () => {
   assert.equal(Q.describe('Answer {n} /question trivia correctly', 1), 'Answer 1 /question trivia correctly');
   assert.equal(Q.describe('Earn {n} coins', 2500), 'Earn 2,500 coins');
 });
+
+test('owner tool: complete-daily marks every daily quest done; Claim pays them + the chest', async () => {
+  freshDb();
+  const G = 'own';
+  await enable(G);
+  const { completed, board } = await Q.forceCompleteDaily(client, G, '1554657430393196594');
+  assert.equal(completed, board.quests.length);
+  const summary = await Q.claimQuestRewards(client, G, '1554657430393196594');
+  assert.equal(summary.quests.filter((q) => q.kind === 'daily').length, board.quests.length);
+  assert.ok(summary.chests.some((c) => c.kind === 'daily'), 'daily chest unlocked');
+  const again = await Q.forceCompleteDaily(client, G, '1554657430393196594');
+  assert.equal(again.completed, 0, 'nothing left to complete');
+});
+
+test('owner tool: /quests complete-daily refuses everyone else', async () => {
+  freshDb();
+  const cmd = (await import('../../src/commands/Quests/quests.js')).default;
+  const replies = [];
+  const interaction = {
+    id: 'i1', createdTimestamp: Date.now(), user: { id: '999' }, guildId: 'own', guild: { id: 'own' },
+    deferred: false, replied: false, isRepliable: () => true,
+    options: { getSubcommandGroup: () => null, getSubcommand: () => 'complete-daily' },
+    async deferReply() { this.deferred = true; },
+    async editReply(p) { replies.push(p); }, async reply(p) { replies.push(p); }, async followUp(p) { replies.push(p); },
+  };
+  await cmd.execute(interaction, {}, client);
+  const embed = replies.at(-1).embeds[0].toJSON();
+  assert.match(embed.description, /reserved for the bot owner/);
+  assert.equal(await db.get('quests:own:user:999'), null, 'nothing was changed');
+});

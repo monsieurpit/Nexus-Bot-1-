@@ -496,6 +496,31 @@ export async function claimQuestRewards(client, guildId, userId, now = new Date(
   });
 }
 
+/**
+ * Marks every quest on today's DAILY board as complete for one member (owner tool, see
+ * /quests complete-daily). Rewards are then collected with the normal Claim button, so coins,
+ * stars, tiers and the leaderboard all go through the usual path. Returns { completed, board }.
+ */
+export async function forceCompleteDaily(client, guildId, userId, now = new Date()) {
+  await flushQuestProgress({ only: `${guildId}:${userId}` });
+  const keys = periodKeys(now);
+  const [settings, features, daily] = await Promise.all([
+    getQuestSettings(guildId), getFeatures(client, guildId), getBoard(client, guildId, 'daily', now),
+  ]);
+  return Mutex.runExclusive(userKey(guildId, userId), async () => {
+    const state = await loadState(guildId, userId, keys);
+    const auto = await rollState(client, guildId, userId, state, keys, settings, features);
+    let completed = 0;
+    for (const q of daily.quests) {
+      if (isComplete(state.daily, q)) continue;
+      state.daily.completedAt[q.id] = now.getTime();
+      completed++;
+    }
+    if (completed || auto) await saveStateOrRefund(guildId, userId, state, auto);
+    return { completed, board: daily };
+  });
+}
+
 // ─── Flush: write buffered progress and detect newly completed quests ──────────
 let flushing = null;
 
