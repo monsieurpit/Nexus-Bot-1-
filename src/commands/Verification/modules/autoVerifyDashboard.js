@@ -14,7 +14,7 @@ import {
     EmbedBuilder,
 } from 'discord.js';
 import { InteractionHelper } from '../../../utils/interactionHelper.js';
-import { createEmbed, successEmbed, errorEmbed } from '../../../utils/embeds.js';
+import { createEmbed, successEmbed, errorEmbed, dashboardEmbed, channelOr, roleOr, onOff, NOT_SET } from '../../../utils/embeds.js';
 import { logger } from '../../../utils/logger.js';
 import { NexusBotError, ErrorTypes } from '../../../utils/errorHandler.js';
 import { getGuildConfig, setGuildConfig } from '../../../services/guildConfig.js';
@@ -31,40 +31,27 @@ const defaultAccountAgeDays = autoVerifyDefaults.defaultAccountAgeDays ?? 7;
 
 function buildDashboardEmbed(cfg, guild, conflictSummary = '') {
     const autoVerify = cfg.verification?.autoVerify;
-    const autoVerifyRole = autoVerify?.roleId ? guild.roles.cache.get(autoVerify.roleId) : null;
-    
-    let criteriaDescription = "`Not configured`";
-    if (autoVerify?.criteria) {
-        switch (autoVerify.criteria) {
-            case "account_age":
-                criteriaDescription = `\`Account Age\` - \`${autoVerify.accountAgeDays} days\``;
-                break;
-            case "none":
-                criteriaDescription = `\`No Criteria\``;
-                break;
-        }
-    }
+    const rule = autoVerify?.criteria === 'account_age'
+        ? `Accounts older than **${autoVerify.accountAgeDays} day${autoVerify.accountAgeDays === 1 ? '' : 's'}** are verified on join; newer ones wait for staff.`
+        : autoVerify?.criteria === 'none'
+            ? 'Everyone is verified the moment they join.'
+            : NOT_SET;
+    const fields = [
+        { name: '🏷️ Role given', value: roleOr(autoVerify?.roleId), inline: true },
+        { name: '🎯 Rule', value: rule, inline: false },
+    ];
+    if (conflictSummary) fields.push({ name: '⚠️ Conflicts to fix', value: conflictSummary, inline: false });
 
-    const embed = createEmbed({ timestamp: false })
-        .setTitle('🤖 Auto-Verification Dashboard')
-        .setDescription(`Manage auto-verification settings for **${guild.name}**.\nSelect an option below to modify a setting.`)
-        .setColor(getColor('info'))
-        .addFields(
-            { name: '⚙️ System Status', value: autoVerify?.enabled ? '✅ Enabled' : '❌ Disabled', inline: true },
-            { name: '🏷️ Target Role', value: autoVerifyRole ? autoVerifyRole.toString() : '`Not set`', inline: true },
-            { name: '🎯 Criteria', value: criteriaDescription, inline: true },
-            { name: '📅 Account Age', value: autoVerify?.accountAgeDays ? `\`${autoVerify.accountAgeDays}\` days` : '`N/A`', inline: true },
-            { name: '\u200B', value: '\u200B', inline: true },
-            { name: '\u200B', value: '\u200B', inline: true },
-        );
-
-    if (conflictSummary) {
-        embed.addFields({ name: '⚠️ Setup Conflicts', value: conflictSummary, inline: false });
-    }
-
-    return embed
-        .setFooter({ text: 'Dashboard closes after 10 minutes of inactivity' })
-        .setTimestamp();
+    return dashboardEmbed({
+        guild,
+        feature: 'Auto-verification',
+        icon: '🤖',
+        color: 'success',
+        enabled: Boolean(autoVerify?.enabled),
+        summary: 'Verifies new members automatically when they join.',
+        fields,
+        hint: 'Pick a setting in the menu below · closes after 10 minutes of inactivity',
+    });
 }
 
 function buildSelectMenu(guildId) {

@@ -17,7 +17,7 @@ import {
     EmbedBuilder,
 } from 'discord.js';
 import { InteractionHelper } from '../../../utils/interactionHelper.js';
-import { createEmbed, successEmbed, errorEmbed } from '../../../utils/embeds.js';
+import { createEmbed, successEmbed, errorEmbed, dashboardEmbed, channelOr, roleOr, rolesOr, onOff, NOT_SET, bulletList } from '../../../utils/embeds.js';
 import { logger } from '../../../utils/logger.js';
 import { NexusBotError, ErrorTypes } from '../../../utils/errorHandler.js';
 import { getLevelingConfig, saveLevelingConfig } from '../../../services/leveling.js';
@@ -26,42 +26,30 @@ import { botHasPermission } from '../../../utils/permissionGuard.js';
 // ─── Embed & Menu Builders ────────────────────────────────────────────────────
 
 function buildDashboardEmbed(cfg, guild) {
-    const channel = cfg.levelUpChannel ? `<#${cfg.levelUpChannel}>` : '`Not set`';
     const xpMin = cfg.xpRange?.min ?? cfg.xpPerMessage?.min ?? 15;
     const xpMax = cfg.xpRange?.max ?? cfg.xpPerMessage?.max ?? 25;
     const cooldown = cfg.xpCooldown ?? 60;
     const rawMsg = cfg.levelUpMessage || '{user} has leveled up to level {level}!';
-    const msgPreview = `\`${rawMsg.length > 60 ? rawMsg.substring(0, 60) + '…' : rawMsg}\``;
+    const rewards = Object.entries(cfg.roleRewards ?? {}).sort(([a], [b]) => Number(a) - Number(b));
+    const ignored = [
+        ...(cfg.ignoredChannels ?? []).map((id) => `<#${id}>`),
+        ...(cfg.ignoredRoles ?? []).map((id) => `<@&${id}>`),
+    ];
 
-    const rewards = cfg.roleRewards ?? {};
-    const rewardEntries = Object.entries(rewards).sort(([a], [b]) => Number(a) - Number(b));
-    const rewardsValue = rewardEntries.length > 0
-        ? rewardEntries.map(([lvl, roleId]) => `Level **${lvl}** → <@&${roleId}>`).join('\n')
-        : '`None configured`';
-
-    const ignoredChannels = cfg.ignoredChannels ?? [];
-    const ignoredRoles = cfg.ignoredRoles ?? [];
-    const ignoredChValue = ignoredChannels.length > 0 ? ignoredChannels.map(id => `<#${id}>`).join(', ') : '`None`';
-    const ignoredRoValue = ignoredRoles.length > 0 ? ignoredRoles.map(id => `<@&${id}>`).join(', ') : '`None`';
-
-    return createEmbed({ timestamp: false })
-        .setTitle('📊 Leveling System Dashboard')
-        .setDescription(`Manage leveling settings for **${guild.name}**.\nSelect an option below to modify a setting.`)
-        .setColor(getColor('info'))
-        .addFields(
-            { name: '📢 Level-up Channel', value: channel, inline: true },
-            { name: '⚙️ System Status', value: cfg.enabled ? '✅ **Enabled**' : '❌ **Disabled**', inline: true },
-            { name: '📣 Announcements', value: cfg.announceLevelUp !== false ? '✅ **Enabled**' : '❌ **Disabled**', inline: true },
-            { name: '🎲 XP per Message', value: `\`${xpMin} – ${xpMax}\``, inline: true },
-            { name: '⏱️ XP Cooldown', value: `\`${cooldown}s\``, inline: true },
-            { name: '\u200B', value: '\u200B', inline: true },
-            { name: '💬 Level-up Message', value: msgPreview, inline: false },
-            { name: '🏆 Role Rewards', value: rewardsValue, inline: false },
-            { name: '\ud83d\udeab Ignored Channels', value: ignoredChValue, inline: true },
-            { name: '\ud83d\udeab Ignored Roles', value: ignoredRoValue, inline: true },
-        )
-        .setFooter({ text: 'Dashboard closes after 10 minutes of inactivity' })
-        .setTimestamp();
+    return dashboardEmbed({
+        guild,
+        feature: 'Leveling',
+        icon: '📈',
+        color: 'leveling',
+        enabled: Boolean(cfg.enabled),
+        summary: `Members earn **${xpMin}–${xpMax} XP** per message, at most once every **${cooldown}s**.`,
+        fields: [
+            { name: '📣 Level-up message', value: `${onOff(cfg.announceLevelUp !== false)} in ${cfg.levelUpChannel ? `<#${cfg.levelUpChannel}>` : '*the channel they chatted in*'}\n> ${rawMsg.length > 150 ? `${rawMsg.slice(0, 150)}…` : rawMsg}`, inline: false },
+            { name: `🏆 Role rewards (${rewards.length})`, value: bulletList(rewards.map(([lvl, roleId]) => `Level **${lvl}** → <@&${roleId}>`), 10), inline: true },
+            { name: `🚫 No XP in (${ignored.length})`, value: bulletList(ignored, 10), inline: true },
+        ],
+        hint: 'Pick a setting in the menu below · closes after 10 minutes of inactivity',
+    });
 }
 
 function buildSelectMenu(guildId) {

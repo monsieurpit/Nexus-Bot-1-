@@ -8,7 +8,7 @@ async function refreshDashboard(interaction, guildId) {
   const updated = await getEconomyConfig(guildId);
   updated._guildId = guildId;
   await interaction.update({
-    embeds: [buildDashboardEmbed(updated)],
+    embeds: [buildDashboardEmbed(updated, interaction.guild)],
     components: buildDashboardRows(updated, guildId),
   });
 }
@@ -262,7 +262,7 @@ async function handleEditItemPriceModal(interaction, guildId) {
 
   config._guildId = guildId;
   await interaction.update({
-    embeds: [buildDashboardEmbed(config)],
+    embeds: [buildDashboardEmbed(config, interaction.guild)],
     components: buildDashboardRows(config, guildId),
   });
 }

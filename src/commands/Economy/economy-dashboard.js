@@ -1,109 +1,36 @@
 import { SlashCommandBuilder, PermissionFlagsBits, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
-import { createEmbed, errorEmbed } from '../../utils/embeds.js';
+import { createEmbed, errorEmbed, dashboardEmbed, roleOr, onOff, bulletList } from '../../utils/embeds.js';
 import { handleInteractionError } from '../../utils/errorHandler.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { getEconomyConfig } from '../../services/economy.js';
 
-export function buildDashboardEmbed(config) {
-  const packList = (config.packs || [])
-    .map((p, i) =>
-      `**${i + 1}. ${p.emoji} ${p.name}** — ${p.price.toLocaleString()} ${config.currencyEmoji}\n` +
-      `  *${p.description}*`
-    )
-    .join('\n') || '*No packs configured.*';
+export function buildDashboardEmbed(config, guild = null) {
+  const c = config.currencyEmoji;
+  const n = (v) => Number(v || 0).toLocaleString('en-US');
+  const packs = (config.packs || []).map((p) => `${p.emoji} **${p.name}** — ${n(p.price)} ${c}`);
+  const shop = (config.shopItems || []).map((item) => `${item.emoji || (item.type === 'role' ? '🏷️' : '✨')} **${item.name}** — ${n(item.price)} ${c}${item.type === 'role' ? ' · role' : ''}`);
+  const workHrs = Math.round((config.workCooldown || 14400000) / 3600000 * 10) / 10;
+  const robMins = Math.round((config.robCooldown || 1800000) / 60000);
+  const msgSecs = Math.round((config.messageCoinsRateLimit || 60000) / 1000);
 
-  const shopList = (config.shopItems || [])
-    .map((item, i) => {
-      const typeTag = item.type === 'role' ? '🏷️ Role' : '✨ Custom';
-      return `**${i + 1}. ${item.emoji} ${item.name}** — ${item.price.toLocaleString()} ${config.currencyEmoji} (${typeTag})`;
-    })
-    .join('\n') || '*No shop items configured.*';
-
-  const workCooldownHrs = Math.round((config.workCooldown || 14400000) / 3600000 * 10) / 10;
-  const robCooldownMins = Math.round((config.robCooldown || 1800000) / 60000);
-  const msgCooldownSecs = Math.round((config.messageCoinsRateLimit || 60000) / 1000);
-  const adminRole = config.adminNotifyRoleId ? `<@&${config.adminNotifyRoleId}>` : '*Not set*';
-
-  return createEmbed({
-    title: '⚙️ Economy Dashboard',
-    description: 'Configure the full economy system for this server.\n\u200b',
-    color: 'primary',
+  return dashboardEmbed({
+    guild,
+    feature: 'Economy',
+    icon: c || '🪙',
+    color: 'economy',
+    enabled: Boolean(config.enabled),
+    summary: `Currency: **${config.currencyName}** ${c}`,
     fields: [
-      {
-        name: '💰 Currency',
-        value:
-          `**Name:** ${config.currencyName}\n` +
-          `**Emoji:** ${config.currencyEmoji}\n` +
-          `**System:** ${config.enabled ? '✅ Enabled' : '❌ Disabled'}`,
-        inline: true,
-      },
-      {
-        name: '📅 Daily Reward',
-        value:
-          `**Base:** ${config.dailyAmount} ${config.currencyEmoji}\n` +
-          `**Streak Bonus:** +${config.dailyStreakBonus}/day\n` +
-          `**Max Bonus:** +${Math.min(30, 30) * config.dailyStreakBonus} (30 days)`,
-        inline: true,
-      },
-      {
-        name: '💬 Message Coins',
-        value:
-          `**Status:** ${config.messageCoinsEnabled ? '✅ Enabled' : '❌ Disabled'}\n` +
-          `**Per Message:** ${config.coinsPerMessage || 5} ${config.currencyEmoji}\n` +
-          `**Cooldown:** ${msgCooldownSecs}s between awards`,
-        inline: true,
-      },
-      {
-        name: '💼 Work',
-        value:
-          `**Reward:** ${config.workMin || 50}–${config.workMax || 250} ${config.currencyEmoji}\n` +
-          `**Cooldown:** ${workCooldownHrs}h`,
-        inline: true,
-      },
-      {
-        name: '🦹 Rob',
-        value:
-          `**Cooldown:** ${robCooldownMins}m\n` +
-          `**Success Rate:** ${config.robSuccessRate ?? 45}%`,
-        inline: true,
-      },
-      {
-        name: '🔔 Admin Notify Role',
-        value: adminRole,
-        inline: true,
-      },
-      {
-        name: '🎰 Jackpot Channel',
-        value: config.jackpotChannelId
-          ? `<#${config.jackpotChannelId}> (min bet: ${(config.jackpotMinBet || 100).toLocaleString()})`
-          : '*Not set — jackpots are silent*',
-        inline: true,
-      },
-      {
-        name: '\u200b',
-        value: '\u200b',
-        inline: false,
-      },
-      {
-        name: '🛍️ Shop Style',
-        value:
-          `**Title:** ${config.shopTitle || 'Server Shop'}\n` +
-          `**Color:** ${config.shopColor || '#5865F2'}\n` +
-          `**Footer:** ${config.shopFooter || '*default*'}`,
-        inline: true,
-      },
-      {
-        name: `📦 Packs (${(config.packs || []).length})`,
-        value: packList.substring(0, 500),
-        inline: false,
-      },
-      {
-        name: `🛒 Shop Items (${(config.shopItems || []).length})`,
-        value: shopList.substring(0, 500),
-        inline: false,
-      },
+      { name: '📅 Daily', value: `**${n(config.dailyAmount)}** ${c}\n+${n(config.dailyStreakBonus)}/streak day (max 30)`, inline: true },
+      { name: '💼 Work', value: `**${n(config.workMin || 50)}–${n(config.workMax || 250)}** ${c}\nevery ${workHrs}h`, inline: true },
+      { name: '💬 Chatting', value: `${onOff(config.messageCoinsEnabled)} · **${n(config.coinsPerMessage || 5)}** ${c}\nonce per ${msgSecs}s`, inline: true },
+      { name: '🦹 Rob', value: `**${config.robSuccessRate ?? 45}%** success\nevery ${robMins}m`, inline: true },
+      { name: '🎰 Jackpots', value: config.jackpotChannelId ? `<#${config.jackpotChannelId}>\nbets ≥ ${n(config.jackpotMinBet || 100)} ${c}` : '*Silent*', inline: true },
+      { name: '🔔 Shop alerts', value: roleOr(config.adminNotifyRoleId), inline: true },
+      { name: `📦 Packs (${packs.length})`, value: bulletList(packs, 8), inline: false },
+      { name: `🛒 Shop — ${config.shopTitle || 'Server Shop'} (${shop.length})`, value: bulletList(shop, 8), inline: false },
     ],
-    footer: { text: 'Use the buttons below to edit settings • Changes save immediately' },
+    hint: 'Use the buttons below · changes save immediately',
   });
 }
 
@@ -210,7 +137,7 @@ export default {
       config._guildId = guildId;
 
       await InteractionHelper.safeEditReply(interaction, {
-        embeds: [buildDashboardEmbed(config)],
+        embeds: [buildDashboardEmbed(config, interaction.guild)],
         components: buildDashboardRows(config, guildId),
       });
     } catch (error) {

@@ -26,6 +26,7 @@ import {
 } from '../../services/ticket.js';
 
 import ticketConfig from './modules/ticket_dashboard.js';
+import { buildTicketPanel } from '../../utils/panels.js';
 
 const PRIORITY_EMOJI = {
     none: '⚪', low: '🟢', medium: '🟡', high: '🔴', urgent: '🚨',
@@ -94,25 +95,11 @@ async function handleSetupOrDashboard(interaction, config, client, subcommand) {
             const maxTicketsPerUser = interaction.options.getInteger("max_tickets_per_user") || 3;
             const dmOnClose = interaction.options.getBoolean("dm_on_close") !== false;
 
-            const setupEmbed = createEmbed({
-                title: "🎫 Support Tickets",
-                description: panelMessage,
-                color: getColor('info')
-            });
-
-            const ticketButton = new ActionRowBuilder().addComponents(
-                new ButtonBuilder()
-                    .setCustomId("create_ticket")
-                    .setLabel(buttonLabel)
-                    .setStyle(ButtonStyle.Primary)
-                    .setEmoji("📩"),
-            );
+            // Shared builder: the startup embed refresh re-renders old panels with it too.
+            const panel = buildTicketPanel({ message: panelMessage, buttonLabel, guild: interaction.guild });
 
             try {
-                await panelChannel.send({
-                    embeds: [setupEmbed],
-                    components: [ticketButton],
-                });
+                const panelPost = await panelChannel.send(panel);
 
                 if (client.db && interaction.guildId) {
                     const currentConfig = existingConfig;
@@ -120,6 +107,7 @@ async function handleSetupOrDashboard(interaction, config, client, subcommand) {
                     currentConfig.ticketClosedCategoryId = closedCategoryChannel ? closedCategoryChannel.id : null;
                     currentConfig.ticketStaffRoleId = staffRole ? staffRole.id : null;
                     currentConfig.ticketPanelChannelId = panelChannel.id;
+                    currentConfig.ticketPanelMessageId = panelPost.id;
                     currentConfig.ticketPanelMessage = panelMessage;
                     currentConfig.ticketButtonLabel = buttonLabel;
                     currentConfig.maxTicketsPerUser = maxTicketsPerUser;

@@ -19,7 +19,7 @@ import {
     TextDisplayBuilder,
 } from 'discord.js';
 import { InteractionHelper } from '../../../utils/interactionHelper.js';
-import { createEmbed, successEmbed, errorEmbed } from '../../../utils/embeds.js';
+import { createEmbed, successEmbed, errorEmbed, dashboardEmbed, channelOr, roleOr, rolesOr, onOff, NOT_SET, bulletList } from '../../../utils/embeds.js';
 import { logger } from '../../../utils/logger.js';
 import { NexusBotError, ErrorTypes } from '../../../utils/errorHandler.js';
 import { safeDeferInteraction } from '../../../utils/interactionValidator.js';
@@ -38,40 +38,30 @@ import {
 // ─── Embed & Menu Builders ────────────────────────────────────────────────────
 
 function buildDashboardEmbed(settings, roles, guild) {
-    const logChannel = settings.logChannelId ? `<#${settings.logChannelId}>` : '`Not set`';
-    const managerRoleList =
-        settings.managerRoles?.length > 0
-            ? settings.managerRoles.map(id => `<@&${id}>`).join(', ')
-            : '`None configured`';
-    const roleList =
-        roles.length > 0
-            ? roles.map(r => `<@&${r.roleId}> — ${r.name}`).join('\n')
-            : '`No application roles configured`';
-    const questionCount = settings.questions?.length ?? 0;
-    const firstQ =
-        settings.questions?.[0]
-            ? `\`${settings.questions[0].length > 55 ? settings.questions[0].substring(0, 55) + '…' : settings.questions[0]}\``
-            : '`Not set`';
+    const questions = settings.questions ?? [];
+    const questionList = questions.length
+        ? questions.slice(0, 5).map((q, i) => `**${i + 1}.** ${q.length > 80 ? `${q.slice(0, 80)}…` : q}`).join('\n') +
+          (questions.length > 5 ? `\n*…and ${questions.length - 5} more*` : '')
+        : NOT_SET;
 
-    return createEmbed({ timestamp: false })
-        .setTitle('📋 Applications Dashboard')
-        .setDescription(`Manage application settings for **${guild.name}**.\nSelect an option below to modify a setting.`)
-        .setColor(getColor('info'))
-        .addFields(
-            { name: '⚙️ Application Status', value: settings.enabled ? '✅ Enabled' : '❌ Disabled', inline: true },
-            { name: '📢 Log Channel', value: logChannel, inline: true },
-            { name: '\u200B', value: '\u200B', inline: true },
-            { name: '🛡️ Manager Roles', value: managerRoleList, inline: false },
-            { name: '📝 Questions', value: `${questionCount} configured — first: ${firstQ}`, inline: false },
-            { name: '🎭 Application Roles', value: roleList, inline: false },
-            {
-                name: '🗑️ Retention',
-                value: `Pending: **${settings.pendingApplicationRetentionDays ?? 30}d** · Reviewed: **${settings.reviewedApplicationRetentionDays ?? 14}d**`,
-                inline: false,
-            },
-        )
-        .setFooter({ text: 'Dashboard closes after 15 minutes of inactivity' })
-        .setTimestamp();
+    return dashboardEmbed({
+        guild,
+        feature: 'Staff applications',
+        icon: '📋',
+        color: 'community',
+        enabled: Boolean(settings.enabled),
+        summary: settings.enabled
+            ? `Members can apply with \`/apply\` for **${roles.length}** role${roles.length === 1 ? '' : 's'}.`
+            : 'Applications are closed. Turn them on below.',
+        fields: [
+            { name: '📢 Review channel', value: channelOr(settings.logChannelId), inline: true },
+            { name: '🛡️ Reviewers', value: rolesOr(settings.managerRoles), inline: true },
+            { name: '🗑️ Kept for', value: `Pending **${settings.pendingApplicationRetentionDays ?? 30}d**\nReviewed **${settings.reviewedApplicationRetentionDays ?? 14}d**`, inline: true },
+            { name: `🎭 Open roles (${roles.length})`, value: bulletList(roles.map((r) => `<@&${r.roleId}> — ${r.name}`), 10), inline: false },
+            { name: `📝 Questions (${questions.length})`, value: questionList, inline: false },
+        ],
+        hint: 'Pick a setting in the menu below · closes after 15 minutes of inactivity',
+    });
 }
 
 function buildSelectMenu(guildId) {

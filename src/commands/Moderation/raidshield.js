@@ -1,6 +1,6 @@
 import { NexusBotError, ErrorTypes } from '../../utils/errorHandler.js';
 import { SlashCommandBuilder, PermissionFlagsBits, ChannelType, MessageFlags } from 'discord.js';
-import { errorEmbed, successEmbed, infoEmbed } from '../../utils/embeds.js';
+import { errorEmbed, successEmbed, infoEmbed, dashboardEmbed } from '../../utils/embeds.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { logger } from '../../utils/logger.js';
 import { RaidDetectionService } from '../../services/raidDetectionService.js';
@@ -189,16 +189,16 @@ export default {
         const aiConfig = await AiModerationService.getAiConfig(client, guildId);
         const notificationChannel = raidConfig.notificationChannelId
           ? `<#${raidConfig.notificationChannelId}>`
-          : 'Not set / No configurado';
+          : '*Not set*';
         const verifiedRole = raidConfig.verifiedRoleId
           ? `<@&${raidConfig.verifiedRoleId}>`
-          : 'Not set / No configurado';
+          : '*Not set*';
         const quarantineRole = raidConfig.quarantineRoleId
           ? `<@&${raidConfig.quarantineRoleId}>`
-          : 'Not set / No configurado';
+          : '*Not set*';
         const alertRole = raidConfig.alertRoleId
           ? `<@&${raidConfig.alertRoleId}>`
-          : 'Not set / No configurado';
+          : '*Not set*';
         const status = raidConfig.enabled
           ? '✅ Enabled / Activado'
           : '❌ Disabled / Desactivado';
@@ -210,12 +210,12 @@ export default {
         const aiConfidence = `${Math.round(aiConfig.confidenceThreshold * 100)}%`;
         const aiAlertCh = aiConfig.alertChannelId
           ? `<#${aiConfig.alertChannelId}>`
-          : 'Same as Raid Shield / Igual que Escudo';
+          : '*Same as RaidShield alerts*';
         const aiActions = `Scam: ${aiConfig.actions.scam}, Spam: ${aiConfig.actions.spam}, Bot: ${aiConfig.actions.bot}, Raid: ${aiConfig.actions.raid}`;
         const aiContext = aiConfig.enableContext ? 'On / Activado' : 'Off / Desactivado';
         const trustedRolesList = aiConfig.trustedRoles?.length > 0
           ? aiConfig.trustedRoles.map(id => `<@&${id}>`).join(', ')
-          : 'None / Ninguno';
+          : '*None*';
 
         // Truthful engine state from the bot's real scan calls — "enabled" alone used to look
         // fully protected even while the Nexus AI engine was offline and nothing was scanned.
@@ -228,10 +228,35 @@ export default {
               ? `🔴 Unreachable — messages are NOT being AI-scanned / Inaccesible${engine.lastError ? `\n> \`${engine.lastError.slice(0, 120)}\`` : ''}`
               : '⚪ No scan attempted since the last restart / Sin escaneos desde el reinicio';
 
-        const embed = infoEmbed(
-          `**Status:** ${status}\n\n**Notification Channel:** ${notificationChannel}\n**Verified Role:** ${verifiedRole}\n**Quarantine Role:** ${quarantineRole}\n**Alert Role:** ${alertRole}\n\n**--- AI Moderation / Moderación IA ---**\n**AI Status:** ${aiStatus}\n**AI Engine:** ${engineLine}\n**Image Scanning:** ${aiImageScan}\n**Confidence Threshold:** ${aiConfidence}\n**AI Alert Channel:** ${aiAlertCh}\n**Context Analysis:** ${aiContext}\n**Trusted Roles:** ${trustedRolesList}\n**AI Actions:** ${aiActions}`,
-          '🔒 Raid Shield Configuration / Configuración del Escudo Anti-Raid'
-        );
+        const actionName = { quarantine: 'Quarantine', kick: 'Kick', ban: 'Ban', timeout: 'Timeout', delete: 'Delete message' };
+        const embed = dashboardEmbed({
+          guild: interaction.guild,
+          feature: 'RaidShield',
+          icon: '🛡️',
+          color: 'security',
+          enabled: Boolean(raidConfig.enabled),
+          summary: raidConfig.enabled
+            ? 'Watching for join raids, cross-channel spam and nukes.'
+            : 'Raid protection is off — turn it on with `/raidshield toggle`.',
+          fields: [
+            { name: '📢 Alerts', value: `Channel: ${notificationChannel}\nPing: ${alertRole}`, inline: true },
+            { name: '🎭 Roles', value: `Verified: ${verifiedRole}\nQuarantine: ${quarantineRole}`, inline: true },
+            {
+              name: '🤖 AI moderation',
+              value: `${aiConfig.enabled ? '🟢 On' : '🔴 Off'} · engine ${engineLine}\n` +
+                `Acts at **${aiConfidence}** confidence · images ${aiConfig.scanImages ? 'scanned' : 'skipped'} · context ${aiConfig.enableContext ? 'on' : 'off'}\n` +
+                `Alerts: ${aiAlertCh}`,
+              inline: false,
+            },
+            {
+              name: '⚖️ AI actions',
+              value: ['scam', 'spam', 'bot', 'raid'].map((t) => `**${t}** → ${actionName[aiConfig.actions[t]] || aiConfig.actions[t]}`).join(' · '),
+              inline: false,
+            },
+            { name: '🤝 Trusted roles (never AI-scanned)', value: trustedRolesList, inline: false },
+          ],
+          hint: 'Change settings with the /raidshield subcommands',
+        });
 
         await InteractionHelper.universalReply(interaction, { embeds: [embed] });
         return;

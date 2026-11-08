@@ -2,6 +2,7 @@ import { Events } from "discord.js";
 import { logger, startupLog } from "../utils/logger.js";
 import { reconcileReactionRoleMessages } from "../services/reactionRoleService.js";
 import { sweepOrphanedTemporaryChannels } from "../services/joinToCreateService.js";
+import { runEmbedRefresh } from "../services/embedRefreshService.js";
 import { nexusClient, NEXUS_AI_CHAT_DISABLED } from "../services/nexusAiService.js";
 
 const PRESENCE_INTERVAL_MS = 10 * 60 * 1000;
@@ -93,6 +94,12 @@ export default {
         return null;
       });
       if (jtc) startupLog(`Join-to-create sweep: deleted ${jtc.deleted} empty, forgot ${jtc.forgotten} missing, errors ${jtc.errors}`);
+
+      // After a design update, restyle panels/giveaways/tickets that were posted with the old look
+      // (once per server per style version). Runs in the background, after startup has settled.
+      setTimeout(() => {
+        runEmbedRefresh(client).catch((err) => logger.warn("Embed refresh failed:", err?.message || err));
+      }, 20_000).unref?.();
     } catch (error) {
       logger.error("Error in ready event:", error);
     }

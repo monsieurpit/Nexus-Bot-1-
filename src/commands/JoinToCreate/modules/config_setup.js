@@ -11,7 +11,7 @@ import {
     ButtonStyle
 } from 'discord.js';
 import { InteractionHelper } from '../../../utils/interactionHelper.js';
-import { createEmbed, successEmbed, errorEmbed } from '../../../utils/embeds.js';
+import { createEmbed, successEmbed, errorEmbed, dashboardEmbed } from '../../../utils/embeds.js';
 import { logger } from '../../../utils/logger.js';
 import { NexusBotError, ErrorTypes } from '../../../utils/errorHandler.js';
 import { 
@@ -37,29 +37,27 @@ export default {
             );
         }
 
-        const embed = createEmbed({ timestamp: false })
-            .setTitle('⚙️ Join to Create Configuration')
-            .setDescription(`Configure settings for ${triggerChannel}`)
-            .setColor(getColor('info'))
-            .addFields(
-                {
-                    name: '📝 Current Channel Name Template',
-                    value: `\`${currentConfig.channelOptions?.[triggerChannel.id]?.nameTemplate || currentConfig.channelNameTemplate}\``,
-                    inline: false
-                },
-                {
-                    name: '👥 Current User Limit',
-                    value: `${currentConfig.channelOptions?.[triggerChannel.id]?.userLimit || currentConfig.userLimit === 0 ? 'No limit' : currentConfig.userLimit + ' users'}`,
-                    inline: true
-                },
-                {
-                    name: '🎵 Current Bitrate',
-                    value: `${(currentConfig.channelOptions?.[triggerChannel.id]?.bitrate || currentConfig.bitrate) / 1000} kbps`,
-                    inline: true
-                }
-            )
-            .setFooter({ text: 'Select an option to configure below' })
-            .setTimestamp();
+        const opts = currentConfig.channelOptions?.[triggerChannel.id] || {};
+        // Per-channel values win over server defaults. (The limit used to read "No limit" whenever a
+        // per-channel limit WAS set — an operator-precedence slip.)
+        const userLimit = opts.userLimit ?? currentConfig.userLimit ?? 0;
+        const bitrate = opts.bitrate || currentConfig.bitrate || 64000;
+        const template = opts.nameTemplate || currentConfig.channelNameTemplate || "{username}'s Room";
+        const embed = dashboardEmbed({
+            guild: interaction.guild,
+            feature: 'Join to Create',
+            icon: '🎙️',
+            color: 'utility',
+            enabled: true,
+            summary: `Joining ${triggerChannel} creates a private voice channel for that member.`,
+            fields: [
+                { name: '📝 Name template', value: `\`${template}\``, inline: false },
+                { name: '👥 User limit', value: userLimit > 0 ? `**${userLimit}** members` : 'No limit', inline: true },
+                { name: '🎵 Bitrate', value: `**${Math.round(bitrate / 1000)}** kbps`, inline: true },
+                { name: '🧩 Placeholders', value: '`{username}` `{displayName}` `{user_tag}` `{guildName}` `{channelName}`', inline: false },
+            ],
+            hint: 'Pick an option in the menu below',
+        });
 
         const selectMenu = new StringSelectMenuBuilder()
             .setCustomId(`jointocreate_config_${triggerChannel.id}`)

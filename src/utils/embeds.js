@@ -327,3 +327,37 @@ export function actionEmbed({ title, color = 'moderation', target = null, modera
 
 
 
+
+// ─── Settings dashboards ──────────────────────────────────────────────────────
+// One layout for every in-Discord settings panel (/ticket dashboard, /verification dashboard,
+// /level dashboard, …): server header, feature accent colour, a status line, grouped sections.
+
+export const NOT_SET = '*Not set*';
+export const channelOr = (id) => (id ? `<#${id}>` : NOT_SET);
+export const roleOr = (id) => (id ? `<@&${id}>` : NOT_SET);
+export const rolesOr = (ids) => (Array.isArray(ids) && ids.length ? ids.map((id) => `<@&${id}>`).join(' ') : NOT_SET);
+export const onOff = (value) => (value ? '🟢 On' : '🔴 Off');
+
+/**
+ * @param {object} o
+ * @param {import('discord.js').Guild} [o.guild]
+ * @param {string} o.feature      e.g. 'Tickets'
+ * @param {string} o.icon         e.g. '🎫'
+ * @param {string} [o.color]      theme colour name
+ * @param {boolean|null} [o.enabled]  null = no status line
+ * @param {string} [o.summary]    one or two lines under the status
+ * @param {Array<{name:string,value:string,inline?:boolean}>} [o.fields]
+ * @param {string} [o.hint]       footer hint (defaults to how to use the panel)
+ */
+export function dashboardEmbed({ guild = null, feature, icon = '⚙️', color = 'primary', enabled = null, summary = '', fields = [], hint = null }) {
+  const status = enabled === null || enabled === undefined ? '' : enabled ? '🟢 **Enabled**' : '🔴 **Disabled**';
+  return createEmbed({
+    author: guild ? { name: `${guild.name} · Settings`, iconURL: guild.iconURL?.({ size: 64 }) || undefined } : null,
+    title: `${icon} ${feature}`,
+    description: [status, summary].filter(Boolean).join('\n') || null,
+    color,
+    fields,
+    thumbnail: guild?.iconURL?.({ size: 128 }) || null,
+    footer: hint || 'Use the controls below to change a setting',
+  });
+}

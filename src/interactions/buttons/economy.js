@@ -64,14 +64,14 @@ async function handleDashboard(interaction, action, guildId) {
       const updated = await saveEconomyConfig(guildId, { enabled: !config.enabled });
       updated._guildId = guildId;
       return interaction.update({
-        embeds: [buildDashboardEmbed(updated)],
+        embeds: [buildDashboardEmbed(updated, interaction.guild)],
         components: buildDashboardRows(updated, guildId),
       });
     }
 
     if (action === 'refresh') {
       return interaction.update({
-        embeds: [buildDashboardEmbed(config)],
+        embeds: [buildDashboardEmbed(config, interaction.guild)],
         components: buildDashboardRows(config, guildId),
       });
     }

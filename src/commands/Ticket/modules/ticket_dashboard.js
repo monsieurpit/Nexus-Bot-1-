@@ -17,52 +17,39 @@ import {
     EmbedBuilder,
 } from 'discord.js';
 import { InteractionHelper } from '../../../utils/interactionHelper.js';
-import { createEmbed, successEmbed, errorEmbed } from '../../../utils/embeds.js';
+import { createEmbed, successEmbed, errorEmbed, dashboardEmbed, channelOr, roleOr, onOff, NOT_SET } from '../../../utils/embeds.js';
 import { logger } from '../../../utils/logger.js';
 import { NexusBotError, ErrorTypes } from '../../../utils/errorHandler.js';
 import { getGuildConfig } from '../../../services/guildConfig.js';
 import { getGuildConfigKey } from '../../../utils/database.js';
 import { getUserTicketCount } from '../../../services/ticket.js';
+import { buildTicketPanel, findTicketPanelMessage } from '../../../utils/panels.js';
 
 // ─── Embed & Menu Builders ────────────────────────────────────────────────────
 
 function buildDashboardEmbed(config, guild) {
-    const panelChannel = config.ticketPanelChannelId ? `<#${config.ticketPanelChannelId}>` : '`Not set`';
-    const staffRole = config.ticketStaffRoleId ? `<@&${config.ticketStaffRoleId}>` : '`Not set`';
-    const ticketLogsChannel = config.ticketLogsChannelId ? `<#${config.ticketLogsChannelId}>` : '`Not set`';
-    const transcriptChannel = config.ticketTranscriptChannelId ? `<#${config.ticketTranscriptChannelId}>` : '`Not set`';
-    
-    // Get category names from guild
-    const openCategoryChannel = config.ticketCategoryId ? guild.channels.cache.get(config.ticketCategoryId) : null;
-    const openCategory = openCategoryChannel ? openCategoryChannel.toString() : '`Not set`';
-    
-    const closedCategoryChannel = config.ticketClosedCategoryId ? guild.channels.cache.get(config.ticketClosedCategoryId) : null;
-    const closedCategory = closedCategoryChannel ? closedCategoryChannel.toString() : '`Not set`';
-
+    const category = (id) => (id && guild.channels.cache.get(id) ? `${guild.channels.cache.get(id)}` : NOT_SET);
     const rawMsg = config.ticketPanelMessage || 'Click the button below to create a support ticket.';
-    const panelMsg = `\`${rawMsg.length > 60 ? rawMsg.substring(0, 60) + '…' : rawMsg}\``;
-    const btnLabel = `\`${config.ticketButtonLabel || 'Create Ticket'}\``;
+    const panelMsg = rawMsg.length > 180 ? `${rawMsg.slice(0, 180)}…` : rawMsg;
+    const ready = Boolean(config.ticketPanelChannelId);
 
-    return createEmbed({ timestamp: false })
-        .setTitle('🎫 Ticket System Dashboard')
-        .setDescription(`Manage ticket system settings for **${guild.name}**.\nSelect an option below to modify a setting.`)
-        .setColor(getColor('info'))
-        .addFields(
-            { name: '📢 Panel Channel', value: panelChannel, inline: true },
-            { name: '🛡️ Staff Role', value: staffRole, inline: true },
-            { name: '\u200B', value: '\u200B', inline: true },
-            { name: '📁 Open Tickets Category', value: openCategory, inline: true },
-            { name: '📂 Closed Tickets Category', value: closedCategory, inline: true },
-            { name: '\u200B', value: '\u200B', inline: true },
-            { name: '📝 Panel Message', value: panelMsg, inline: false },
-            { name: '🏷️ Button Label', value: btnLabel, inline: true },
-            { name: '🔢 Max Tickets/User', value: String(config.maxTicketsPerUser || 3), inline: true },
-            { name: '📬 DM on Close', value: config.dmOnClose !== false ? '✅ Enabled' : '❌ Disabled', inline: true },
-            { name: '🎫 Ticket Logs Channel', value: ticketLogsChannel, inline: true },
-            { name: '📜 Transcript Channel', value: transcriptChannel, inline: true },
-        )
-        .setFooter({ text: 'Select an option below • Dashboard closes after 10 minutes of inactivity' })
-        .setTimestamp();
+    return dashboardEmbed({
+        guild,
+        feature: 'Tickets',
+        icon: '🎫',
+        color: 'info',
+        enabled: ready,
+        summary: ready
+            ? `Members open tickets from the panel in ${channelOr(config.ticketPanelChannelId)}.`
+            : 'No panel yet — run `/ticket setup` to post one.',
+        fields: [
+            { name: '📢 Where', value: `Panel: ${channelOr(config.ticketPanelChannelId)}\nOpen tickets: ${category(config.ticketCategoryId)}\nClosed tickets: ${category(config.ticketClosedCategoryId)}`, inline: true },
+            { name: '🛡️ Who', value: `Staff role: ${roleOr(config.ticketStaffRoleId)}\nMax open per member: **${config.maxTicketsPerUser || 3}**`, inline: true },
+            { name: '📜 Records', value: `Logs: ${channelOr(config.ticketLogsChannelId)}\nTranscripts: ${channelOr(config.ticketTranscriptChannelId)}\nDM on close: ${onOff(config.dmOnClose !== false)}`, inline: true },
+            { name: '📝 Panel text', value: `> ${panelMsg.replace(/\n/g, '\n> ')}\nButton: **${config.ticketButtonLabel || 'Create Ticket'}**`, inline: false },
+        ],
+        hint: 'Pick a setting in the menu below · closes after 10 minutes of inactivity',
+    });
 }
 
 function buildSelectMenu(guildId) {
@@ -148,34 +135,14 @@ async function refreshDashboard(rootInteraction, guildConfig, guildId) {
  * Returns true if the panel was found and updated, false otherwise.
  */
 async function updateLivePanel(client, guild, config) {
-    if (!config.ticketPanelChannelId) return false;
     try {
-        const channel = await guild.channels.fetch(config.ticketPanelChannelId).catch(() => null);
-        if (!channel) return false;
-
-        const messages = await channel.messages.fetch({ limit: 50 });
-        const panelMsg = messages.find(
-            m =>
-                m.author.id === client.user.id &&
-                m.components?.length > 0 &&
-                m.components[0]?.components?.[0]?.customId === 'create_ticket',
-        );
-        if (!panelMsg) return false;
-
-        const updatedEmbed = createEmbed({ timestamp: false })
-            .setTitle('🎫 Support Tickets')
-            .setDescription(config.ticketPanelMessage || 'Click the button below to create a support ticket.')
-            .setColor(getColor('info'));
-
-        const button = new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-                .setCustomId('create_ticket')
-                .setLabel(config.ticketButtonLabel || 'Create Ticket')
-                .setStyle(ButtonStyle.Primary)
-                .setEmoji('📩'),
-        );
-
-        await panelMsg.edit({ embeds: [updatedEmbed], components: [button] });
+        const { message } = await findTicketPanelMessage(client, guild, config);
+        if (!message) return false;
+        await message.edit(buildTicketPanel({
+            message: config.ticketPanelMessage,
+            buttonLabel: config.ticketButtonLabel,
+            guild,
+        }));
         return true;
     } catch (error) {
         logger.warn('Failed to update live ticket panel:', error.message);

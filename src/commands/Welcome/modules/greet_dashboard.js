@@ -18,7 +18,7 @@ import {
     TextDisplayBuilder,
 } from 'discord.js';
 import { InteractionHelper } from '../../../utils/interactionHelper.js';
-import { createEmbed, successEmbed, errorEmbed } from '../../../utils/embeds.js';
+import { createEmbed, successEmbed, errorEmbed, dashboardEmbed, channelOr, roleOr, rolesOr, onOff, NOT_SET, bulletList } from '../../../utils/embeds.js';
 import { logger } from '../../../utils/logger.js';
 import { NexusBotError, ErrorTypes } from '../../../utils/errorHandler.js';
 import { getWelcomeConfig, saveWelcomeConfig } from '../../../utils/database.js';
@@ -27,32 +27,24 @@ import { botHasPermission } from '../../../utils/permissionGuard.js';
 // ─── Embed & Menu Builders ────────────────────────────────────────────────────
 
 function buildDashboardEmbed(cfg, guild) {
-    const welcomeChannel = cfg.channelId ? `<#${cfg.channelId}>` : '`Not set`';
-    const goodbyeChannel = cfg.goodbyeChannelId ? `<#${cfg.goodbyeChannelId}>` : '`Not set`';
+    const preview = (text) => `> ${(text.length > 150 ? `${text.slice(0, 150)}…` : text).replace(/\n/g, '\n> ')}`;
+    const side = (on, channelId, ping, text) =>
+        `${onOff(on)} · ${channelOr(channelId)} · ping ${ping ? 'on' : 'off'}\n${preview(text)}`;
 
-    const rawWelcome = cfg.welcomeMessage || 'Welcome {user} to {server}!';
-    const rawGoodbye = cfg.leaveMessage || '{user.tag} has left the server.';
-    const welcomePreview = `\`${rawWelcome.length > 55 ? rawWelcome.substring(0, 55) + '…' : rawWelcome}\``;
-    const goodbyePreview = `\`${rawGoodbye.length > 55 ? rawGoodbye.substring(0, 55) + '…' : rawGoodbye}\``;
-
-    return createEmbed({ timestamp: false })
-        .setTitle('👋 Greet System Dashboard')
-        .setDescription(
-            `Manage welcome & goodbye settings for **${guild.name}**.\nUse the toggles to enable/disable each side, then select an option to edit.`,
-        )
-        .setColor(getColor('info'))
-        .addFields(
-            { name: '🟢 Welcome Channel', value: welcomeChannel, inline: true },
-            { name: '⚙️ Welcome Status', value: cfg.enabled ? '✅ Enabled' : '❌ Disabled', inline: true },
-            { name: '🔔 Welcome Ping', value: cfg.welcomePing ? '✅ On' : '❌ Off', inline: true },
-            { name: '🔴 Goodbye Channel', value: goodbyeChannel, inline: true },
-            { name: '⚙️ Goodbye Status', value: cfg.goodbyeEnabled ? '✅ Enabled' : '❌ Disabled', inline: true },
-            { name: '🔔 Goodbye Ping', value: cfg.goodbyePing ? '✅ On' : '❌ Off', inline: true },
-            { name: '💬 Welcome Message', value: welcomePreview, inline: false },
-            { name: '💬 Goodbye Message', value: goodbyePreview, inline: false },
-        )
-        .setFooter({ text: 'Dashboard closes after 10 minutes of inactivity' })
-        .setTimestamp();
+    return dashboardEmbed({
+        guild,
+        feature: 'Welcome & goodbye',
+        icon: '👋',
+        color: 'community',
+        enabled: null,
+        summary: 'Greets new members and says goodbye when someone leaves. Use the toggles to switch each side on or off.',
+        fields: [
+            { name: '🟢 Welcome', value: side(cfg.enabled, cfg.channelId, cfg.welcomePing, cfg.welcomeMessage || 'Welcome {user} to {server}!'), inline: false },
+            { name: '🔴 Goodbye', value: side(cfg.goodbyeEnabled, cfg.goodbyeChannelId, cfg.goodbyePing, cfg.leaveMessage || '{user.tag} has left the server.'), inline: false },
+            { name: '🧩 Placeholders', value: '`{user}` `{user.tag}` `{server}` `{memberCount}`', inline: false },
+        ],
+        hint: 'Pick a setting in the menu below · closes after 10 minutes of inactivity',
+    });
 }
 
 function buildSelectMenu(guildId) {

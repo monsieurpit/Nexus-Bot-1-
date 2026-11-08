@@ -9,6 +9,7 @@ import { logger } from '../../utils/logger.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { getWelcomeConfig } from '../../utils/database.js';
 import verificationDashboard from './modules/verification_dashboard.js';
+import { buildVerificationPanel } from '../../utils/panels.js';
 
 export default {
     data: new SlashCommandBuilder()
@@ -182,24 +183,9 @@ async function handleSetup(interaction, guild, client) {
 
     await InteractionHelper.safeDefer(interaction);
 
-    const verifyEmbed = createEmbed({
-        title: "✅ Server Verification",
-        description: message,
-        color: getColor('success')
-    });
-
-    const verifyButton = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-            .setCustomId("verify_user")
-            .setLabel(buttonText)
-            .setStyle(ButtonStyle.Success)
-            .setEmoji("✅")
+    const verifyMessage = await verificationChannel.send(
+        buildVerificationPanel({ message, buttonText, guild })
     );
-
-    const verifyMessage = await verificationChannel.send({
-        embeds: [verifyEmbed],
-        components: [verifyButton]
-    });
 
     guildConfig.verification = {
         enabled: true,

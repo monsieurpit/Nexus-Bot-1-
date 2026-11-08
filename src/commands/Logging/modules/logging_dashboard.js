@@ -3,7 +3,7 @@ import { getColor } from '../../../config/bot.js';
 import { getGuildConfig } from '../../../services/guildConfig.js';
 import { getLoggingStatus, EVENT_TYPES } from '../../../services/loggingService.js';
 import { createLoggingDashboardComponents } from '../../../utils/loggingUi.js';
-import { createEmbed, errorEmbed } from '../../../utils/embeds.js';
+import { createEmbed, errorEmbed, dashboardEmbed } from '../../../utils/embeds.js';
 import { InteractionHelper } from '../../../utils/interactionHelper.js';
 import { logger } from '../../../utils/logger.js';
 
@@ -61,53 +61,20 @@ export async function buildLoggingDashboardView(interaction, client) {
         return `${on ? '✅' : '❌'} ${label}`;
     }).join('\n');
 
-    const embed = createEmbed({ timestamp: false })
-        .setTitle('📋 Logging Dashboard')
-        .setDescription(`Manage audit logging for **${interaction.guild.name}**. Category buttons toggle logging instantly.`)
-        .setColor(auditEnabled ? getColor('success') : getColor('warning'))
-        .addFields(
-            {
-                name: '🧾 Audit Logging',
-                value: auditEnabled ? '✅ Enabled' : '❌ Disabled',
-                inline: true,
-            },
-            {
-                name: '\u200B',
-                value: '\u200B',
-                inline: true,
-            },
-            {
-                name: '\u200B',
-                value: '\u200B',
-                inline: true,
-            },
-            {
-                name: '📡 Log Channels',
-                value: [
-                    `**Audit:** ${auditChannel}`,
-                    `**Ticket Logs:** ${lifecycleChannel}`,
-                    `**Ticket Transcripts:** ${transcriptChannel}`,
-                ].join('\n'),
-                inline: false,
-            },
-            {
-                name: '📋 Event Categories',
-                value: categoryLines,
-                inline: false,
-            },
-            {
-                name: '🧹 Ignore Filters',
-                value: `Users: **${ignoredUsers.length}**\nChannels: **${ignoredChannels.length}**`,
-                inline: true,
-            },
-            {
-                name: '🕒 Last Refresh',
-                value: `<t:${Math.floor(Date.now() / 1000)}:R>`,
-                inline: true,
-            },
-        )
-        .setFooter({ text: 'Use /logging setchannel to configure the audit channel  •  /ticket setup or /ticket dashboard to configure ticket channels' })
-        .setTimestamp();
+    const embed = dashboardEmbed({
+        guild: interaction.guild,
+        feature: 'Audit logging',
+        icon: '📜',
+        color: 'gray',
+        enabled: auditEnabled,
+        summary: auditEnabled ? `Server events are logged to ${auditChannel}.` : 'Nothing is being logged. Pick a channel with `/logging setchannel`.',
+        fields: [
+            { name: '📡 Channels', value: `Audit: ${auditChannel}\nTicket logs: ${lifecycleChannel}\nTranscripts: ${transcriptChannel}`, inline: true },
+            { name: '🧹 Ignored', value: `**${ignoredUsers.length}** user${ignoredUsers.length === 1 ? '' : 's'}\n**${ignoredChannels.length}** channel${ignoredChannels.length === 1 ? '' : 's'}`, inline: true },
+            { name: '📋 What gets logged', value: categoryLines, inline: false },
+        ],
+        hint: 'Category buttons switch logging on/off instantly',
+    });
 
     const components = createLoggingDashboardComponents(loggingStatus.enabledEvents, auditEnabled);
     return { embed, components };

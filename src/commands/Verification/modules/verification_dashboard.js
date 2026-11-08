@@ -16,12 +16,13 @@ import {
     EmbedBuilder,
 } from 'discord.js';
 import { InteractionHelper } from '../../../utils/interactionHelper.js';
-import { createEmbed, successEmbed, errorEmbed } from '../../../utils/embeds.js';
+import { createEmbed, successEmbed, errorEmbed, dashboardEmbed, channelOr, roleOr, onOff, NOT_SET } from '../../../utils/embeds.js';
 import { logger } from '../../../utils/logger.js';
 import { NexusBotError, ErrorTypes } from '../../../utils/errorHandler.js';
 import { getGuildConfig, setGuildConfig } from '../../../services/guildConfig.js';
 import { getWelcomeConfig } from '../../../utils/database.js';
 import { botHasPermission } from '../../../utils/permissionGuard.js';
+import { buildVerificationPanel } from '../../../utils/panels.js';
 
 // ─── Live Panel Sync ──────────────────────────────────────────────────────────
 
@@ -33,20 +34,13 @@ async function updateLivePanel(guild, cfg) {
         const msg = await channel.messages.fetch(cfg.messageId).catch(() => null);
         if (!msg) return;
 
-        const verifyEmbed = createEmbed({ timestamp: false })
-            .setTitle('✅ Server Verification')
-            .setDescription(cfg.message || botConfig.verification.defaultMessage)
-            .setColor(getColor('success'));
+        const panel = buildVerificationPanel({
+            message: cfg.message || botConfig.verification.defaultMessage,
+            buttonText: cfg.buttonText || botConfig.verification.defaultButtonText,
+            guild,
+        });
 
-        const verifyButton = new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-                .setCustomId('verify_user')
-                .setLabel(cfg.buttonText || botConfig.verification.defaultButtonText)
-                .setStyle(ButtonStyle.Success)
-                .setEmoji('✅'),
-        );
-
-        await msg.edit({ embeds: [verifyEmbed], components: [verifyButton] });
+        await msg.edit(panel);
     } catch (error) {
         logger.warn('Could not update live verification panel:', error.message);
     }
@@ -55,33 +49,29 @@ async function updateLivePanel(guild, cfg) {
 // ─── Embed & Menu Builders ────────────────────────────────────────────────────
 
 function buildDashboardEmbed(cfg, guild, verifiedUserCount = 0, conflictSummary = '') {
-    const channel = cfg.channelId ? `<#${cfg.channelId}>` : '`Not set`';
-    const role = cfg.roleId ? `<@&${cfg.roleId}>` : '`Not set`';
     const rawMsg = cfg.message || botConfig.verification.defaultMessage;
-    const msgPreview = `\`${rawMsg.length > 60 ? rawMsg.substring(0, 60) + '…' : rawMsg}\``;
-    const buttonText = cfg.buttonText || botConfig.verification.defaultButtonText;
+    const msgPreview = rawMsg.length > 180 ? `${rawMsg.slice(0, 180)}…` : rawMsg;
+    const enabled = cfg.enabled !== false && Boolean(cfg.channelId);
+    const fields = [
+        { name: '📢 Panel channel', value: channelOr(cfg.channelId), inline: true },
+        { name: '🏷️ Verified role', value: roleOr(cfg.roleId), inline: true },
+        { name: '👥 Verified', value: `**${Number(verifiedUserCount).toLocaleString('en-US')}** member${verifiedUserCount === 1 ? '' : 's'}`, inline: true },
+        { name: '💬 Panel text', value: `> ${msgPreview.replace(/\n/g, '\n> ')}\nButton: **${cfg.buttonText || botConfig.verification.defaultButtonText}**`, inline: false },
+    ];
+    if (conflictSummary) fields.push({ name: '⚠️ Conflicts to fix', value: conflictSummary, inline: false });
 
-    const embed = createEmbed({ timestamp: false })
-        .setTitle('🔒 Verification System Dashboard')
-        .setDescription(`Manage verification settings for **${guild.name}**.\nSelect an option below to modify a setting.`)
-        .setColor(getColor('info'))
-        .addFields(
-            { name: '📢 Verification Channel', value: channel, inline: true },
-            { name: '🏷️ Verified Role', value: role, inline: true },
-            { name: '⚙️ System Status', value: cfg.enabled !== false ? '✅ Enabled' : '❌ Disabled', inline: true },
-            { name: '🔘 Button Text', value: `\`${buttonText}\``, inline: true },
-            { name: '👥 Verified Users', value: `${verifiedUserCount} users`, inline: true },
-            { name: '\u200B', value: '\u200B', inline: true },
-            { name: '💬 Verification Message', value: msgPreview, inline: false },
-        );
-
-    if (conflictSummary) {
-        embed.addFields({ name: '⚠️ Setup Conflicts', value: conflictSummary, inline: false });
-    }
-
-    return embed
-        .setFooter({ text: 'Dashboard closes after 10 minutes of inactivity' })
-        .setTimestamp();
+    return dashboardEmbed({
+        guild,
+        feature: 'Verification',
+        icon: '✅',
+        color: 'success',
+        enabled,
+        summary: enabled
+            ? `New members press the button in ${channelOr(cfg.channelId)} to get ${roleOr(cfg.roleId)}.`
+            : 'Members are not asked to verify. Turn it on below.',
+        fields,
+        hint: 'Pick a setting in the menu below · closes after 10 minutes of inactivity',
+    });
 }
 
 function buildSelectMenu(guildId) {
@@ -327,20 +317,13 @@ export default {
                     const channel = interaction.guild.channels.cache.get(cfg.channelId);
                     if (channel) {
                         try {
-                            const verifyEmbed = createEmbed({ timestamp: false })
-                                .setTitle('✅ Server Verification')
-                                .setDescription(cfg.message || botConfig.verification.defaultMessage)
-                                .setColor(getColor('success'));
+                            const panel = buildVerificationPanel({
+                                message: cfg.message || botConfig.verification.defaultMessage,
+                                buttonText: cfg.buttonText || botConfig.verification.defaultButtonText,
+                                guild: interaction.guild,
+                            });
 
-                            const verifyButton = new ActionRowBuilder().addComponents(
-                                new ButtonBuilder()
-                                    .setCustomId('verify_user')
-                                    .setLabel(cfg.buttonText || botConfig.verification.defaultButtonText)
-                                    .setStyle(ButtonStyle.Success)
-                                    .setEmoji('✅'),
-                            );
-
-                            const newMsg = await channel.send({ embeds: [verifyEmbed], components: [verifyButton] });
+                            const newMsg = await channel.send(panel);
                             cfg.messageId = newMsg.id;
                         } catch (error) {
                             logger.warn('Could not re-post verification panel on re-enable:', error.message);
@@ -461,20 +444,13 @@ async function handleChannel(selectInteraction, rootInteraction, cfg, guildId, c
         // Post new panel in the new channel (only if system is enabled)
         if (cfg.enabled !== false) {
             try {
-                const verifyEmbed = createEmbed({ timestamp: false })
-                    .setTitle('✅ Server Verification')
-                    .setDescription(cfg.message || botConfig.verification.defaultMessage)
-                    .setColor(getColor('success'));
+                const panel = buildVerificationPanel({
+                    message: cfg.message || botConfig.verification.defaultMessage,
+                    buttonText: cfg.buttonText || botConfig.verification.defaultButtonText,
+                    guild: newChannel.guild,
+                });
 
-                const verifyButton = new ActionRowBuilder().addComponents(
-                    new ButtonBuilder()
-                        .setCustomId('verify_user')
-                        .setLabel(cfg.buttonText || botConfig.verification.defaultButtonText)
-                        .setStyle(ButtonStyle.Success)
-                        .setEmoji('✅'),
-                );
-
-                const newMsg = await newChannel.send({ embeds: [verifyEmbed], components: [verifyButton] });
+                const newMsg = await newChannel.send(panel);
                 cfg.messageId = newMsg.id;
             } catch (error) {
                 logger.warn('Could not post verification panel in new channel:', error.message);
