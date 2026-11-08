@@ -552,10 +552,12 @@ export async function flushQuestProgress({ only = null, client = null } = {}) {
     }
     const completions = [];
     const keys = periodKeys();
-    for (const entry of entries) {
+    // Members are saved 10 at a time (each has its own lock): a sequential loop was too slow to
+    // finish within Railway's shutdown window on a busy server, losing the last minutes of progress.
+    const saveOne = async (entry) => {
       try {
         const settings = await getQuestSettings(entry.guildId);
-        if (!settings.enabled) continue;
+        if (!settings.enabled) return;
         const [daily, weekly] = await Promise.all([
           getBoard(client, entry.guildId, 'daily'), getBoard(client, entry.guildId, 'weekly'),
         ]);
@@ -582,6 +584,10 @@ export async function flushQuestProgress({ only = null, client = null } = {}) {
         for (const [m, set] of Object.entries(entry.add)) for (const v of set) (back.add[m] ||= new Set()).add(v);
         logger.warn(`[Quests] Progress flush failed for ${entry.userId} in ${entry.guildId}: ${error.message}`);
       }
+    };
+    const FLUSH_CONCURRENCY = 10;
+    for (let i = 0; i < entries.length; i += FLUSH_CONCURRENCY) {
+      await Promise.all(entries.slice(i, i + FLUSH_CONCURRENCY).map(saveOne));
     }
     return completions;
   })();
